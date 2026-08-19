@@ -1,6 +1,7 @@
 import { invoke } from '@tauri-apps/api/core'
 import { mockBootstrap, mockCategories, mockInbox, mockMastery, mockQuestions, mockRecommendations } from './mock'
-import type { BootstrapData, CategoryNode, CodexTask, DailyLog, DailyTrendPoint, ExportResult, FailedInboxItem, InboxItem, InboxSummary, InsightPoint, MasteryChapter, MasteryNode, Question, QuestionPage, RecommendationBatch, RecommendedQuestion, ReviewHistory, ReviewPlan, UserStreak, WeaknessRadar } from './types'
+import type { BootstrapData, CategoryNode, CodexTask, DailyLog, DailyTrendPoint, ExportResult, FailedInboxItem, InboxItem, InboxSummary, InsightPoint, MasteryChapter, MasteryNode, PracticeSessionState, Question, QuestionPage, RecommendationBatch, RecommendedQuestion, ReviewHistory, ReviewPlan, UserStreak, WeaknessRadar } from './types'
+import { createPracticeSessionPayload } from './domain/evidence'
 
 const isTauri = () => '__TAURI_INTERNALS__' in window
 
@@ -72,7 +73,9 @@ export async function getMasteryNodes(): Promise<MasteryNode[]> {
     return { id: chapter.id * 10 + leafIndex, parentId: chapter.id, chapterId: chapter.id, name, path: `${chapter.path} / ${name}`, depth: 3,
       total: 18 + leafIndex * 9 + chapterIndex * 3, attempted, attemptCount: attempted, dueCount: attempted > 2 ? 1 : 0, weakCount: attempted > 0 ? 1 : 0,
       coverage: attempted / (18 + leafIndex * 9 + chapterIndex * 3), accuracy: attempted ? .55 + leafIndex * .07 : null,
-      rating: attempted ? 2.2 + leafIndex * .25 : null, masteryScore: attempted >= 3 ? 38 + leafIndex * 10 : null }
+      rating: attempted ? 2.2 + leafIndex * .25 : null, masteryScore: attempted >= 3 ? 38 + leafIndex * 10 : null,
+      evidenceLevel: attempted >= 3 ? '多次独立作答' : attempted ? '初步作答证据' : '无可评分证据',
+      evidenceSources: attempted ? [`自评 ${attempted}`] : [], retestCorrectCount: 0 }
   }))
 }
 
@@ -113,10 +116,66 @@ export async function setCurrentChapter(categoryId: number | null): Promise<void
 }
 
 export async function recordAttempt(input: {
-  questionId: number; durationSeconds: number; result: string; selfRating: number; selectedAnswer?: string; mode?: string
+  questionId: number
+  durationSeconds: number
+  result: string
+  selfRating: number
+  selectedAnswer?: string
+  mode?: string
+  outcome?: string
+  evidenceSource?: string
+  fluencyRating?: number
+  confidence?: number
+  sessionId?: string
+  diagnosisId?: string
 }): Promise<Question> {
   if (isTauri()) return invoke('record_attempt', { input })
   return { ...(await getQuestion(input.questionId)), attempts: 1, mastery: input.selfRating }
+}
+
+export async function claimRewardEvent(
+  eventId: string,
+  rewardType: string,
+  amount: number,
+  metaJson?: string | null,
+): Promise<{ totalClaimedExp: number; newlyClaimed: boolean; eventId: string }> {
+  if (isTauri()) return invoke('claim_reward_event', { eventId, rewardType, amount, metaJson })
+  return { totalClaimedExp: amount, newlyClaimed: true, eventId }
+}
+
+export async function getRewardEvents(): Promise<import('./types').RewardEvent[]> {
+  if (isTauri()) return invoke('get_reward_events')
+  return []
+}
+
+export async function savePracticeSession(
+  queue: RecommendedQuestion[],
+  currentIndex: number,
+  attemptMode: 'paper' | 'review',
+): Promise<void> {
+  if (!isTauri()) return
+  await invoke('save_practice_session', {
+    input: createPracticeSessionPayload(queue, currentIndex, attemptMode),
+  })
+}
+
+export async function loadPracticeSession(): Promise<PracticeSessionState | null> {
+  if (!isTauri()) return null
+  return invoke('load_practice_session')
+}
+
+export async function clearPracticeSession(): Promise<void> {
+  if (isTauri()) await invoke('clear_practice_session')
+}
+
+export async function restoreDatabaseBackup(backupPath: string): Promise<import('./types').RestoreResult> {
+  if (isTauri()) return invoke('restore_database_backup', { backupPath })
+  return { success: true, preRestoreBackupPath: '', message: '本地预览恢复成功', restoredAttempts: 0, restoredProgress: 0 }
+}
+
+export async function listDatabaseBackups(): Promise<import('./types').BackupInfo[]> {
+  if (isTauri()) return invoke('list_database_backups')
+  return []
 }
 
 export async function toggleFavorite(questionId: number): Promise<boolean> {
@@ -252,4 +311,3 @@ export async function getDailyLog(): Promise<DailyLog> {
     }],
   }
 }
-

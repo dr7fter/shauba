@@ -1,4 +1,4 @@
-import { useState, useMemo } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { AnimatePresence, motion } from 'framer-motion'
 import {
   Calendar,
@@ -20,12 +20,15 @@ import {
   setAudioMuted,
   playLevelUpSound,
 } from '../data/gamification'
+import { claimRewardEvent } from '../api'
+import type { RewardEvent } from '../types'
 import {
   computeTerritories,
   getHallOfFame,
   getDailyQuote,
   getExamCountdown,
 } from '../data/motivation'
+import { localToday } from '../utils'
 import type { GamificationStats } from '../data/gamification'
 import type { MasteryChapter } from '../types'
 
@@ -35,6 +38,8 @@ interface GameCenterModalProps {
   stats: GamificationStats
   chapters: MasteryChapter[]
   onStartBoss?: (categoryName: string) => void
+  onRewardClaimed?: () => void
+  rewardEvents: RewardEvent[]
 }
 
 type TabType = 'profile' | 'quests' | 'territory' | 'boss' | 'trophies' | 'loot'
@@ -45,13 +50,21 @@ export function GameCenterModal({
   stats,
   chapters,
   onStartBoss,
+  onRewardClaimed,
+  rewardEvents,
 }: GameCenterModalProps) {
   const [activeTab, setActiveTab] = useState<TabType>('profile')
   const [achievementFilter, setAchievementFilter] = useState<string>('all')
   const [soundMuted, setSoundMuted] = useState(() => isAudioMuted())
-  const [chestClaimed, setChestClaimed] = useState(false)
 
-  const hallOfFame = useMemo(() => getHallOfFame(), [open])
+  const todayKey = `chest-${localToday()}`
+  const [chestClaimed, setChestClaimed] = useState(() => rewardEvents.some((event) => event.eventId === todayKey))
+
+  useEffect(() => {
+    setChestClaimed(rewardEvents.some((event) => event.eventId === todayKey))
+  }, [rewardEvents, todayKey])
+
+  const hallOfFame = useMemo(() => getHallOfFame(), [])
   const territoryData = useMemo(() => computeTerritories(chapters), [chapters])
   const countdown = getExamCountdown()
   const quote = getDailyQuote()
@@ -62,10 +75,20 @@ export function GameCenterModal({
     setAudioMuted(next)
   }
 
-  const handleClaimChest = () => {
+  const handleClaimChest = async () => {
     if (!stats.allQuestsCompleted || chestClaimed) return
-    setChestClaimed(true)
-    playLevelUpSound()
+    try {
+      const result = await claimRewardEvent(todayKey, 'chest', 150)
+      if (result.newlyClaimed) {
+      setChestClaimed(true)
+      playLevelUpSound()
+      onRewardClaimed?.()
+      } else {
+        setChestClaimed(true)
+      }
+    } catch {
+      setChestClaimed(false)
+    }
   }
 
   const unlockedCount = useMemo(() => {
@@ -130,7 +153,7 @@ export function GameCenterModal({
               <div>
                 <div className="game-header-title-row">
                   <h3 className="game-header-title">考研数一 · 战力与成就中心</h3>
-                  <span className="game-dday-badge">🎯 距初试 {countdown.days} 天</span>
+                  <span className="game-dday-badge">{countdown.isConfigured ? `距初试 ${countdown.days} 天` : '考试日期未配置'}</span>
                 </div>
                 <p className="game-header-subtitle">
                   Lv.{stats.levelInfo.level} {stats.levelInfo.title} · 综合战力 {stats.combatPower} CP
@@ -142,10 +165,11 @@ export function GameCenterModal({
                 className="icon-button sound-btn"
                 onClick={toggleSound}
                 title={soundMuted ? '开启答题音效' : '静音答题音效'}
+                aria-label={soundMuted ? '开启答题音效' : '静音答题音效'}
               >
                 {soundMuted ? <VolumeX size={18} /> : <Volume2 size={18} />}
               </button>
-              <button className="icon-button" onClick={onClose} title="关闭 (Esc)">
+              <button className="icon-button" onClick={onClose} title="关闭 (Esc)" aria-label="关闭战力与成就中心">
                 <X size={20} />
               </button>
             </div>

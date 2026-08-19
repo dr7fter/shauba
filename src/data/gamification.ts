@@ -120,7 +120,8 @@ export function calculateLevel(totalExp: number): LevelInfo {
 export function computeGamification(
   attempts: any[],
   chapters: MasteryChapter[] = [],
-  savedFavoritesCount = 0
+  savedFavoritesCount = 0,
+  dbRewardEvents?: any[],
 ): GamificationStats {
   const todayStr = localToday()
 
@@ -216,6 +217,17 @@ export function computeGamification(
       } else {
         todayCurrentCombo = 0
       }
+    }
+  }
+
+  // Account for persistent claimed rewards (contracts, chests, quests)
+  const ledgerItems = dbRewardEvents ?? []
+  for (const reward of ledgerItems) {
+    const amount = Number(reward.amount) || 0
+    totalExp += amount
+    const createdAt = reward.createdAt || reward.created_at || ''
+    if (createdAt && createdAt.startsWith(todayStr)) {
+      todayExp += amount
     }
   }
 
@@ -548,6 +560,7 @@ function getAudioContext(): AudioContext | null {
 
 export function isAudioMuted(): boolean {
   try {
+    if (localStorage.getItem('shuaba_pure_mode') === 'true') return true
     return localStorage.getItem('shuaba_sound_muted') === 'true'
   } catch {
     return false
@@ -561,6 +574,11 @@ export function setAudioMuted(muted: boolean): void {
     // ignore
   }
 }
+
+// ==========================================
+// Legacy local ledger helpers are retained only to recognize pre-v0.7 claims
+// during migration. New claims and displayed balances use SQLite exclusively.
+// ==========================================
 
 /** Crisp ding chime on correct answer */
 export function playCorrectSound(): void {

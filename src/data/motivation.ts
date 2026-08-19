@@ -5,20 +5,31 @@ import type { MasteryChapter } from '../types'
 // ==========================================
 
 export function getExamCountdown(customTargetDate?: string): {
-  days: number
+  days: number | null
   targetDateStr: string
   phaseText: string
+  isConfigured: boolean
 } {
+  const savedCustomDate = customTargetDate || (typeof localStorage !== 'undefined' ? localStorage.getItem('shuaba_target_exam_date') || undefined : undefined)
+
+  if (!savedCustomDate) {
+    return {
+      days: null,
+      targetDateStr: '未设置考试日期',
+      phaseText: '请在设置中配置考研目标日期',
+      isConfigured: false,
+    }
+  }
+
   const now = new Date()
-  let targetYear = now.getFullYear()
-  
-  // If no custom date, calculate next December 3rd Saturday (approx Dec 19)
-  let target = new Date(targetYear, 11, 19, 8, 30, 0)
-  if (customTargetDate) {
-    const parsed = new Date(customTargetDate)
-    if (!isNaN(parsed.getTime())) target = parsed
-  } else if (now.getTime() > target.getTime()) {
-    target = new Date(targetYear + 1, 11, 19, 8, 30, 0)
+  const target = new Date(savedCustomDate)
+  if (isNaN(target.getTime())) {
+    return {
+      days: null,
+      targetDateStr: '日期格式无效',
+      phaseText: '请在设置中重新配置考研目标日期',
+      isConfigured: false,
+    }
   }
 
   const diffMs = target.getTime() - now.getTime()
@@ -37,6 +48,7 @@ export function getExamCountdown(customTargetDate?: string): {
     days,
     targetDateStr: `${target.getFullYear()}年${target.getMonth() + 1}月${target.getDate()}日`,
     phaseText,
+    isConfigured: true,
   }
 }
 
@@ -64,29 +76,36 @@ export function getTodayDateStr(): string {
   return `${year}-${month}-${day}`
 }
 
-export function getDailyContract(): DailyContract {
+export function getDailyContract(
+  sqliteProblemTarget = 20,
+  sqliteMinuteTarget = 90,
+): DailyContract {
   const today = getTodayDateStr()
+  let contract: DailyContract = {
+    date: today,
+    goalText: '彻底吃透今天的薄弱计算点，保持专注与规范推导',
+    targetProblemCount: sqliteProblemTarget,
+    targetMinutes: sqliteMinuteTarget,
+    isCompleted: false,
+    claimedReward: false,
+  }
   try {
     const raw = localStorage.getItem(CONTRACT_KEY)
     if (raw) {
       const parsed = JSON.parse(raw)
       if (parsed.date === today) {
-        return parsed
+        contract = {
+          ...parsed,
+          targetProblemCount: sqliteProblemTarget,
+          targetMinutes: sqliteMinuteTarget,
+        }
       }
     }
   } catch {
     // fallback
   }
 
-  // Default new daily contract for today
-  return {
-    date: today,
-    goalText: '彻底吃透今天的薄弱计算点，保持专注与规范推导',
-    targetProblemCount: 5,
-    targetMinutes: 25,
-    isCompleted: false,
-    claimedReward: false,
-  }
+  return contract
 }
 
 export function saveDailyContract(contract: DailyContract): void {
@@ -100,11 +119,16 @@ export function saveDailyContract(contract: DailyContract): void {
 export function checkContractStatus(
   contract: DailyContract,
   todayDoneCount: number,
-  todayMinutes: number
+  todayMinutes: number,
+  dailyMode: 'problems' | 'minutes' | 'both' = 'problems',
 ): DailyContract {
   if (contract.isCompleted) return contract
 
-  if (todayDoneCount >= contract.targetProblemCount || todayMinutes >= contract.targetMinutes) {
+  const problemMet = todayDoneCount >= contract.targetProblemCount
+  const minuteMet = todayMinutes >= contract.targetMinutes
+  const isMet = dailyMode === 'problems' ? problemMet : dailyMode === 'minutes' ? minuteMet : problemMet && minuteMet
+
+  if (isMet) {
     const updated = {
       ...contract,
       isCompleted: true,
@@ -172,11 +196,11 @@ export function getHallOfFame(): HallOfFameRecords {
     // ignore
   }
   return {
-    fastestChoiceSeconds: 38,
-    maxComboStreak: 5,
-    maxDailyProblems: 10,
-    maxDailyMinutes: 45,
-    totalLifetimeProblems: 25,
+    fastestChoiceSeconds: null,
+    maxComboStreak: 0,
+    maxDailyProblems: 0,
+    maxDailyMinutes: 0,
+    totalLifetimeProblems: 0,
   }
 }
 

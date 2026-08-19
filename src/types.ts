@@ -56,6 +56,8 @@ export type BootstrapData = {
   supplementalDbPath: string
   activeRecommendation: RecommendationBatch | null
   recommendations: RecommendedQuestion[]
+  excludedDurationCount: number
+  rewardEventsCount: number
 }
 
 export type RecommendationBatch = {
@@ -103,6 +105,9 @@ export type MasteryChapter = {
   rating: number | null
   masteryScore: number | null
   evidence: string
+  evidenceLevel: string
+  evidenceSources: string[]
+  retestCorrectCount: number
 }
 
 export type MasteryNode = {
@@ -121,6 +126,9 @@ export type MasteryNode = {
   accuracy: number | null
   rating: number | null
   masteryScore: number | null
+  evidenceLevel: string
+  evidenceSources: string[]
+  retestCorrectCount: number
 }
 
 export type ReviewDay = {
@@ -136,7 +144,7 @@ export type ReviewHistoryItem = {
   stem: string
   categoryPath: string
   source: string
-  result: 'correct' | 'wrong'
+  result: AttemptOutcome
   selfRating: number
 }
 
@@ -273,7 +281,7 @@ export type DailyLogItem = {
   stem: string
   categoryPath: string
   source: string
-  result: 'correct' | 'wrong'
+  result: AttemptOutcome
   selfRating: number
   mode: string | null
   attemptedAt: string
@@ -291,3 +299,53 @@ export type DailyLog = {
   days: DailyLogDay[]
   items: DailyLogItem[]
 }
+
+export type AttemptOutcome = 'correct' | 'partial' | 'wrong' | 'uncertain'
+
+export type EvidenceSource = 'digital_answer' | 'self_report' | 'codex' | 'manual_confirmed' | 'legacy'
+
+export type ErrorBreakpoint = {
+  id: string
+  label: string
+  desc: string
+}
+
+export type RewardEvent = {
+  eventId: string
+  rewardType: string
+  amount: number
+  metaJson?: string | null
+  createdAt: string
+}
+
+export type RewardSummary = {
+  totalClaimedExp: number
+  newlyClaimed: boolean
+  eventId: string
+}
+
+export type BackupInfo = {
+  fileName: string
+  path: string
+  sizeBytes: number
+  createdAt: string
+  backupType: 'startup_rolling' | 'pre_restore' | 'manual_export' | string
+}
+
+export type RestoreResult = {
+  success: boolean
+  preRestoreBackupPath: string
+  message: string
+  restoredAttempts: number
+  restoredProgress: number
+}
+
+export type PracticeSessionState = {
+  queue: RecommendedQuestion[]
+  currentIndex: number
+  attemptMode: 'paper' | 'review'
+  savedAt: string
+}
+
+export type ThemeMode = 'light' | 'warm' | 'dark' | 'system'
+export type FontScaleMode = 'standard' | 'medium' | 'large'

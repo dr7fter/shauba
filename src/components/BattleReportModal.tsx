@@ -30,8 +30,9 @@ export function BattleReportModal({
   if (!open) return null
 
   const handleCopyText = async () => {
+    const countdownText = countdown.isConfigured ? `距初试：${countdown.days} 天 (${countdown.phaseText})` : '考试日期：未配置'
     const text = `【考研数学一 · 今日修炼简报】\n` +
-      `📅 日期：${todayStr} · 距初试：${countdown.days} 天 (${countdown.phaseText})\n` +
+      `📅 日期：${todayStr} · ${countdownText}\n` +
       `⚡ 今日攻克：${data.todayDone} 道题 | 今日复习巩固：${todayReviewCount} 道题 | 专注时长：${data.todayMinutes} 分钟\n` +
       `🏆 当前战力：Lv.${stats.levelInfo.level} ${stats.levelInfo.title} (${stats.totalExp} EXP)\n` +
       `💬 今日锦囊：“${quote.text}” —— ${quote.author}\n` +
@@ -54,7 +55,7 @@ export function BattleReportModal({
           onClick={(e) => e.stopPropagation()}
         >
           {/* Close button */}
-          <button className="battle-close-btn" onClick={onClose}>
+          <button className="battle-close-btn" onClick={onClose} aria-label="关闭今日战报">
             <X size={18} />
           </button>
 
@@ -69,7 +70,7 @@ export function BattleReportModal({
               <h1 className="poster-title">考研数一 · 今日修炼战报</h1>
               <div className="poster-date-row">
                 <span>{todayStr}</span>
-                <span className="dday-pill">🎯 距初试 <strong>{countdown.days}</strong> 天</span>
+                <span className="dday-pill">{countdown.isConfigured ? <>距初试 <strong>{countdown.days}</strong> 天</> : '考试日期未配置'}</span>
               </div>
             </div>
 

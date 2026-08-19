@@ -1,0 +1,4 @@
+baseline_count=1308
+current_count=1308
+difference_count=0
+PASS: question bank JSON and image files are bit-identical to the acceptance baseline.

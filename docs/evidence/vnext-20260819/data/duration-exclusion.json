@@ -1,0 +1,34 @@
+{
+  "generatedAt": "2026-08-19T05:32:41.074Z",
+  "appVersion": "0.7.0",
+  "fixture": "isolated-fixture/duration-exclusion.db",
+  "integrityCheck": "ok",
+  "rawRows": [
+    {
+      "id": 1,
+      "duration_seconds": 45,
+      "outcome": "correct"
+    },
+    {
+      "id": 2,
+      "duration_seconds": 1800,
+      "outcome": "wrong"
+    },
+    {
+      "id": 3,
+      "duration_seconds": 34811,
+      "outcome": "correct"
+    },
+    {
+      "id": 4,
+      "duration_seconds": 0,
+      "outcome": "wrong"
+    }
+  ],
+  "aggregate": {
+    "raw_count": 4,
+    "valid_seconds": 1845,
+    "excluded_count": 2
+  },
+  "conclusion": "raw rows remain readable; 0 and >1800 second rows are excluded from aggregates"
+}

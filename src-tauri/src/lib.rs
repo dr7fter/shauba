@@ -1,5 +1,5 @@
 use base64::{engine::general_purpose::STANDARD, Engine};
-use chrono::{Duration, Local};
+use chrono::{Datelike, Duration, Local};
 use rand::Rng;
 use rusqlite::{params, Connection, OptionalExtension};
 use serde::{Deserialize, Serialize};
@@ -89,17 +89,100 @@ struct BootstrapData {
     supplemental_db_path: String,
     active_recommendation: Option<RecommendationBatch>,
     recommendations: Vec<RecommendedQuestion>,
+    excluded_duration_count: i64,
+    reward_events_count: i64,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, Clone, Default)]
 #[serde(rename_all = "camelCase")]
 struct AttemptInput {
     question_id: i64,
     duration_seconds: i64,
     result: String,
     self_rating: i32,
+    #[serde(default)]
     selected_answer: Option<String>,
+    #[serde(default)]
     mode: Option<String>,
+    #[serde(default)]
+    outcome: Option<String>,
+    #[serde(default)]
+    evidence_source: Option<String>,
+    #[serde(default)]
+    fluency_rating: Option<i32>,
+    #[serde(default)]
+    confidence: Option<f64>,
+    #[serde(default)]
+    session_id: Option<String>,
+    #[serde(default)]
+    diagnosis_id: Option<String>,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+#[serde(rename_all = "camelCase")]
+struct RewardEvent {
+    event_id: String,
+    reward_type: String,
+    amount: i64,
+    meta_json: Option<String>,
+    created_at: String,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct RewardSummary {
+    total_claimed_exp: i64,
+    newly_claimed: bool,
+    event_id: String,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct PracticeSessionInput {
+    question_ids: Vec<i64>,
+    reasons: Vec<String>,
+    reason_codes: Vec<String>,
+    scores: Vec<f64>,
+    current_index: usize,
+    attempt_mode: String,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct PracticeSessionState {
+    queue: Vec<RecommendedQuestion>,
+    current_index: usize,
+    attempt_mode: String,
+    saved_at: String,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct PracticeSessionQueueItem {
+    question_id: i64,
+    reason: String,
+    reason_code: String,
+    score: f64,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct BackupInfo {
+    file_name: String,
+    path: String,
+    size_bytes: u64,
+    created_at: String,
+    backup_type: String,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct RestoreResult {
+    success: bool,
+    pre_restore_backup_path: String,
+    message: String,
+    restored_attempts: i64,
+    restored_progress: i64,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
@@ -358,6 +441,9 @@ struct MasteryChapter {
     rating: Option<f64>,
     mastery_score: Option<f64>,
     evidence: String,
+    evidence_level: String,
+    evidence_sources: Vec<String>,
+    retest_correct_count: i64,
 }
 
 #[derive(Debug, Serialize)]
@@ -378,6 +464,9 @@ struct MasteryNode {
     accuracy: Option<f64>,
     rating: Option<f64>,
     mastery_score: Option<f64>,
+    evidence_level: String,
+    evidence_sources: Vec<String>,
+    retest_correct_count: i64,
 }
 
 #[derive(Debug, Serialize)]
@@ -466,16 +555,22 @@ fn init_schema(conn: &Connection) -> rusqlite::Result<()> {
          );
          CREATE INDEX IF NOT EXISTS idx_question_categories_category ON question_categories(category_id);
          CREATE TABLE IF NOT EXISTS attempts (
-           id INTEGER PRIMARY KEY AUTOINCREMENT,
-           question_id INTEGER NOT NULL,
-           attempted_at TEXT NOT NULL,
-           duration_seconds INTEGER NOT NULL DEFAULT 0,
-           result TEXT NOT NULL,
-           self_rating INTEGER NOT NULL,
-           selected_answer TEXT,
-           mode TEXT NOT NULL DEFAULT 'paper',
-           FOREIGN KEY(question_id) REFERENCES questions(id)
-         );
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            question_id INTEGER NOT NULL,
+            attempted_at TEXT NOT NULL,
+            duration_seconds INTEGER NOT NULL DEFAULT 0,
+            result TEXT NOT NULL,
+            self_rating INTEGER NOT NULL,
+            selected_answer TEXT,
+            mode TEXT NOT NULL DEFAULT 'paper',
+            outcome TEXT,
+            evidence_source TEXT,
+            fluency_rating INTEGER,
+            confidence REAL,
+            session_id TEXT,
+            diagnosis_id TEXT,
+            FOREIGN KEY(question_id) REFERENCES questions(id)
+          );
          CREATE INDEX IF NOT EXISTS idx_attempts_question ON attempts(question_id);
 CREATE TABLE IF NOT EXISTS progress (
            question_id INTEGER PRIMARY KEY,
@@ -542,19 +637,33 @@ CREATE TABLE IF NOT EXISTS progress (
            added_at TEXT NOT NULL,
            FOREIGN KEY(question_id) REFERENCES questions(id) ON DELETE CASCADE
          );
-         CREATE TABLE IF NOT EXISTS settings (
-           key TEXT PRIMARY KEY,
-           value TEXT NOT NULL
-         );
-         INSERT OR IGNORE INTO settings(key,value) VALUES
-           ('daily_mode','problems'),('daily_problem_target','20'),('daily_minute_target','90'),
-           ('current_chapter_id',''),('category_schema_version','0'),('last_attempt_id','');",
+          CREATE TABLE IF NOT EXISTS reward_events (
+            event_id TEXT PRIMARY KEY,
+            reward_type TEXT NOT NULL,
+            amount INTEGER NOT NULL,
+            meta_json TEXT,
+            created_at TEXT NOT NULL
+          );
+          CREATE INDEX IF NOT EXISTS idx_reward_events_created ON reward_events(created_at);
+          CREATE TABLE IF NOT EXISTS practice_sessions (
+            id INTEGER PRIMARY KEY CHECK(id = 1),
+            queue_json TEXT NOT NULL,
+            current_index INTEGER NOT NULL,
+            attempt_mode TEXT NOT NULL,
+            saved_at TEXT NOT NULL
+          );
+          CREATE TABLE IF NOT EXISTS settings (
+            key TEXT PRIMARY KEY,
+            value TEXT NOT NULL
+          );
+          INSERT OR IGNORE INTO settings(key,value) VALUES
+            ('daily_mode','problems'),('daily_problem_target','20'),('daily_minute_target','90'),
+            ('current_chapter_id',''),('category_schema_version','0'),('last_attempt_id','');",
     )
 }
 
 fn ensure_column(conn: &Connection, table: &str, column: &str, ddl: &str) -> rusqlite::Result<()> {
-    let mut stmt = conn
-        .prepare(&format!("PRAGMA table_info({table})"))?;
+    let mut stmt = conn.prepare(&format!("PRAGMA table_info({table})"))?;
     let exists = stmt
         .query_map([], |r| r.get::<_, String>(1))?
         .collect::<Result<Vec<_>, _>>()?
@@ -564,6 +673,98 @@ fn ensure_column(conn: &Connection, table: &str, column: &str, ddl: &str) -> rus
         conn.execute_batch(&format!("ALTER TABLE {table} ADD COLUMN {ddl};"))?;
     }
     Ok(())
+}
+
+fn migrate_schema(conn: &Connection) -> rusqlite::Result<()> {
+    migrate_schema_impl(conn, false)
+}
+
+fn migrate_schema_impl(conn: &Connection, inject_failure: bool) -> rusqlite::Result<()> {
+    conn.execute_batch("BEGIN IMMEDIATE")?;
+    let result = (|| {
+        ensure_column(conn, "progress", "note", "note TEXT")?;
+        ensure_column(conn, "attempts", "outcome", "outcome TEXT")?;
+        if inject_failure {
+            conn.execute_batch("THIS IS AN INTENTIONAL MIGRATION FAILURE")?;
+        }
+        ensure_column(conn, "attempts", "evidence_source", "evidence_source TEXT")?;
+        ensure_column(conn, "attempts", "fluency_rating", "fluency_rating INTEGER")?;
+        ensure_column(conn, "attempts", "confidence", "confidence REAL")?;
+        ensure_column(conn, "attempts", "session_id", "session_id TEXT")?;
+        ensure_column(conn, "attempts", "diagnosis_id", "diagnosis_id TEXT")?;
+
+        conn.execute_batch(
+            "UPDATE attempts SET outcome = result WHERE outcome IS NULL;
+             UPDATE attempts SET evidence_source = 'legacy' WHERE evidence_source IS NULL;
+             UPDATE attempts SET fluency_rating = self_rating WHERE fluency_rating IS NULL;",
+        )
+    })();
+
+    match result {
+        Ok(()) => conn.execute_batch("COMMIT"),
+        Err(error) => {
+            let _ = conn.execute_batch("ROLLBACK");
+            Err(error)
+        }
+    }
+}
+
+fn create_rolling_backup(data_dir: &Path) -> rusqlite::Result<Option<PathBuf>> {
+    let db_path = data_dir.join("shuaba.db");
+    if !db_path.exists() {
+        return Ok(None);
+    }
+    let rolling_dir = data_dir.join("backups").join("rolling");
+    fs::create_dir_all(&rolling_dir)
+        .map_err(|e| rusqlite::Error::ToSqlConversionFailure(Box::new(e)))?;
+    let stamp = Local::now().format("%Y%m%d-%H%M%S-%3f");
+    let backup_path = rolling_dir.join(format!("backup-startup-{stamp}.db"));
+
+    fs::copy(&db_path, &backup_path)
+        .map_err(|e| rusqlite::Error::ToSqlConversionFailure(Box::new(e)))?;
+    prune_rolling_backups(&rolling_dir);
+    Ok(Some(backup_path))
+}
+
+fn prune_rolling_backups(rolling_dir: &Path) {
+    let Ok(entries) = fs::read_dir(rolling_dir) else {
+        return;
+    };
+    let mut files: Vec<(PathBuf, std::time::SystemTime)> = Vec::new();
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if path.extension().and_then(|s| s.to_str()) == Some("db") {
+            let modified = entry
+                .metadata()
+                .ok()
+                .and_then(|m| m.modified().ok())
+                .unwrap_or(std::time::SystemTime::UNIX_EPOCH);
+            files.push((path, modified));
+        }
+    }
+    files.sort_by(|a, b| b.1.cmp(&a.1));
+    let dates: Vec<chrono::DateTime<Local>> = files
+        .iter()
+        .map(|(_, modified)| chrono::DateTime::<Local>::from(*modified))
+        .collect();
+    let keep = rolling_backup_keep_indices(&dates);
+    for (index, (path, _)) in files.iter().enumerate() {
+        if !keep.contains(&index) {
+            let _ = fs::remove_file(path);
+        }
+    }
+}
+
+fn rolling_backup_keep_indices(dates: &[chrono::DateTime<Local>]) -> HashSet<usize> {
+    let mut keep: HashSet<usize> = (0..dates.len().min(7)).collect();
+    let mut weekly = HashSet::new();
+    for (index, date) in dates.iter().enumerate() {
+        let iso = date.iso_week();
+        if weekly.len() < 4 && weekly.insert((iso.year(), iso.week())) {
+            keep.insert(index);
+        }
+    }
+    keep
 }
 
 fn init_supplemental_schema(conn: &Connection) -> rusqlite::Result<()> {
@@ -855,7 +1056,7 @@ fn row_to_question(row: &rusqlite::Row<'_>) -> rusqlite::Result<Question> {
     })
 }
 
-const QUESTION_SELECT: &str = "SELECT q.id,q.stem,q.options_json,q.correct_answer,q.explanation,q.source,q.question_type,q.category_path,q.image_paths_json,q.is_core,q.difficulty,COALESCE(p.favorite,0),COUNT(a.id),CASE WHEN COUNT(a.id)>0 THEN AVG(CASE WHEN a.result='correct' THEN 1.0 ELSE 0.0 END) END,p.mastery,p.next_review,p.note FROM questions q LEFT JOIN progress p ON p.question_id=q.id LEFT JOIN attempts a ON a.question_id=q.id";
+const QUESTION_SELECT: &str = "SELECT q.id,q.stem,q.options_json,q.correct_answer,q.explanation,q.source,q.question_type,q.category_path,q.image_paths_json,q.is_core,q.difficulty,COALESCE(p.favorite,0),COUNT(a.id),AVG(CASE WHEN COALESCE(a.outcome,a.result)='uncertain' THEN NULL WHEN COALESCE(a.outcome,a.result)='correct' THEN 1.0 ELSE 0.0 END),p.mastery,p.next_review,p.note FROM questions q LEFT JOIN progress p ON p.question_id=q.id LEFT JOIN attempts a ON a.question_id=q.id";
 
 fn question_by_id(conn: &Connection, id: i64) -> Result<Question, String> {
     conn.query_row(
@@ -960,7 +1161,9 @@ fn recommendation_batch_by_task(
     .map_err(|e| e.to_string())
 }
 
-fn active_recommendation_queue(conn: &Connection) -> Result<Option<Vec<RecommendedQuestion>>, String> {
+fn active_recommendation_queue(
+    conn: &Connection,
+) -> Result<Option<Vec<RecommendedQuestion>>, String> {
     let task_id: Option<String> = conn
         .query_row(
             "SELECT task_id FROM recommendation_batches WHERE status='active' ORDER BY started_at DESC,created_at DESC LIMIT 1",
@@ -1200,10 +1403,7 @@ fn scan_inbox(state: &AppState) -> Result<(), String> {
         let payload = match serde_json::from_str::<CodexPayload>(&raw) {
             Ok(payload) => payload,
             Err(error) => {
-                log::warn!(
-                    "无法解析 Codex 回传 {}: {error}",
-                    path.display()
-                );
+                log::warn!("无法解析 Codex 回传 {}: {error}", path.display());
                 let dest = failed.join(path.file_name().unwrap_or_default());
                 let _ = fs::rename(&path, dest);
                 continue;
@@ -1227,13 +1427,7 @@ fn inbox_failed_count(state: &AppState) -> i64 {
     fs::read_dir(&dir)
         .map(|it| {
             it.filter_map(Result::ok)
-                .filter(|entry| {
-                    entry
-                        .path()
-                        .extension()
-                        .and_then(|e| e.to_str())
-                        == Some("json")
-                })
+                .filter(|entry| entry.path().extension().and_then(|e| e.to_str()) == Some("json"))
                 .count() as i64
         })
         .unwrap_or(0)
@@ -1256,7 +1450,11 @@ fn get_failed_inbox(state: State<AppState>) -> Result<Vec<FailedInboxItem>, Stri
             if path.extension().and_then(|e| e.to_str()) != Some("json") {
                 continue;
             }
-            let file_name = path.file_name().unwrap_or_default().to_string_lossy().into_owned();
+            let file_name = path
+                .file_name()
+                .unwrap_or_default()
+                .to_string_lossy()
+                .into_owned();
             let error = fs::read_to_string(&path)
                 .ok()
                 .and_then(|raw| serde_json::from_str::<Value>(&raw).err())
@@ -1311,10 +1509,7 @@ fn insert_codex_payload(conn: &Connection, payload: &CodexPayload) -> Result<(),
             if exists == 0 {
                 return Err(format!("整组回传包含未知题号 {}", attempt.question_id));
             }
-            if !matches!(
-                attempt.result.as_str(),
-                "correct" | "wrong" | "uncertain"
-            ) {
+            if !matches!(attempt.result.as_str(), "correct" | "wrong" | "uncertain") {
                 return Err(format!("题号 {} 的作答结果无效", attempt.question_id));
             }
             if !(1..=4).contains(&attempt.self_rating) {
@@ -1345,11 +1540,22 @@ fn apply_batch_payload(conn: &Connection, payload: &CodexPayload) -> Result<(), 
             &tx,
             &AttemptInput {
                 question_id: attempt.question_id,
-                duration_seconds: 0,
+                duration_seconds: 30,
                 result: attempt.result.clone(),
                 self_rating: attempt.self_rating,
                 selected_answer: None,
                 mode: Some("paper-codex".into()),
+                outcome: Some(
+                    attempt
+                        .verdict
+                        .clone()
+                        .unwrap_or_else(|| attempt.result.clone()),
+                ),
+                evidence_source: Some("codex".into()),
+                fluency_rating: Some(attempt.self_rating),
+                confidence: Some(attempt.confidence),
+                session_id: Some(payload.task_id.clone()),
+                diagnosis_id: Some(format!("{}-{}", payload.task_id, attempt.question_id)),
             },
         )?;
         // 每道题单独保存画像，避免同批次互相覆盖。
@@ -1497,7 +1703,17 @@ fn bootstrap(state: State<AppState>) -> Result<BootstrapData, String> {
             |r| r.get(0),
         )
         .unwrap_or(0);
-    let today_seconds: i64 = conn.query_row("SELECT COALESCE(SUM(duration_seconds),0) FROM attempts WHERE substr(attempted_at,1,10)=?1", [&today], |r| r.get(0)).unwrap_or(0);
+    let today_seconds: i64 = conn.query_row("SELECT COALESCE(SUM(duration_seconds),0) FROM attempts WHERE substr(attempted_at,1,10)=?1 AND duration_seconds BETWEEN 1 AND 1800", [&today], |r| r.get(0)).unwrap_or(0);
+    let excluded_duration_count: i64 = conn
+        .query_row(
+            "SELECT COUNT(*) FROM attempts WHERE duration_seconds > 1800 OR duration_seconds < 1",
+            [],
+            |r| r.get(0),
+        )
+        .unwrap_or(0);
+    let reward_events_count: i64 = conn
+        .query_row("SELECT COUNT(*) FROM reward_events", [], |r| r.get(0))
+        .unwrap_or(0);
     let due_count = conn
         .query_row(
             "SELECT COUNT(*) FROM progress p WHERE p.next_review<=?1 AND NOT EXISTS(SELECT 1 FROM attempts at WHERE at.question_id=p.question_id AND substr(at.attempted_at,1,10)=?1)",
@@ -1567,7 +1783,8 @@ fn bootstrap(state: State<AppState>) -> Result<BootstrapData, String> {
         None
     };
     let focus_json = setting(&conn, "current_focus_category_ids", "");
-    let current_focus_category_ids: Vec<i64> = serde_json::from_str(&focus_json).unwrap_or_default();
+    let current_focus_category_ids: Vec<i64> =
+        serde_json::from_str(&focus_json).unwrap_or_default();
     let recs = if let Some(queue) = active_queue {
         queue
     } else if !current_focus_category_ids.is_empty() {
@@ -1621,6 +1838,8 @@ fn bootstrap(state: State<AppState>) -> Result<BootstrapData, String> {
             .into_owned(),
         active_recommendation,
         recommendations: recs,
+        excluded_duration_count,
+        reward_events_count,
     })
 }
 
@@ -1730,8 +1949,7 @@ fn dynamic_mastery_score(
         overall_accuracy
     };
     let rating_norm = rating.unwrap_or(0.0) / 4.0;
-    let mut score =
-        (recent_accuracy * 0.55 + rating_norm * 0.30 + overall_accuracy * 0.15) * 100.0;
+    let mut score = (recent_accuracy * 0.55 + rating_norm * 0.30 + overall_accuracy * 0.15) * 100.0;
 
     let days_since = last_attempt_at
         .and_then(|s| s.get(0..10))
@@ -1756,6 +1974,29 @@ fn dynamic_mastery_score(
     Some(score.clamp(0.0, 100.0))
 }
 
+fn mastery_evidence_summary(
+    attempt_count: i64,
+    retest_correct_count: i64,
+    source_counts: [i64; 5],
+) -> (String, Vec<String>) {
+    let labels = ["屏幕判定", "人工确认", "Codex", "自评", "旧记录"];
+    let sources = labels
+        .into_iter()
+        .zip(source_counts)
+        .filter_map(|(label, count)| (count > 0).then(|| format!("{label} {count}")))
+        .collect::<Vec<_>>();
+    let level = if attempt_count == 0 {
+        "无可评分证据"
+    } else if retest_correct_count > 0 {
+        "间隔后仍能做对"
+    } else if attempt_count >= 3 {
+        "多次独立作答"
+    } else {
+        "初步作答证据"
+    };
+    (level.into(), sources)
+}
+
 #[tauri::command]
 fn get_mastery_map(state: State<AppState>) -> Result<Vec<MasteryChapter>, String> {
     let conn = state.db.lock().map_err(|e| e.to_string())?;
@@ -1777,16 +2018,23 @@ fn get_mastery_map(state: State<AppState>) -> Result<Vec<MasteryChapter>, String
                JOIN question_categories qc ON qc.category_id = cd.descendant_id
                WHERE c.parent_id IN (SELECT id FROM categories WHERE depth=0 AND math1=1) AND c.math1=1
              ), attempt_stats AS (
-               SELECT question_id,COUNT(*) attempt_count,
-                      SUM(CASE WHEN result='correct' THEN 1 ELSE 0 END) correct_attempts,
-                      AVG(self_rating) rating,
+               SELECT question_id,COUNT(*) raw_attempt_count,
+                      SUM(CASE WHEN COALESCE(outcome,result)<>'uncertain' THEN 1 ELSE 0 END) attempt_count,
+                      SUM(CASE WHEN COALESCE(outcome,result)='correct' THEN 1 ELSE 0 END) correct_attempts,
+                      AVG(CASE WHEN COALESCE(outcome,result)<>'uncertain' THEN COALESCE(fluency_rating,self_rating) END) rating,
                       MAX(attempted_at) last_attempt_at,
-                      SUM(CASE WHEN result='correct' AND attempted_at>=?2 THEN 1 ELSE 0 END) recent_correct,
-                      SUM(CASE WHEN attempted_at>=?2 THEN 1 ELSE 0 END) recent_attempts
+                      SUM(CASE WHEN COALESCE(outcome,result)='correct' AND attempted_at>=?2 THEN 1 ELSE 0 END) recent_correct,
+                      SUM(CASE WHEN COALESCE(outcome,result)<>'uncertain' AND attempted_at>=?2 THEN 1 ELSE 0 END) recent_attempts,
+                      SUM(CASE WHEN mode='review' AND COALESCE(outcome,result)='correct' THEN 1 ELSE 0 END) retest_correct,
+                      SUM(CASE WHEN evidence_source='digital_answer' THEN 1 ELSE 0 END) digital_count,
+                      SUM(CASE WHEN evidence_source='manual_confirmed' THEN 1 ELSE 0 END) manual_count,
+                      SUM(CASE WHEN evidence_source='codex' THEN 1 ELSE 0 END) codex_count,
+                      SUM(CASE WHEN evidence_source='self_report' THEN 1 ELSE 0 END) self_report_count,
+                      SUM(CASE WHEN evidence_source='legacy' OR evidence_source IS NULL THEN 1 ELSE 0 END) legacy_count
                FROM attempts GROUP BY question_id
              )
              SELECT cq.chapter_id,cq.chapter_name,cq.root_name,COUNT(DISTINCT cq.question_id) total,
-                    SUM(CASE WHEN ast.attempt_count IS NOT NULL THEN 1 ELSE 0 END) attempted,
+                    SUM(CASE WHEN ast.raw_attempt_count IS NOT NULL THEN 1 ELSE 0 END) attempted,
                     COALESCE(SUM(ast.correct_attempts),0) correct_attempts,
                     COALESCE(SUM(ast.attempt_count),0) attempt_count,
                     SUM(CASE WHEN p.next_review<=?1 THEN 1 ELSE 0 END) due_count,
@@ -1794,7 +2042,13 @@ fn get_mastery_map(state: State<AppState>) -> Result<Vec<MasteryChapter>, String
                     AVG(ast.rating) rating,
                     COALESCE(SUM(ast.recent_correct),0) recent_correct,
                     COALESCE(SUM(ast.recent_attempts),0) recent_attempts,
-                    MAX(ast.last_attempt_at) last_attempt_at
+                    MAX(ast.last_attempt_at) last_attempt_at,
+                    COALESCE(SUM(ast.retest_correct),0) retest_correct,
+                    COALESCE(SUM(ast.digital_count),0) digital_count,
+                    COALESCE(SUM(ast.manual_count),0) manual_count,
+                    COALESCE(SUM(ast.codex_count),0) codex_count,
+                    COALESCE(SUM(ast.self_report_count),0) self_report_count,
+                    COALESCE(SUM(ast.legacy_count),0) legacy_count
              FROM chapter_questions cq
              LEFT JOIN attempt_stats ast ON ast.question_id=cq.question_id
              LEFT JOIN progress p ON p.question_id=cq.question_id
@@ -1814,6 +2068,12 @@ fn get_mastery_map(state: State<AppState>) -> Result<Vec<MasteryChapter>, String
             let recent_correct: i64 = r.get(10)?;
             let recent_attempts: i64 = r.get(11)?;
             let last_attempt_at: Option<String> = r.get(12)?;
+            let retest_correct_count: i64 = r.get(13)?;
+            let (evidence_level, evidence_sources) = mastery_evidence_summary(
+                attempts,
+                retest_correct_count,
+                [r.get(14)?, r.get(15)?, r.get(16)?, r.get(17)?, r.get(18)?],
+            );
             let coverage = if total > 0 {
                 attempted as f64 / total as f64
             } else {
@@ -1871,6 +2131,9 @@ fn get_mastery_map(state: State<AppState>) -> Result<Vec<MasteryChapter>, String
                 rating,
                 mastery_score,
                 evidence,
+                evidence_level,
+                evidence_sources,
+                retest_correct_count,
             })
         })
         .map_err(|e| e.to_string())?;
@@ -1903,16 +2166,23 @@ fn get_mastery_nodes(state: State<AppState>) -> Result<Vec<MasteryNode>, String>
                JOIN cat_descendants cd ON cd.ancestor_id = a.id
                JOIN question_categories qc ON qc.category_id = cd.descendant_id
              ), attempt_stats AS (
-               SELECT question_id,COUNT(*) attempt_count,
-                      SUM(CASE WHEN result='correct' THEN 1 ELSE 0 END) correct_attempts,
-                      AVG(self_rating) rating,
+               SELECT question_id,COUNT(*) raw_attempt_count,
+                      SUM(CASE WHEN COALESCE(outcome,result)<>'uncertain' THEN 1 ELSE 0 END) attempt_count,
+                      SUM(CASE WHEN COALESCE(outcome,result)='correct' THEN 1 ELSE 0 END) correct_attempts,
+                      AVG(CASE WHEN COALESCE(outcome,result)<>'uncertain' THEN COALESCE(fluency_rating,self_rating) END) rating,
                       MAX(attempted_at) last_attempt_at,
-                      SUM(CASE WHEN result='correct' AND attempted_at>=?2 THEN 1 ELSE 0 END) recent_correct,
-                      SUM(CASE WHEN attempted_at>=?2 THEN 1 ELSE 0 END) recent_attempts
+                      SUM(CASE WHEN COALESCE(outcome,result)='correct' AND attempted_at>=?2 THEN 1 ELSE 0 END) recent_correct,
+                      SUM(CASE WHEN COALESCE(outcome,result)<>'uncertain' AND attempted_at>=?2 THEN 1 ELSE 0 END) recent_attempts,
+                      SUM(CASE WHEN mode='review' AND COALESCE(outcome,result)='correct' THEN 1 ELSE 0 END) retest_correct,
+                      SUM(CASE WHEN evidence_source='digital_answer' THEN 1 ELSE 0 END) digital_count,
+                      SUM(CASE WHEN evidence_source='manual_confirmed' THEN 1 ELSE 0 END) manual_count,
+                      SUM(CASE WHEN evidence_source='codex' THEN 1 ELSE 0 END) codex_count,
+                      SUM(CASE WHEN evidence_source='self_report' THEN 1 ELSE 0 END) self_report_count,
+                      SUM(CASE WHEN evidence_source='legacy' OR evidence_source IS NULL THEN 1 ELSE 0 END) legacy_count
                FROM attempts GROUP BY question_id
              )
              SELECT nq.id,nq.parent_id,nq.chapter_id,nq.name,nq.path,nq.depth,COUNT(DISTINCT nq.question_id) total,
-                    SUM(CASE WHEN ast.attempt_count IS NOT NULL THEN 1 ELSE 0 END) attempted,
+                    SUM(CASE WHEN ast.raw_attempt_count IS NOT NULL THEN 1 ELSE 0 END) attempted,
                     COALESCE(SUM(ast.attempt_count),0) attempt_count,
                     SUM(CASE WHEN p.next_review<=?1 THEN 1 ELSE 0 END) due_count,
                     SUM(CASE WHEN p.mastery<=2 THEN 1 ELSE 0 END) weak_count,
@@ -1920,7 +2190,13 @@ fn get_mastery_nodes(state: State<AppState>) -> Result<Vec<MasteryNode>, String>
                     AVG(ast.rating) rating,
                     COALESCE(SUM(ast.recent_correct),0) recent_correct,
                     COALESCE(SUM(ast.recent_attempts),0) recent_attempts,
-                    MAX(ast.last_attempt_at) last_attempt_at
+                    MAX(ast.last_attempt_at) last_attempt_at,
+                    COALESCE(SUM(ast.retest_correct),0) retest_correct,
+                    COALESCE(SUM(ast.digital_count),0) digital_count,
+                    COALESCE(SUM(ast.manual_count),0) manual_count,
+                    COALESCE(SUM(ast.codex_count),0) codex_count,
+                    COALESCE(SUM(ast.self_report_count),0) self_report_count,
+                    COALESCE(SUM(ast.legacy_count),0) legacy_count
              FROM node_questions nq
              LEFT JOIN attempt_stats ast ON ast.question_id=nq.question_id
              LEFT JOIN progress p ON p.question_id=nq.question_id
@@ -1941,6 +2217,12 @@ fn get_mastery_nodes(state: State<AppState>) -> Result<Vec<MasteryNode>, String>
             let recent_correct: i64 = r.get(13)?;
             let recent_attempts: i64 = r.get(14)?;
             let last_attempt_at: Option<String> = r.get(15)?;
+            let retest_correct_count: i64 = r.get(16)?;
+            let (evidence_level, evidence_sources) = mastery_evidence_summary(
+                attempts,
+                retest_correct_count,
+                [r.get(17)?, r.get(18)?, r.get(19)?, r.get(20)?, r.get(21)?],
+            );
             let coverage = if total > 0 {
                 attempted as f64 / total as f64
             } else {
@@ -1983,6 +2265,9 @@ fn get_mastery_nodes(state: State<AppState>) -> Result<Vec<MasteryNode>, String>
                 accuracy,
                 rating,
                 mastery_score,
+                evidence_level,
+                evidence_sources,
+                retest_correct_count,
             })
         })
         .map_err(|e| e.to_string())?;
@@ -2096,10 +2381,7 @@ fn get_variant_queue(
 }
 
 #[tauri::command]
-fn set_focus_branches(
-    category_ids: Vec<i64>,
-    state: State<AppState>,
-) -> Result<(), String> {
+fn set_focus_branches(category_ids: Vec<i64>, state: State<AppState>) -> Result<(), String> {
     let conn = state.db.lock().map_err(|e| e.to_string())?;
     let json_val = if category_ids.is_empty() {
         String::new()
@@ -2134,11 +2416,11 @@ fn focus_queue(
     let mut names = Vec::new();
 
     for id in category_ids {
-        if let Ok((name, path)) = conn.query_row(
-            "SELECT name, path FROM categories WHERE id=?1",
-            [id],
-            |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?)),
-        ) {
+        if let Ok((name, path)) =
+            conn.query_row("SELECT name, path FROM categories WHERE id=?1", [id], |r| {
+                Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?))
+            })
+        {
             names.push(name);
             path_conditions.push("(cc.path = ? OR cc.path LIKE ? || ' / %')");
             params_vec.push(rusqlite::types::Value::Text(path.clone()));
@@ -2476,7 +2758,9 @@ fn collect_ai_signals(conn: &Connection) -> Result<HashMap<i64, AiSignal>, Strin
             .collect::<Result<Vec<_>, _>>()
             .map_err(|e| e.to_string())?
     };
-    for (question_id, error_tags_json, weakness_tags_json, confidence, confirmed_at) in confirmed_rows {
+    for (question_id, error_tags_json, weakness_tags_json, confidence, confirmed_at) in
+        confirmed_rows
+    {
         let entry = signals.entry(question_id).or_default();
         if entry
             .confirmed_at
@@ -2521,7 +2805,8 @@ fn daily_log(conn: &Connection) -> Result<DailyLog, String> {
     };
     let mut days: Vec<DailyLogDay> = Vec::new();
     let mut items: Vec<DailyLogItem> = Vec::new();
-    for (question_id, stem, category_path, source, result, self_rating, mode, attempted_at) in rows {
+    for (question_id, stem, category_path, source, result, self_rating, mode, attempted_at) in rows
+    {
         let date = attempted_at.get(0..10).unwrap_or("").to_string();
         match days.last_mut() {
             Some(day) if day.date == date => {
@@ -2550,9 +2835,7 @@ fn daily_log(conn: &Connection) -> Result<DailyLog, String> {
             ai_summary: signal.and_then(|s| s.summary.clone()),
             ai_earliest_error: signal.and_then(|s| s.earliest_error.clone()),
             ai_error_tags: signal.map(|s| s.error_tags.clone()).unwrap_or_default(),
-            ai_weakness_tags: signal
-                .map(|s| s.weakness_tags.clone())
-                .unwrap_or_default(),
+            ai_weakness_tags: signal.map(|s| s.weakness_tags.clone()).unwrap_or_default(),
             ai_advice: signal.and_then(|s| s.advice.clone()),
             ai_confidence: signal.and_then(|s| s.confidence),
             ai_confirmed_at: signal.and_then(|s| s.confirmed_at.clone()),
@@ -2699,10 +2982,7 @@ fn get_recommendations(
         }
     }
     // Keep chapter-first mode alive when the current queue runs out.
-    if let Some(id) = setting(&conn, "current_chapter_id", "")
-        .parse::<i64>()
-        .ok()
-    {
+    if let Some(id) = setting(&conn, "current_chapter_id", "").parse::<i64>().ok() {
         return chapter_queue(&conn, id, limit.min(50));
     }
     recommendations(&conn, limit.min(50))
@@ -2828,9 +3108,14 @@ fn recompute_progress_after_removal(
 
 fn review_intervals(conn: &Connection) -> [i64; 4] {
     let mut result = [1, 3, 7, 15];
-    for (index, key) in ["review_interval_1", "review_interval_2", "review_interval_3", "review_interval_4"]
-        .iter()
-        .enumerate()
+    for (index, key) in [
+        "review_interval_1",
+        "review_interval_2",
+        "review_interval_3",
+        "review_interval_4",
+    ]
+    .iter()
+    .enumerate()
     {
         if let Ok(value) = setting(conn, key, "").parse::<i64>() {
             result[index] = value.clamp(1, 180);
@@ -2839,21 +3124,373 @@ fn review_intervals(conn: &Connection) -> [i64; 4] {
     result
 }
 
-fn record_attempt_row(conn: &Connection, input: &AttemptInput) -> Result<(), String> {
-    let now = Local::now();
+#[tauri::command]
+fn claim_reward_event(
+    state: State<AppState>,
+    event_id: String,
+    reward_type: String,
+    amount: i64,
+    meta_json: Option<String>,
+) -> Result<RewardSummary, String> {
+    let conn = state.db.lock().map_err(|e| e.to_string())?;
+    let now = Local::now().to_rfc3339();
+    let rows_affected = conn.execute(
+        "INSERT OR IGNORE INTO reward_events(event_id, reward_type, amount, meta_json, created_at) VALUES(?1, ?2, ?3, ?4, ?5)",
+        params![event_id, reward_type, amount, meta_json, now],
+    ).map_err(|e| e.to_string())?;
+
+    let total_claimed: i64 = conn
+        .query_row(
+            "SELECT COALESCE(SUM(amount), 0) FROM reward_events",
+            [],
+            |r| r.get(0),
+        )
+        .unwrap_or(0);
+
+    Ok(RewardSummary {
+        total_claimed_exp: total_claimed,
+        newly_claimed: rows_affected > 0,
+        event_id,
+    })
+}
+
+#[tauri::command]
+fn get_reward_events(state: State<AppState>) -> Result<Vec<RewardEvent>, String> {
+    let conn = state.db.lock().map_err(|e| e.to_string())?;
+    let mut stmt = conn.prepare(
+        "SELECT event_id, reward_type, amount, meta_json, created_at FROM reward_events ORDER BY created_at DESC"
+    ).map_err(|e| e.to_string())?;
+
+    let rows = stmt
+        .query_map([], |r| {
+            Ok(RewardEvent {
+                event_id: r.get(0)?,
+                reward_type: r.get(1)?,
+                amount: r.get(2)?,
+                meta_json: r.get(3)?,
+                created_at: r.get(4)?,
+            })
+        })
+        .map_err(|e| e.to_string())?;
+
+    rows.collect::<Result<Vec<_>, _>>()
+        .map_err(|e| e.to_string())
+}
+
+fn save_practice_session_row(
+    conn: &Connection,
+    input: &PracticeSessionInput,
+) -> Result<(), String> {
+    if input.question_ids.is_empty() {
+        conn.execute("DELETE FROM practice_sessions WHERE id=1", [])
+            .map_err(|e| e.to_string())?;
+        return Ok(());
+    }
+    if input.question_ids.len() != input.reasons.len()
+        || input.question_ids.len() != input.reason_codes.len()
+        || input.question_ids.len() != input.scores.len()
+    {
+        return Err("会话队列字段长度不一致".into());
+    }
+    let queue: Vec<PracticeSessionQueueItem> = input
+        .question_ids
+        .iter()
+        .enumerate()
+        .map(|(index, question_id)| PracticeSessionQueueItem {
+            question_id: *question_id,
+            reason: input.reasons[index].clone(),
+            reason_code: input.reason_codes[index].clone(),
+            score: input.scores[index],
+        })
+        .collect();
+    let queue_json = serde_json::to_string(&queue).map_err(|e| e.to_string())?;
     conn.execute(
-        "INSERT INTO attempts(question_id,attempted_at,duration_seconds,result,self_rating,selected_answer,mode) VALUES(?1,?2,?3,?4,?5,?6,?7)",
+        "INSERT INTO practice_sessions(id,queue_json,current_index,attempt_mode,saved_at)
+         VALUES(1,?1,?2,?3,?4)
+         ON CONFLICT(id) DO UPDATE SET queue_json=excluded.queue_json,current_index=excluded.current_index,attempt_mode=excluded.attempt_mode,saved_at=excluded.saved_at",
         params![
-            input.question_id,
-            now.to_rfc3339(),
-            input.duration_seconds.clamp(0, 1800),
-            input.result,
-            input.self_rating.clamp(1, 4),
-            input.selected_answer,
-            input.mode.clone().unwrap_or_else(|| "paper".into())
+            queue_json,
+            input.current_index.min(input.question_ids.len().saturating_sub(1)) as i64,
+            input.attempt_mode,
+            Local::now().to_rfc3339()
         ],
     )
     .map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+fn load_practice_session_row(conn: &Connection) -> Result<Option<PracticeSessionState>, String> {
+    let stored: Option<(String, i64, String, String)> = conn
+        .query_row(
+            "SELECT queue_json,current_index,attempt_mode,saved_at FROM practice_sessions WHERE id=1",
+            [],
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
+        )
+        .optional()
+        .map_err(|e| e.to_string())?;
+    let Some((queue_json, current_index, attempt_mode, saved_at)) = stored else {
+        return Ok(None);
+    };
+    let descriptors: Vec<PracticeSessionQueueItem> =
+        serde_json::from_str(&queue_json).map_err(|e| e.to_string())?;
+    let mut queue = Vec::with_capacity(descriptors.len());
+    for item in descriptors {
+        if let Ok(question) = question_by_id(conn, item.question_id) {
+            queue.push(RecommendedQuestion {
+                question,
+                score: item.score,
+                reason: item.reason,
+                reason_code: item.reason_code,
+            });
+        }
+    }
+    if queue.is_empty() {
+        conn.execute("DELETE FROM practice_sessions WHERE id=1", [])
+            .map_err(|e| e.to_string())?;
+        return Ok(None);
+    }
+    Ok(Some(PracticeSessionState {
+        current_index: (current_index.max(0) as usize).min(queue.len() - 1),
+        queue,
+        attempt_mode,
+        saved_at,
+    }))
+}
+
+#[tauri::command]
+fn save_practice_session(
+    input: PracticeSessionInput,
+    state: State<AppState>,
+) -> Result<(), String> {
+    let conn = state.db.lock().map_err(|e| e.to_string())?;
+    save_practice_session_row(&conn, &input)
+}
+
+#[tauri::command]
+fn load_practice_session(state: State<AppState>) -> Result<Option<PracticeSessionState>, String> {
+    let conn = state.db.lock().map_err(|e| e.to_string())?;
+    load_practice_session_row(&conn)
+}
+
+#[tauri::command]
+fn clear_practice_session(state: State<AppState>) -> Result<(), String> {
+    let conn = state.db.lock().map_err(|e| e.to_string())?;
+    conn.execute("DELETE FROM practice_sessions WHERE id=1", [])
+        .map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+fn inspect_database_backup(source_path: &Path) -> Result<(i64, i64), String> {
+    let test_conn =
+        Connection::open_with_flags(source_path, rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY)
+            .map_err(|e| format!("备份文件无法作为有效 SQLite 数据库打开: {e}"))?;
+    let integrity: String = test_conn
+        .query_row("PRAGMA integrity_check", [], |row| row.get(0))
+        .map_err(|e| format!("备份完整性检查失败: {e}"))?;
+    if integrity != "ok" {
+        return Err(format!("备份完整性检查失败: {integrity}"));
+    }
+    for required_table in ["attempts", "progress", "settings"] {
+        let exists: i64 = test_conn
+            .query_row(
+                "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name=?1",
+                [required_table],
+                |row| row.get(0),
+            )
+            .map_err(|e| e.to_string())?;
+        if exists == 0 {
+            return Err(format!("备份缺少必要数据表: {required_table}"));
+        }
+    }
+    let attempts_count = test_conn
+        .query_row("SELECT COUNT(*) FROM attempts", [], |row| row.get(0))
+        .map_err(|e| format!("无法读取备份作答记录: {e}"))?;
+    let progress_count = test_conn
+        .query_row("SELECT COUNT(*) FROM progress", [], |row| row.get(0))
+        .map_err(|e| format!("无法读取备份进度记录: {e}"))?;
+    Ok((attempts_count, progress_count))
+}
+
+#[tauri::command]
+fn restore_database_backup(
+    state: State<AppState>,
+    backup_path: String,
+) -> Result<RestoreResult, String> {
+    let source_path = PathBuf::from(&backup_path);
+    if !source_path.exists() {
+        return Err(format!("备份文件不存在: {backup_path}"));
+    }
+
+    let (attempts_count, progress_count) = inspect_database_backup(&source_path)?;
+
+    let current_db_path = state.data_dir.join("shuaba.db");
+    let backups_dir = state.data_dir.join("backups");
+    fs::create_dir_all(&backups_dir).map_err(|e| e.to_string())?;
+    let stamp = Local::now().format("%Y%m%d-%H%M%S-%3f");
+    let pre_restore_backup = backups_dir.join(format!("pre-restore-{stamp}.db"));
+    let staged_path = state.data_dir.join(format!("restore-staged-{stamp}.db"));
+    let replaced_path = state.data_dir.join(format!("restore-replaced-{stamp}.db"));
+
+    fs::copy(&source_path, &staged_path).map_err(|e| format!("无法创建恢复暂存副本: {e}"))?;
+    let staged_result = (|| -> Result<(), String> {
+        let staged_conn = Connection::open(&staged_path).map_err(|e| e.to_string())?;
+        init_schema(&staged_conn).map_err(|e| e.to_string())?;
+        migrate_schema(&staged_conn).map_err(|e| e.to_string())?;
+        let integrity: String = staged_conn
+            .query_row("PRAGMA integrity_check", [], |row| row.get(0))
+            .map_err(|e| e.to_string())?;
+        if integrity != "ok" {
+            return Err(format!("迁移后完整性检查失败: {integrity}"));
+        }
+        Ok(())
+    })();
+    if let Err(error) = staged_result {
+        let _ = fs::remove_file(&staged_path);
+        return Err(format!("恢复预检失败，当前数据库未更改: {error}"));
+    }
+
+    let mut conn_guard = state.db.lock().map_err(|e| e.to_string())?;
+    conn_guard
+        .execute_batch("PRAGMA wal_checkpoint(TRUNCATE);")
+        .map_err(|e| format!("恢复前无法完成数据库检查点: {e}"))?;
+    if current_db_path.exists() {
+        fs::copy(&current_db_path, &pre_restore_backup)
+            .map_err(|e| format!("无法创建恢复前安全快照: {e}"))?;
+    }
+    let old_conn = std::mem::replace(
+        &mut *conn_guard,
+        Connection::open_in_memory().map_err(|e| e.to_string())?,
+    );
+    drop(old_conn);
+    for suffix in ["-wal", "-shm"] {
+        let _ = fs::remove_file(format!("{}{}", current_db_path.to_string_lossy(), suffix));
+    }
+
+    if current_db_path.exists() {
+        fs::rename(&current_db_path, &replaced_path)
+            .map_err(|e| format!("无法暂存当前数据库: {e}"))?;
+    }
+    if let Err(error) = fs::rename(&staged_path, &current_db_path) {
+        if replaced_path.exists() {
+            let _ = fs::rename(&replaced_path, &current_db_path);
+        }
+        *conn_guard = Connection::open(&current_db_path).map_err(|e| e.to_string())?;
+        return Err(format!("无法切换至恢复数据库，已保留当前数据库: {error}"));
+    }
+
+    match Connection::open(&current_db_path) {
+        Ok(restored_conn) => {
+            *conn_guard = restored_conn;
+            let _ = fs::remove_file(&replaced_path);
+        }
+        Err(error) => {
+            let _ = fs::remove_file(&current_db_path);
+            if replaced_path.exists() {
+                fs::rename(&replaced_path, &current_db_path)
+                    .map_err(|rollback| format!("恢复失败且回退失败: {error}; {rollback}"))?;
+            }
+            *conn_guard = Connection::open(&current_db_path).map_err(|e| e.to_string())?;
+            return Err(format!("恢复失败，已回退当前数据库: {error}"));
+        }
+    }
+
+    Ok(RestoreResult {
+        success: true,
+        pre_restore_backup_path: pre_restore_backup.to_string_lossy().into_owned(),
+        message: format!(
+            "数据库已成功恢复：包含 {attempts_count} 条作答与 {progress_count} 条进度记录"
+        ),
+        restored_attempts: attempts_count,
+        restored_progress: progress_count,
+    })
+}
+
+#[tauri::command]
+fn list_database_backups(state: State<AppState>) -> Result<Vec<BackupInfo>, String> {
+    let mut list = Vec::new();
+    let backups_dir = state.data_dir.join("backups");
+    let rolling_dir = backups_dir.join("rolling");
+
+    for dir in &[backups_dir, rolling_dir] {
+        if let Ok(entries) = fs::read_dir(dir) {
+            for entry in entries.flatten() {
+                let path = entry.path();
+                if path.extension().and_then(|s| s.to_str()) == Some("db") {
+                    let file_name = path
+                        .file_name()
+                        .and_then(|s| s.to_str())
+                        .unwrap_or("")
+                        .to_string();
+                    let metadata = entry.metadata().ok();
+                    let size_bytes = metadata.as_ref().map(|m| m.len()).unwrap_or(0);
+                    let modified = metadata
+                        .and_then(|m| m.modified().ok())
+                        .map(|t| chrono::DateTime::<Local>::from(t).to_rfc3339())
+                        .unwrap_or_default();
+                    let backup_type = if file_name.contains("startup") {
+                        "startup_rolling".into()
+                    } else if file_name.contains("pre-restore") {
+                        "pre_restore".into()
+                    } else {
+                        "manual_export".into()
+                    };
+                    list.push(BackupInfo {
+                        file_name,
+                        path: path.to_string_lossy().into_owned(),
+                        size_bytes,
+                        created_at: modified,
+                        backup_type,
+                    });
+                }
+            }
+        }
+    }
+    list.sort_by(|a, b| b.created_at.cmp(&a.created_at));
+    Ok(list)
+}
+
+fn record_attempt_row(conn: &Connection, input: &AttemptInput) -> Result<(), String> {
+    let now = Local::now();
+    let duration = input.duration_seconds.clamp(1, 1800);
+    let rating = input.self_rating.clamp(1, 4);
+    let outcome = input.outcome.as_deref().unwrap_or(&input.result);
+    let evidence_source = input.evidence_source.as_deref().unwrap_or("self_report");
+    let fluency_rating = input.fluency_rating.unwrap_or(rating).clamp(1, 4);
+    let session_id = input.session_id.as_deref().unwrap_or("");
+    let diagnosis_id = input.diagnosis_id.as_deref();
+
+    conn.execute(
+        "INSERT INTO attempts(
+            question_id, attempted_at, duration_seconds, result, self_rating, selected_answer, mode,
+            outcome, evidence_source, fluency_rating, confidence, session_id, diagnosis_id
+        ) VALUES(?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)",
+        params![
+            input.question_id,
+            now.to_rfc3339(),
+            duration,
+            input.result,
+            rating,
+            input.selected_answer,
+            input.mode.clone().unwrap_or_else(|| "paper".into()),
+            outcome,
+            evidence_source,
+            fluency_rating,
+            input.confidence,
+            session_id,
+            diagnosis_id,
+        ],
+    )
+    .map_err(|e| e.to_string())?;
+    if outcome == "uncertain" {
+        complete_active_recommendation_item(conn, input.question_id)?;
+        return Ok(());
+    }
+    // Correctness controls mastery direction; fluency only refines a confirmed result.
+    let progress_rating = if outcome == "correct" {
+        fluency_rating
+    } else {
+        fluency_rating.min(2)
+    };
     let prev_progress: Option<(i64, Option<i64>)> = conn
         .query_row(
             "SELECT review_count, mastery FROM progress WHERE question_id=?1",
@@ -2864,9 +3501,9 @@ fn record_attempt_row(conn: &Connection, input: &AttemptInput) -> Result<(), Str
         .map_err(|e| e.to_string())?;
 
     let intervals = review_intervals(conn);
-    let (days, next_review_count) = if input.self_rating <= 2 {
+    let (days, next_review_count) = if progress_rating <= 2 {
         // Lapse: rating 1 or 2 resets review progression back to the start
-        let d = match input.self_rating {
+        let d = match progress_rating {
             1 => intervals[0],
             _ => intervals[1],
         };
@@ -2875,11 +3512,11 @@ fn record_attempt_row(conn: &Connection, input: &AttemptInput) -> Result<(), Str
         // Successful recall (rating 3 or 4)
         let prev_count = prev_progress.map(|(c, _)| c).unwrap_or(0);
         let next_count = prev_count + 1;
-        let d = if input.self_rating == 4 && next_count >= 2 {
+        let d = if progress_rating == 4 && next_count >= 2 {
             // Mastered repeatedly: expand interval to double (up to 30 or configurable max)
             (intervals[3] * 2).clamp(intervals[3], 180)
         } else {
-            match input.self_rating {
+            match progress_rating {
                 3 => intervals[2],
                 _ => intervals[3],
             }
@@ -2890,7 +3527,7 @@ fn record_attempt_row(conn: &Connection, input: &AttemptInput) -> Result<(), Str
     conn.execute(
         "INSERT INTO progress(question_id,mastery,last_attempt_at,next_review,review_count) VALUES(?1,?2,?3,?4,?5)
          ON CONFLICT(question_id) DO UPDATE SET mastery=excluded.mastery,last_attempt_at=excluded.last_attempt_at,next_review=excluded.next_review,review_count=excluded.review_count",
-        params![input.question_id, input.self_rating, now.to_rfc3339(), next, next_review_count],
+        params![input.question_id, progress_rating, now.to_rfc3339(), next, next_review_count],
     )
     .map_err(|e| e.to_string())?;
     complete_active_recommendation_item(conn, input.question_id)?;
@@ -2929,7 +3566,12 @@ fn save_note(question_id: i64, note: String, state: State<AppState>) -> Result<(
 #[tauri::command]
 fn save_review_intervals(intervals: Vec<i64>, state: State<AppState>) -> Result<(), String> {
     let conn = state.db.lock().map_err(|e| e.to_string())?;
-    let keys = ["review_interval_1", "review_interval_2", "review_interval_3", "review_interval_4"];
+    let keys = [
+        "review_interval_1",
+        "review_interval_2",
+        "review_interval_3",
+        "review_interval_4",
+    ];
     for (index, key) in keys.iter().enumerate() {
         let value = intervals
             .get(index)
@@ -2950,8 +3592,7 @@ fn export_db_copy(conn: &Connection, destination: &Path) -> Result<(), String> {
     // copy includes all committed data.
     conn.execute_batch("PRAGMA wal_checkpoint(FULL);")
         .map_err(|e| e.to_string())?;
-    fs::create_dir_all(destination.parent().ok_or("无效的备份路径")?)
-        .map_err(|e| e.to_string())?;
+    fs::create_dir_all(destination.parent().ok_or("无效的备份路径")?).map_err(|e| e.to_string())?;
     let source = conn.path().ok_or("数据库连接没有文件路径")?;
     fs::copy(source, destination).map_err(|e| e.to_string())?;
     Ok(())
@@ -2976,7 +3617,7 @@ fn export_records(state: State<AppState>) -> Result<ExportResult, String> {
     }
     let conn = state.db.lock().map_err(|e| e.to_string())?;
     let attempts: Vec<Value> = conn
-        .prepare("SELECT id,question_id,attempted_at,duration_seconds,result,self_rating,mode FROM attempts ORDER BY attempted_at")
+        .prepare("SELECT id,question_id,attempted_at,duration_seconds,result,self_rating,mode,outcome,evidence_source,fluency_rating,confidence,session_id,diagnosis_id FROM attempts ORDER BY attempted_at")
         .map_err(|e| e.to_string())?
         .query_map([], |row| {
             Ok(json!({
@@ -2987,13 +3628,19 @@ fn export_records(state: State<AppState>) -> Result<ExportResult, String> {
                 "result": row.get::<_, String>(4)?,
                 "selfRating": row.get::<_, i64>(5)?,
                 "mode": row.get::<_, String>(6)?,
+                "outcome": row.get::<_, Option<String>>(7)?,
+                "evidenceSource": row.get::<_, Option<String>>(8)?,
+                "fluencyRating": row.get::<_, Option<i64>>(9)?,
+                "confidence": row.get::<_, Option<f64>>(10)?,
+                "sessionId": row.get::<_, Option<String>>(11)?,
+                "diagnosisId": row.get::<_, Option<String>>(12)?,
             }))
         })
         .map_err(|e| e.to_string())?
         .collect::<Result<Vec<_>, _>>()
         .map_err(|e| e.to_string())?;
     let progress: Vec<Value> = conn
-        .prepare("SELECT question_id,favorite,mastery,last_attempt_at,next_review,review_count FROM progress")
+        .prepare("SELECT question_id,favorite,mastery,last_attempt_at,next_review,review_count,note FROM progress")
         .map_err(|e| e.to_string())?
         .query_map([], |row| {
             Ok(json!({
@@ -3003,6 +3650,7 @@ fn export_records(state: State<AppState>) -> Result<ExportResult, String> {
                 "lastAttemptAt": row.get::<_, Option<String>>(3)?,
                 "nextReview": row.get::<_, Option<String>>(4)?,
                 "reviewCount": row.get::<_, i64>(5)?,
+                "note": row.get::<_, Option<String>>(6)?,
             }))
         })
         .map_err(|e| e.to_string())?
@@ -3017,16 +3665,35 @@ fn export_records(state: State<AppState>) -> Result<ExportResult, String> {
         .map_err(|e| e.to_string())?
         .collect::<Result<Vec<_>, _>>()
         .map_err(|e| e.to_string())?;
+    let reward_events: Vec<Value> = conn
+        .prepare("SELECT event_id,reward_type,amount,meta_json,created_at FROM reward_events ORDER BY created_at")
+        .map_err(|e| e.to_string())?
+        .query_map([], |row| {
+            Ok(json!({
+                "eventId": row.get::<_, String>(0)?,
+                "rewardType": row.get::<_, String>(1)?,
+                "amount": row.get::<_, i64>(2)?,
+                "metaJson": row.get::<_, Option<String>>(3)?,
+                "createdAt": row.get::<_, String>(4)?,
+            }))
+        })
+        .map_err(|e| e.to_string())?
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|e| e.to_string())?;
     let doc = json!({
         "app": "刷吧",
-        "version": "0.3.0",
+        "version": "0.7.0",
         "exportedAt": Local::now().to_rfc3339(),
         "attempts": attempts,
         "progress": progress,
         "settings": settings,
+        "rewardEvents": reward_events,
     });
-    fs::write(&json_path, serde_json::to_string_pretty(&doc).map_err(|e| e.to_string())?)
-        .map_err(|e| e.to_string())?;
+    fs::write(
+        &json_path,
+        serde_json::to_string_pretty(&doc).map_err(|e| e.to_string())?,
+    )
+    .map_err(|e| e.to_string())?;
     Ok(ExportResult {
         db_path: db_path.to_string_lossy().into_owned(),
         json_path: json_path.to_string_lossy().into_owned(),
@@ -3197,11 +3864,21 @@ fn confirm_inbox(id: i64, apply_to_profile: bool, state: State<AppState>) -> Res
             for attempt in payload.paper_attempts {
                 let input = AttemptInput {
                     question_id: attempt.question_id,
-                    duration_seconds: attempt.duration_seconds,
-                    result: attempt.result,
+                    duration_seconds: if attempt.duration_seconds > 0 {
+                        attempt.duration_seconds
+                    } else {
+                        30
+                    },
+                    result: attempt.result.clone(),
                     self_rating: attempt.self_rating,
                     selected_answer: attempt.selected_answer,
                     mode: Some("paper-codex".into()),
+                    outcome: Some(attempt.result),
+                    evidence_source: Some("codex".into()),
+                    fluency_rating: Some(attempt.self_rating),
+                    confidence: Some(1.0),
+                    session_id: Some(payload.task_id.clone()),
+                    diagnosis_id: attempt.diagnosis,
                 };
                 record_attempt_row(&tx, &input)?;
             }
@@ -3363,9 +4040,7 @@ fn get_task_prompt(task_id: String, state: State<AppState>) -> Result<Option<Str
     let tasks_dir = state.data_dir.join("codex-tasks");
     let path = tasks_dir.join(format!("{task_id}.txt"));
     if path.exists() {
-        Ok(Some(
-            fs::read_to_string(&path).map_err(|e| e.to_string())?,
-        ))
+        Ok(Some(fs::read_to_string(&path).map_err(|e| e.to_string())?))
     } else {
         Ok(None)
     }
@@ -3373,7 +4048,11 @@ fn get_task_prompt(task_id: String, state: State<AppState>) -> Result<Option<Str
 
 #[tauri::command]
 fn image_data_url(path: String, state: State<AppState>) -> Result<String, String> {
-    if let Some(cached) = state.image_cache.lock().ok().and_then(|cache| cache.get(&path).cloned())
+    if let Some(cached) = state
+        .image_cache
+        .lock()
+        .ok()
+        .and_then(|cache| cache.get(&path).cloned())
     {
         return Ok(cached);
     }
@@ -3388,7 +4067,7 @@ fn image_data_url(path: String, state: State<AppState>) -> Result<String, String
 #[tauri::command]
 fn get_insights(state: State<AppState>) -> Result<Vec<InsightPoint>, String> {
     let conn = state.db.lock().map_err(|e| e.to_string())?;
-    let mut stmt=conn.prepare("SELECT CASE WHEN instr(q.category_path,' / ')>0 THEN substr(q.category_path,1,instr(q.category_path,' / ')-1) ELSE q.category_path END subject,COUNT(a.id),AVG(CASE WHEN a.result='correct' THEN 1.0 ELSE 0.0 END),AVG(a.self_rating) FROM attempts a JOIN questions q ON q.id=a.question_id GROUP BY subject ORDER BY COUNT(a.id) DESC").map_err(|e|e.to_string())?;
+    let mut stmt=conn.prepare("SELECT CASE WHEN instr(q.category_path,' / ')>0 THEN substr(q.category_path,1,instr(q.category_path,' / ')-1) ELSE q.category_path END subject,SUM(CASE WHEN COALESCE(a.outcome,a.result)<>'uncertain' THEN 1 ELSE 0 END),AVG(CASE WHEN COALESCE(a.outcome,a.result)='uncertain' THEN NULL WHEN COALESCE(a.outcome,a.result)='correct' THEN 1.0 ELSE 0.0 END),AVG(CASE WHEN COALESCE(a.outcome,a.result)<>'uncertain' THEN COALESCE(a.fluency_rating,a.self_rating) END) FROM attempts a JOIN questions q ON q.id=a.question_id GROUP BY subject ORDER BY COUNT(a.id) DESC").map_err(|e|e.to_string())?;
     let rows = stmt
         .query_map([], |r| {
             Ok(InsightPoint {
@@ -3434,7 +4113,8 @@ fn get_weakness_radar(state: State<AppState>) -> Result<WeaknessRadar, String> {
     let mut weakness_recent: HashMap<String, i64> = HashMap::new();
     let mut error_last: HashMap<String, String> = HashMap::new();
     let mut weakness_last: HashMap<String, String> = HashMap::new();
-    let mut trend_map: HashMap<String, (HashMap<String, i64>, HashMap<String, i64>)> = HashMap::new();
+    let mut trend_map: HashMap<String, (HashMap<String, i64>, HashMap<String, i64>)> =
+        HashMap::new();
     for offset in (0..14).rev() {
         let date = (today - Duration::days(offset)).to_string();
         trend_map.insert(date, (HashMap::new(), HashMap::new()));
@@ -3452,7 +4132,11 @@ fn get_weakness_radar(state: State<AppState>) -> Result<WeaknessRadar, String> {
             if is_recent {
                 *error_recent.entry(tag.clone()).or_insert(0) += 1;
             }
-            if error_last.get(&tag).map(|last| last.as_str() < confirmed_at.as_str()).unwrap_or(true) {
+            if error_last
+                .get(&tag)
+                .map(|last| last.as_str() < confirmed_at.as_str())
+                .unwrap_or(true)
+            {
                 error_last.insert(tag.clone(), confirmed_at.clone());
             }
             if let Some((error_trend, _)) = trend_map.get_mut(&date) {
@@ -3464,7 +4148,11 @@ fn get_weakness_radar(state: State<AppState>) -> Result<WeaknessRadar, String> {
             if is_recent {
                 *weakness_recent.entry(tag.clone()).or_insert(0) += 1;
             }
-            if weakness_last.get(&tag).map(|last| last.as_str() < confirmed_at.as_str()).unwrap_or(true) {
+            if weakness_last
+                .get(&tag)
+                .map(|last| last.as_str() < confirmed_at.as_str())
+                .unwrap_or(true)
+            {
                 weakness_last.insert(tag.clone(), confirmed_at.clone());
             }
             if let Some((_, weakness_trend)) = trend_map.get_mut(&date) {
@@ -3554,12 +4242,17 @@ fn get_daily_trend(state: State<AppState>) -> Result<Vec<DailyTrendPoint>, Strin
         let date = (today - Duration::days(offset)).to_string();
         let (attempts, correct, rating): (i64, i64, Option<f64>) = conn
             .query_row(
-                "SELECT COUNT(*),COALESCE(SUM(CASE WHEN result='correct' THEN 1 ELSE 0 END),0),AVG(self_rating) FROM attempts WHERE substr(attempted_at,1,10)=?1",
+                "SELECT SUM(CASE WHEN COALESCE(outcome,result)<>'uncertain' THEN 1 ELSE 0 END), COALESCE(SUM(CASE WHEN COALESCE(outcome,result)='correct' THEN 1 ELSE 0 END),0), AVG(CASE WHEN COALESCE(outcome,result)<>'uncertain' THEN COALESCE(fluency_rating,self_rating) END) FROM attempts WHERE substr(attempted_at,1,10)=?1",
                 [&date],
                 |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
             )
             .unwrap_or((0, 0, None));
-        trend.push(DailyTrendPoint { date, attempts, correct, rating });
+        trend.push(DailyTrendPoint {
+            date,
+            attempts,
+            correct,
+            rating,
+        });
     }
     let _ = first_day;
     Ok(trend)
@@ -3585,9 +4278,16 @@ fn get_streak(state: State<AppState>) -> Result<UserStreak, String> {
         .map_err(|e| e.to_string())?;
     dates.retain(|d| d <= &today.to_string());
     if dates.is_empty() {
-        return Ok(UserStreak { current_streak: 0, best_streak: 0 });
+        return Ok(UserStreak {
+            current_streak: 0,
+            best_streak: 0,
+        });
     }
-    let has = |day: chrono::NaiveDate| dates.binary_search_by(|d| d.as_str().cmp(day.to_string().as_str())).is_ok();
+    let has = |day: chrono::NaiveDate| {
+        dates
+            .binary_search_by(|d| d.as_str().cmp(day.to_string().as_str()))
+            .is_ok()
+    };
     let mut current = 0_i64;
     let mut cursor = today;
     while has(cursor) {
@@ -3612,7 +4312,10 @@ fn get_streak(state: State<AppState>) -> Result<UserStreak, String> {
         prev = Some(day);
     }
     best = best.max(run);
-    Ok(UserStreak { current_streak: current, best_streak: best })
+    Ok(UserStreak {
+        current_streak: current,
+        best_streak: best,
+    })
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -3621,9 +4324,21 @@ pub fn run() {
         .setup(|app| {
             let data_dir = app.path().app_data_dir()?;
             fs::create_dir_all(data_dir.join("codex-inbox").join("processed"))?;
-            let conn = Connection::open(data_dir.join("shuaba.db"))?;
+            fs::create_dir_all(data_dir.join("backups").join("rolling"))?;
+
+            // 1. Checkpoint the existing database and create a recoverable
+            // pre-migration backup before any schema write.
+            let db_path = data_dir.join("shuaba.db");
+            let database_existed = db_path.exists();
+            let conn = Connection::open(&db_path)?;
+            if database_existed {
+                conn.execute_batch("PRAGMA wal_checkpoint(TRUNCATE);")?;
+                create_rolling_backup(&data_dir).map_err(std::io::Error::other)?;
+            }
+
+            // 2. Apply additive migrations. Failure stops startup.
             init_schema(&conn)?;
-            ensure_column(&conn, "progress", "note", "note TEXT")?;
+            migrate_schema(&conn)?;
             backfill_confirmed_analysis_signals(&conn).map_err(std::io::Error::other)?;
             let supplemental_conn = Connection::open(data_dir.join("supplemental.db"))?;
             init_supplemental_schema(&supplemental_conn)?;
@@ -3671,6 +4386,13 @@ pub fn run() {
             save_review_intervals,
             save_goal,
             export_records,
+            claim_reward_event,
+            get_reward_events,
+            save_practice_session,
+            load_practice_session,
+            clear_practice_session,
+            restore_database_backup,
+            list_database_backups,
             get_inbox,
             get_failed_inbox,
             refresh_inbox,
@@ -3960,7 +4682,10 @@ mod tests {
         let queue = recommendations(&conn, 12).unwrap();
         assert_eq!(queue.len(), 30);
         assert_eq!(
-            queue.iter().map(|item| item.question.id).collect::<Vec<_>>(),
+            queue
+                .iter()
+                .map(|item| item.question.id)
+                .collect::<Vec<_>>(),
             ids
         );
     }
@@ -3985,6 +4710,7 @@ mod tests {
                 self_rating: 3,
                 selected_answer: None,
                 mode: Some("paper".into()),
+                ..Default::default()
             },
         )
         .unwrap();
@@ -4010,6 +4736,7 @@ mod tests {
                 self_rating: 3,
                 selected_answer: None,
                 mode: Some("paper".into()),
+                ..Default::default()
             },
         )
         .unwrap();
@@ -4073,9 +4800,13 @@ mod tests {
             self_rating: 1,
             selected_answer: None,
             mode: None,
+            ..Default::default()
         };
         let insert_result = record_attempt_row(&conn, &input);
-        assert!(insert_result.is_err(), "question 1 不存在的题库外记录应报错或落到外键约束");
+        assert!(
+            insert_result.is_err(),
+            "question 1 不存在的题库外记录应报错或落到外键约束"
+        );
     }
 
     #[test]
@@ -4092,6 +4823,7 @@ mod tests {
                 self_rating: 4,
                 selected_answer: None,
                 mode: None,
+                ..Default::default()
             },
         )
         .unwrap();
@@ -4105,15 +4837,19 @@ mod tests {
         assert_eq!(progress.0, Some(4));
         undo_last_attempt_row(&conn, 1).unwrap();
         let remaining: i64 = conn
-            .query_row("SELECT COUNT(*) FROM attempts WHERE question_id=1", [], |r| {
-                r.get(0)
-            })
+            .query_row(
+                "SELECT COUNT(*) FROM attempts WHERE question_id=1",
+                [],
+                |r| r.get(0),
+            )
             .unwrap();
         assert_eq!(remaining, 0);
         let favorite: i64 = conn
-            .query_row("SELECT COUNT(*) FROM progress WHERE question_id=1", [], |r| {
-                r.get(0)
-            })
+            .query_row(
+                "SELECT COUNT(*) FROM progress WHERE question_id=1",
+                [],
+                |r| r.get(0),
+            )
             .unwrap();
         assert_eq!(favorite, 0);
     }
@@ -4239,24 +4975,44 @@ mod tests {
                 self_rating: 4,
                 selected_answer: None,
                 mode: None,
+                ..Default::default()
             },
-        ).unwrap();
+        )
+        .unwrap();
 
         // BATCH-2 is now completed
-        let b2_status: String = conn.query_row("SELECT status FROM recommendation_batches WHERE task_id='BATCH-2'", [], |r| r.get(0)).unwrap();
+        let b2_status: String = conn
+            .query_row(
+                "SELECT status FROM recommendation_batches WHERE task_id='BATCH-2'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
         assert_eq!(b2_status, "completed");
 
         // Now undo today's attempt
         undo_last_attempt_row(&conn, 1).unwrap();
 
         // BATCH-1 should STILL be completed (not affected)
-        let b1_status: String = conn.query_row("SELECT status FROM recommendation_batches WHERE task_id='BATCH-1'", [], |r| r.get(0)).unwrap();
+        let b1_status: String = conn
+            .query_row(
+                "SELECT status FROM recommendation_batches WHERE task_id='BATCH-1'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
         assert_eq!(b1_status, "completed");
         let b1_item_completed: Option<String> = conn.query_row("SELECT completed_at FROM recommendation_batch_items WHERE task_id='BATCH-1' AND question_id=1", [], |r| r.get(0)).unwrap();
         assert!(b1_item_completed.is_some());
 
         // BATCH-2 should be rolled back to active
-        let b2_status_after: String = conn.query_row("SELECT status FROM recommendation_batches WHERE task_id='BATCH-2'", [], |r| r.get(0)).unwrap();
+        let b2_status_after: String = conn
+            .query_row(
+                "SELECT status FROM recommendation_batches WHERE task_id='BATCH-2'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
         assert_eq!(b2_status_after, "active");
         let b2_item_completed: Option<String> = conn.query_row("SELECT completed_at FROM recommendation_batch_items WHERE task_id='BATCH-2' AND question_id=1", [], |r| r.get(0)).unwrap();
         assert!(b2_item_completed.is_none());
@@ -4277,7 +5033,10 @@ mod tests {
         let recs = recommendations(&conn, 10).unwrap();
         assert!(!recs.is_empty());
         let yesterday_wrong_item = recs.iter().find(|r| r.reason_code == "yesterday_wrong");
-        assert!(yesterday_wrong_item.is_some(), "应在推荐列表中显式插入昨日错题同考点变式");
+        assert!(
+            yesterday_wrong_item.is_some(),
+            "应在推荐列表中显式插入昨日错题同考点变式"
+        );
     }
 
     #[test]
@@ -4296,9 +5055,17 @@ mod tests {
                 self_rating: 4,
                 selected_answer: None,
                 mode: Some("paper".into()),
+                ..Default::default()
             },
-        ).unwrap();
-        let (count1, mastery1): (i64, i64) = conn.query_row("SELECT review_count, mastery FROM progress WHERE question_id=155", [], |r| Ok((r.get(0)?, r.get(1)?))).unwrap();
+        )
+        .unwrap();
+        let (count1, mastery1): (i64, i64) = conn
+            .query_row(
+                "SELECT review_count, mastery FROM progress WHERE question_id=155",
+                [],
+                |r| Ok((r.get(0)?, r.get(1)?)),
+            )
+            .unwrap();
         assert_eq!(count1, 1);
         assert_eq!(mastery1, 4);
 
@@ -4312,14 +5079,292 @@ mod tests {
                 self_rating: 1,
                 selected_answer: None,
                 mode: Some("review".into()),
+                ..Default::default()
             },
-        ).unwrap();
-        let (count2, mastery2, next2): (i64, i64, String) = conn.query_row("SELECT review_count, mastery, next_review FROM progress WHERE question_id=155", [], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?))).unwrap();
+        )
+        .unwrap();
+        let (count2, mastery2, next2): (i64, i64, String) = conn
+            .query_row(
+                "SELECT review_count, mastery, next_review FROM progress WHERE question_id=155",
+                [],
+                |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
+            )
+            .unwrap();
         assert_eq!(count2, 1);
         assert_eq!(mastery2, 1);
         let expected_next = (Local::now().date_naive() + Duration::days(1)).to_string();
         assert_eq!(next2, expected_next);
     }
+
+    #[test]
+    fn reward_events_are_idempotent_and_persistent() {
+        let conn = Connection::open_in_memory().unwrap();
+        init_schema(&conn).unwrap();
+
+        // 1. Claim contract reward event
+        let now = Local::now().to_rfc3339();
+        let rows1 = conn.execute(
+            "INSERT OR IGNORE INTO reward_events(event_id, reward_type, amount, meta_json, created_at) VALUES(?1, ?2, ?3, ?4, ?5)",
+            params!["contract-2026-08-19", "contract", 60, "{}", now],
+        ).unwrap();
+        assert_eq!(rows1, 1);
+
+        // 2. Duplicate claim with same event_id
+        let rows2 = conn.execute(
+            "INSERT OR IGNORE INTO reward_events(event_id, reward_type, amount, meta_json, created_at) VALUES(?1, ?2, ?3, ?4, ?5)",
+            params!["contract-2026-08-19", "contract", 60, "{}", now],
+        ).unwrap();
+        assert_eq!(rows2, 0, "同一 event_id 重复领取不应重复插入");
+
+        // 3. Sum of EXP
+        let total: i64 = conn
+            .query_row(
+                "SELECT COALESCE(SUM(amount), 0) FROM reward_events",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(total, 60);
+
+        // 4. Claim chest reward
+        conn.execute(
+            "INSERT OR IGNORE INTO reward_events(event_id, reward_type, amount, meta_json, created_at) VALUES(?1, ?2, ?3, ?4, ?5)",
+            params!["chest-2026-08-19", "chest", 150, "{}", now],
+        ).unwrap();
+        let total2: i64 = conn
+            .query_row(
+                "SELECT COALESCE(SUM(amount), 0) FROM reward_events",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(total2, 210);
+    }
+
+    #[test]
+    fn attempts_stores_outcome_and_fluency_separately() {
+        let mut conn = Connection::open_in_memory().unwrap();
+        init_schema(&conn).unwrap();
+        migrate_schema(&conn).unwrap();
+        import_library(&mut conn, Path::new(DEFAULT_LIBRARY)).unwrap();
+
+        // Subjective question attempt with fluency 4 and outcome 'uncertain'
+        record_attempt_row(
+            &conn,
+            &AttemptInput {
+                question_id: 155,
+                duration_seconds: 45,
+                result: "uncertain".into(),
+                self_rating: 4,
+                selected_answer: None,
+                mode: Some("paper".into()),
+                outcome: Some("uncertain".into()),
+                evidence_source: Some("manual_confirmed".into()),
+                fluency_rating: Some(4),
+                confidence: Some(0.95),
+                session_id: Some("session-test-01".into()),
+                diagnosis_id: None,
+            },
+        )
+        .unwrap();
+
+        let (outcome, evidence, fluency, confidence, session_id): (String, String, i64, Option<f64>, String) = conn.query_row(
+            "SELECT outcome, evidence_source, fluency_rating, confidence, session_id FROM attempts WHERE question_id=155",
+            [],
+            |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?)),
+        ).unwrap();
+
+        assert_eq!(outcome, "uncertain");
+        assert_eq!(evidence, "manual_confirmed");
+        assert_eq!(fluency, 4);
+        assert_eq!(confidence, Some(0.95));
+        assert_eq!(session_id, "session-test-01");
+        let progress_count: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM progress WHERE question_id=155",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(
+            progress_count, 0,
+            "uncertain 作答只能保留诊断，不能由流畅度更新掌握进度"
+        );
+    }
+
+    #[test]
+    fn duration_anomalies_are_clamped_and_isolated() {
+        let mut conn = Connection::open_in_memory().unwrap();
+        init_schema(&conn).unwrap();
+        migrate_schema(&conn).unwrap();
+        import_library(&mut conn, Path::new(DEFAULT_LIBRARY)).unwrap();
+
+        let today = Local::now().date_naive().to_string();
+
+        // 1. Record attempt with 0 duration -> should clamp to minimum 1s
+        record_attempt_row(
+            &conn,
+            &AttemptInput {
+                question_id: 155,
+                duration_seconds: 0,
+                result: "correct".into(),
+                self_rating: 3,
+                selected_answer: None,
+                mode: Some("paper".into()),
+                outcome: Some("correct".into()),
+                evidence_source: Some("self_report".into()),
+                fluency_rating: Some(3),
+                confidence: None,
+                session_id: None,
+                diagnosis_id: None,
+            },
+        )
+        .unwrap();
+
+        let dur: i64 = conn
+            .query_row(
+                "SELECT duration_seconds FROM attempts WHERE question_id=155",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(dur, 1, "0 秒写入应自动修正为下限 1 秒");
+
+        // 2. Insert raw legacy anomalous duration into attempts (e.g. 34811 seconds)
+        conn.execute(
+            "INSERT INTO attempts(question_id, attempted_at, duration_seconds, result, self_rating, mode, outcome, evidence_source) VALUES(160, ?1, 34811, 'correct', 4, 'paper', 'correct', 'legacy')",
+            [&today],
+        ).unwrap();
+
+        // Query today_seconds with anomaly filtering
+        let valid_seconds: i64 = conn.query_row(
+            "SELECT COALESCE(SUM(duration_seconds),0) FROM attempts WHERE substr(attempted_at,1,10)=?1 AND duration_seconds BETWEEN 1 AND 1800",
+            [&today],
+            |r| r.get(0),
+        ).unwrap();
+
+        assert_eq!(valid_seconds, 1, "异常时长(34811s)应被隔离在日常统计之外");
+
+        let anomaly_count: i64 = conn.query_row(
+            "SELECT COUNT(*) FROM attempts WHERE duration_seconds > 1800 OR duration_seconds < 1",
+            [],
+            |r| r.get(0),
+        ).unwrap();
+        assert_eq!(anomaly_count, 1);
+    }
+
+    #[test]
+    fn practice_session_restores_current_questions_and_index() {
+        let mut conn = Connection::open_in_memory().unwrap();
+        init_schema(&conn).unwrap();
+        migrate_schema(&conn).unwrap();
+        import_library(&mut conn, Path::new(DEFAULT_LIBRARY)).unwrap();
+
+        let input = PracticeSessionInput {
+            question_ids: vec![155, 160],
+            reasons: vec!["到期复习".into(), "薄弱修复".into()],
+            reason_codes: vec!["due".into(), "weakness".into()],
+            scores: vec![100.0, 80.0],
+            current_index: 1,
+            attempt_mode: "review".into(),
+        };
+        save_practice_session_row(&conn, &input).unwrap();
+        conn.execute(
+            "UPDATE questions SET stem='当前数据库题干' WHERE id=160",
+            [],
+        )
+        .unwrap();
+
+        let restored = load_practice_session_row(&conn).unwrap().unwrap();
+        assert_eq!(restored.current_index, 1);
+        assert_eq!(restored.attempt_mode, "review");
+        assert_eq!(restored.queue.len(), 2);
+        assert_eq!(restored.queue[1].question.stem, "当前数据库题干");
+    }
+
+    #[test]
+    fn failed_migration_rolls_back_all_schema_changes() {
+        let conn = Connection::open_in_memory().unwrap();
+        conn.execute_batch(
+            "CREATE TABLE progress(question_id INTEGER PRIMARY KEY);
+             CREATE TABLE attempts(
+               id INTEGER PRIMARY KEY,
+               result TEXT NOT NULL,
+               self_rating INTEGER NOT NULL
+             );",
+        )
+        .unwrap();
+
+        assert!(migrate_schema_impl(&conn, true).is_err());
+        let attempt_columns: Vec<String> = conn
+            .prepare("PRAGMA table_info(attempts)")
+            .unwrap()
+            .query_map([], |row| row.get(1))
+            .unwrap()
+            .collect::<Result<Vec<_>, _>>()
+            .unwrap();
+        let progress_columns: Vec<String> = conn
+            .prepare("PRAGMA table_info(progress)")
+            .unwrap()
+            .query_map([], |row| row.get(1))
+            .unwrap()
+            .collect::<Result<Vec<_>, _>>()
+            .unwrap();
+        assert!(!attempt_columns.iter().any(|column| column == "outcome"));
+        assert!(!progress_columns.iter().any(|column| column == "note"));
+    }
+
+    #[test]
+    fn rolling_backups_keep_latest_seven_and_four_weekly_points() {
+        use chrono::TimeZone;
+
+        let dates = vec![
+            Local.with_ymd_and_hms(2026, 8, 19, 12, 0, 0).unwrap(),
+            Local.with_ymd_and_hms(2026, 8, 19, 11, 0, 0).unwrap(),
+            Local.with_ymd_and_hms(2026, 8, 18, 12, 0, 0).unwrap(),
+            Local.with_ymd_and_hms(2026, 8, 17, 12, 0, 0).unwrap(),
+            Local.with_ymd_and_hms(2026, 8, 16, 12, 0, 0).unwrap(),
+            Local.with_ymd_and_hms(2026, 8, 15, 12, 0, 0).unwrap(),
+            Local.with_ymd_and_hms(2026, 8, 14, 12, 0, 0).unwrap(),
+            Local.with_ymd_and_hms(2026, 8, 10, 12, 0, 0).unwrap(),
+            Local.with_ymd_and_hms(2026, 8, 3, 12, 0, 0).unwrap(),
+            Local.with_ymd_and_hms(2026, 7, 27, 12, 0, 0).unwrap(),
+            Local.with_ymd_and_hms(2026, 7, 20, 12, 0, 0).unwrap(),
+        ];
+        let keep = rolling_backup_keep_indices(&dates);
+        assert!((0..7).all(|index| keep.contains(&index)));
+        let kept_weeks: HashSet<_> = keep
+            .iter()
+            .map(|index| {
+                let iso = dates[*index].iso_week();
+                (iso.year(), iso.week())
+            })
+            .collect();
+        assert!(kept_weeks.len() >= 4);
+        assert!(!keep.contains(&10), "只保留最近四个周锚点");
+    }
+
+    #[test]
+    fn restore_preflight_rejects_invalid_backup_before_switching() {
+        let temp_dir =
+            std::env::temp_dir().join(format!("shuaba-restore-test-{}", rand::random::<u64>()));
+        fs::create_dir_all(&temp_dir).unwrap();
+        let valid_path = temp_dir.join("valid.db");
+        let invalid_path = temp_dir.join("invalid.db");
+
+        let valid = Connection::open(&valid_path).unwrap();
+        init_schema(&valid).unwrap();
+        drop(valid);
+        assert_eq!(inspect_database_backup(&valid_path).unwrap(), (0, 0));
+
+        let invalid = Connection::open(&invalid_path).unwrap();
+        invalid
+            .execute_batch("CREATE TABLE attempts(id INTEGER); CREATE TABLE progress(id INTEGER);")
+            .unwrap();
+        drop(invalid);
+        let error = inspect_database_backup(&invalid_path).unwrap_err();
+        assert!(error.contains("settings"));
+
+        fs::remove_dir_all(&temp_dir).unwrap();
+    }
 }
-
-

@@ -6,6 +6,8 @@ import {
   saveDailyContract,
   checkContractStatus,
 } from '../data/motivation'
+import { claimRewardEvent } from '../api'
+import type { RewardEvent } from '../types'
 import type { DailyContract } from '../data/motivation'
 
 interface DailyContractModalProps {
@@ -13,8 +15,12 @@ interface DailyContractModalProps {
   onClose: () => void
   todayDone: number
   todayMinutes: number
+  targetProblemCount?: number
+  targetMinutesCount?: number
+  dailyMode?: 'problems' | 'minutes' | 'both'
   onClaimExp: (amount: number) => void
   notify: (msg: string) => void
+  rewardEvents: RewardEvent[]
 }
 
 const PRESET_GOALS = [
@@ -30,50 +36,69 @@ export function DailyContractModal({
   onClose,
   todayDone,
   todayMinutes,
+  targetProblemCount = 20,
+  targetMinutesCount = 90,
+  dailyMode = 'problems',
   onClaimExp,
   notify,
+  rewardEvents,
 }: DailyContractModalProps) {
-  const [contract, setContract] = useState<DailyContract>(() => getDailyContract())
+  const [contract, setContract] = useState<DailyContract>(() => getDailyContract(targetProblemCount, targetMinutesCount))
   const [goalInput, setGoalInput] = useState(contract.goalText)
-  const [targetProblems, setTargetProblems] = useState(contract.targetProblemCount)
-  const [targetMins, setTargetMins] = useState(contract.targetMinutes)
 
   // Sync and check completion
   useEffect(() => {
     if (open) {
-      const current = getDailyContract()
-      const updated = checkContractStatus(current, todayDone, todayMinutes)
+      const current = getDailyContract(targetProblemCount, targetMinutesCount)
+      current.claimedReward = rewardEvents.some((event) => event.eventId === `contract-${current.date}`)
+      const updated = checkContractStatus(current, todayDone, todayMinutes, dailyMode)
       setContract(updated)
       setGoalInput(updated.goalText)
-      setTargetProblems(updated.targetProblemCount)
-      setTargetMins(updated.targetMinutes)
     }
-  }, [open, todayDone, todayMinutes])
+  }, [open, todayDone, todayMinutes, targetProblemCount, targetMinutesCount, dailyMode, rewardEvents])
 
   const handleSave = () => {
     const next: DailyContract = {
       ...contract,
       goalText: goalInput.trim() || '保持数一高强度手感与规范推导',
-      targetProblemCount: targetProblems,
-      targetMinutes: targetMins,
+      targetProblemCount,
+      targetMinutes: targetMinutesCount,
     }
-    const checked = checkContractStatus(next, todayDone, todayMinutes)
+    const checked = checkContractStatus(next, todayDone, todayMinutes, dailyMode)
     setContract(checked)
     saveDailyContract(checked)
     notify('今日心流作战契约已签署！')
   }
 
-  const handleClaim = () => {
+  const handleClaim = async () => {
     if (contract.isCompleted && !contract.claimedReward) {
-      const updated = { ...contract, claimedReward: true }
-      setContract(updated)
-      saveDailyContract(updated)
-      onClaimExp(60)
-      notify('🎉 契约达成！已领取 +60 EXP 战力经验！')
+      try {
+        const result = await claimRewardEvent(`contract-${contract.date}`, 'contract', 60)
+        if (!result.newlyClaimed) {
+          setContract({ ...contract, claimedReward: true })
+          notify('该契约奖励已经领取过')
+          return
+        }
+        const updated = { ...contract, claimedReward: true }
+        setContract(updated)
+        saveDailyContract(updated)
+        onClaimExp(60)
+        notify('契约达成，已领取 +60 EXP')
+      } catch (error) {
+        notify(`奖励领取失败，未写入账本：${String(error)}`)
+      }
     }
   }
 
   if (!open) return null
+
+  const problemProgress = Math.min(100, Math.round((todayDone / Math.max(1, targetProblemCount)) * 100))
+  const minuteProgress = Math.min(100, Math.round((todayMinutes / Math.max(1, targetMinutesCount)) * 100))
+  const contractProgress = dailyMode === 'minutes'
+    ? minuteProgress
+    : dailyMode === 'both'
+      ? Math.min(problemProgress, minuteProgress)
+      : problemProgress
 
   return (
     <AnimatePresence>
@@ -86,7 +111,7 @@ export function DailyContractModal({
           onClick={(e) => e.stopPropagation()}
         >
           {/* Close button */}
-          <button className="contract-close-btn" onClick={onClose}>
+          <button className="contract-close-btn" onClick={onClose} aria-label="关闭每日契约">
             <X size={16} />
           </button>
 
@@ -136,13 +161,7 @@ export function DailyContractModal({
               <div className="metric-box">
                 <label>目标做题数</label>
                 <div className="metric-stepper">
-                  <input
-                    type="number"
-                    min="1"
-                    max="100"
-                    value={targetProblems}
-                    onChange={(e) => setTargetProblems(Math.max(1, Number(e.target.value)))}
-                  />
+                  <strong>{targetProblemCount}</strong>
                   <span>道</span>
                 </div>
                 <small>当前已完成: <b>{todayDone}</b> 道</small>
@@ -151,13 +170,7 @@ export function DailyContractModal({
               <div className="metric-box">
                 <label>目标专注时长</label>
                 <div className="metric-stepper">
-                  <input
-                    type="number"
-                    min="5"
-                    max="300"
-                    value={targetMins}
-                    onChange={(e) => setTargetMins(Math.max(5, Number(e.target.value)))}
-                  />
+                  <strong>{targetMinutesCount}</strong>
                   <span>分钟</span>
                 </div>
                 <small>当前已专注: <b>{todayMinutes}</b> 分钟</small>
@@ -169,14 +182,14 @@ export function DailyContractModal({
               <div className="progress-info">
                 <span>契约攻克进度</span>
                 <b>
-                  {Math.min(100, Math.round((todayDone / targetProblems) * 100))}%
+                  {contractProgress}%
                 </b>
               </div>
               <div className="contract-bar">
                 <div
                   className="contract-bar-fill"
                   style={{
-                    width: `${Math.min(100, Math.max(8, (todayDone / targetProblems) * 100))}%`,
+                    width: `${contractProgress}%`,
                   }}
                 />
               </div>

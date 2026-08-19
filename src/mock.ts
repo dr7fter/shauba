@@ -47,6 +47,7 @@ export const mockRecommendations: RecommendedQuestion[] = mockQuestions.map((que
 export const mockBootstrap: BootstrapData = {
   libraryReady: true, libraryDir: 'E:\\考研资料\\题库-大观园', questionCount: 5388, imageCount: 1306,
   todayDone: 7, todayMinutes: 38, dueCount: 16, favoriteCount: 24, inboxCount: 1, inboxFailedCount: 0,
+  excludedDurationCount: 0, rewardEventsCount: 0,
   reviewIntervals: [1, 3, 7, 15],
   dailyMode: 'both', dailyProblemTarget: 20, dailyMinuteTarget: 90,
   dataDir: '本地预览', inboxDir: '本地预览', currentChapterId: 321, currentChapterName: '极限', customQueueCount: 3, supplementalQuestionCount: 0, supplementalDbPath: '本地预览/supplemental.db', activeRecommendation: null, recommendations: mockRecommendations,
@@ -70,9 +71,11 @@ export const mockMastery: MasteryChapter[] = [
     coverage: index === 0 ? 18 / 320 : index === 1 ? 2 / 351 : 0,
     accuracy: index === 0 ? .7 : index === 1 ? .5 : null, rating: index === 0 ? 2.8 : index === 1 ? 2 : null,
     masteryScore: index === 0 ? 48 : null, evidence: index === 0 ? '覆盖 18/320 · 20 次作答' : index === 1 ? '仅 2 道证据，暂不评分' : '尚未开始',
+    evidenceLevel: index === 0 ? '多次独立作答' : index === 1 ? '初步作答证据' : '无可评分证据',
+    evidenceSources: index < 2 ? ['人工确认 2', '自评 18'] : [], retestCorrectCount: 0,
   })),
-  { id: 2, rootName: '线性代数', name: '行列式', total: 121, attempted: 0, correctAttempts: 0, attemptCount: 0, dueCount: 0, weakCount: 0, coverage: 0, accuracy: null, rating: null, masteryScore: null, evidence: '尚未开始' },
-  { id: 602, rootName: '概率统计', name: '随机事件与概率', total: 59, attempted: 0, correctAttempts: 0, attemptCount: 0, dueCount: 0, weakCount: 0, coverage: 0, accuracy: null, rating: null, masteryScore: null, evidence: '尚未开始' },
+  { id: 2, rootName: '线性代数', name: '行列式', total: 121, attempted: 0, correctAttempts: 0, attemptCount: 0, dueCount: 0, weakCount: 0, coverage: 0, accuracy: null, rating: null, masteryScore: null, evidence: '尚未开始', evidenceLevel: '无可评分证据', evidenceSources: [], retestCorrectCount: 0 },
+  { id: 602, rootName: '概率统计', name: '随机事件与概率', total: 59, attempted: 0, correctAttempts: 0, attemptCount: 0, dueCount: 0, weakCount: 0, coverage: 0, accuracy: null, rating: null, masteryScore: null, evidence: '尚未开始', evidenceLevel: '无可评分证据', evidenceSources: [], retestCorrectCount: 0 },
 ]
 
 export const mockInbox: InboxItem[] = [{

@@ -1,0 +1,255 @@
+import { invoke } from '@tauri-apps/api/core'
+import { mockBootstrap, mockCategories, mockInbox, mockMastery, mockQuestions, mockRecommendations } from './mock'
+import type { BootstrapData, CategoryNode, CodexTask, DailyLog, DailyTrendPoint, ExportResult, FailedInboxItem, InboxItem, InboxSummary, InsightPoint, MasteryChapter, MasteryNode, Question, QuestionPage, RecommendationBatch, RecommendedQuestion, ReviewHistory, ReviewPlan, UserStreak, WeaknessRadar } from './types'
+
+const isTauri = () => '__TAURI_INTERNALS__' in window
+
+export async function bootstrap(): Promise<BootstrapData> {
+  return isTauri() ? invoke('bootstrap') : mockBootstrap
+}
+
+export async function getQuestion(id: number): Promise<Question> {
+  return isTauri() ? invoke('get_question', { id }) : mockQuestions.find((q) => q.id === id) ?? mockQuestions[0]
+}
+
+export async function getRecommendations(limit = 12): Promise<RecommendedQuestion[]> {
+  return isTauri() ? invoke('get_recommendations', { limit }) : mockRecommendations.slice(0, limit)
+}
+
+export async function getReviewQueue(limit = 50): Promise<RecommendedQuestion[]> {
+  return isTauri() ? invoke('get_review_queue', { limit }) : mockRecommendations.slice(0, limit)
+}
+
+export async function getReviewHistory(): Promise<ReviewHistory> {
+  if (isTauri()) return invoke('get_review_history')
+  const today = new Date()
+  const days = Array.from({ length: 7 }, (_, index) => {
+    const date = new Date(today)
+    date.setDate(today.getDate() - 6 + index)
+    return { date: date.toISOString().slice(0, 10), count: index === 6 ? 2 : 0, correctCount: index === 6 ? 1 : 0 }
+  })
+  return { days, items: [{ attemptId: 1, questionId: mockQuestions[0].id, attemptedAt: today.toISOString(), stem: mockQuestions[0].stem, categoryPath: mockQuestions[0].categoryPath, source: mockQuestions[0].source, result: 'wrong', selfRating: 2 }] }
+}
+
+export async function getReviewPlan(): Promise<ReviewPlan> {
+  if (isTauri()) return invoke('get_review_plan')
+  const today = new Date()
+  const days = Array.from({ length: 7 }, (_, index) => {
+    const date = new Date(today)
+    date.setDate(today.getDate() + index)
+    return { date: date.toISOString().slice(0, 10), count: index === 1 ? 2 : 0 }
+  })
+  return { days, items: [{ questionId: mockQuestions[0].id, stem: mockQuestions[0].stem, categoryPath: mockQuestions[0].categoryPath, source: mockQuestions[0].source, scheduledDate: days[1].date, nextReview: days[1].date, selfRating: 1 }] }
+}
+
+export async function getCategories(root = ''): Promise<CategoryNode[]> {
+  return isTauri() ? invoke('get_categories', { root }) : mockCategories.filter((item) => !root || item.rootName === root)
+}
+
+export async function searchQuestionPage(input: { query: string; categoryId: number | null; status: string; scope: string; page: number; pageSize: number }): Promise<QuestionPage> {
+  if (isTauri()) return invoke('search_question_page', input)
+  const category = mockCategories.find((item) => item.id === input.categoryId)
+  const preview = Array.from({ length: 5388 }, (_, index) => ({ ...mockQuestions[index % mockQuestions.length], id: index + 1 }))
+  const filtered = preview.filter((question) =>
+    (!input.query || `${question.stem}${question.source}${question.id}`.includes(input.query)) &&
+    (!category || question.categoryPath.includes(category.name)) &&
+    (input.scope === 'complete' || (input.scope === 'core' && question.isCore) || (input.scope === 'truth' && question.source.includes('真题'))) &&
+    (input.status === 'all' || (input.status === 'favorite' && question.favorite) || (input.status === 'wrong' && question.accuracy === 0) || (input.status === 'unseen' && question.attempts === 0) || (input.status === 'noted' && !!question.note)),
+  )
+  const start = (input.page - 1) * input.pageSize
+  return { items: filtered.slice(start, start + input.pageSize), total: filtered.length, page: input.page, pageSize: input.pageSize, pageCount: Math.ceil(filtered.length / input.pageSize) }
+}
+
+export async function getMasteryMap(): Promise<MasteryChapter[]> {
+  return isTauri() ? invoke('get_mastery_map') : mockMastery
+}
+
+export async function getMasteryNodes(): Promise<MasteryNode[]> {
+  if (isTauri()) return invoke('get_mastery_nodes')
+  const leaves = ['概念辨析', '基本计算', '综合应用', '参数问题', '证明与推理']
+  return mockCategories.filter((item) => item.rootName === '高等数学' && item.depth === 1).flatMap((chapter, chapterIndex) => leaves.map((name, leafIndex) => {
+    const attempted = chapterIndex === 0 ? Math.max(0, 5 - leafIndex) : chapterIndex === 1 && leafIndex === 0 ? 2 : 0
+    return { id: chapter.id * 10 + leafIndex, parentId: chapter.id, chapterId: chapter.id, name, path: `${chapter.path} / ${name}`, depth: 3,
+      total: 18 + leafIndex * 9 + chapterIndex * 3, attempted, attemptCount: attempted, dueCount: attempted > 2 ? 1 : 0, weakCount: attempted > 0 ? 1 : 0,
+      coverage: attempted / (18 + leafIndex * 9 + chapterIndex * 3), accuracy: attempted ? .55 + leafIndex * .07 : null,
+      rating: attempted ? 2.2 + leafIndex * .25 : null, masteryScore: attempted >= 3 ? 38 + leafIndex * 10 : null }
+  }))
+}
+
+export async function getCustomQueue(): Promise<Question[]> {
+  return isTauri() ? invoke('get_custom_queue') : mockQuestions
+}
+
+export async function addToCustomQueue(questionId: number): Promise<number> {
+  return isTauri() ? invoke('add_to_custom_queue', { questionId }) : 1
+}
+
+export async function removeFromCustomQueue(questionId: number): Promise<number> {
+  return isTauri() ? invoke('remove_from_custom_queue', { questionId }) : 0
+}
+
+export async function clearCustomQueue(): Promise<void> {
+  if (isTauri()) await invoke('clear_custom_queue')
+}
+
+export async function getChapterQueue(categoryId: number, limit = 100): Promise<RecommendedQuestion[]> {
+  return isTauri() ? invoke('get_chapter_queue', { categoryId, limit }) : mockRecommendations.slice(0, limit)
+}
+
+export async function getFocusQueue(categoryIds: number[], limit = 50): Promise<RecommendedQuestion[]> {
+  return isTauri() ? invoke('get_focus_queue', { categoryIds, limit }) : mockRecommendations.slice(0, limit)
+}
+
+export async function getVariantQueue(questionId: number, limit = 3): Promise<RecommendedQuestion[]> {
+  return isTauri() ? invoke('get_variant_queue', { questionId, limit }) : mockRecommendations.slice(0, limit)
+}
+
+export async function setFocusBranches(categoryIds: number[]): Promise<void> {
+  if (isTauri()) await invoke('set_focus_branches', { categoryIds })
+}
+
+export async function setCurrentChapter(categoryId: number | null): Promise<void> {
+  if (isTauri()) await invoke('set_current_chapter', { categoryId })
+}
+
+export async function recordAttempt(input: {
+  questionId: number; durationSeconds: number; result: string; selfRating: number; selectedAnswer?: string; mode?: string
+}): Promise<Question> {
+  if (isTauri()) return invoke('record_attempt', { input })
+  return { ...(await getQuestion(input.questionId)), attempts: 1, mastery: input.selfRating }
+}
+
+export async function toggleFavorite(questionId: number): Promise<boolean> {
+  return isTauri() ? invoke('toggle_favorite', { questionId }) : true
+}
+
+export async function saveNote(questionId: number, note: string): Promise<void> {
+  if (isTauri()) await invoke('save_note', { questionId, note })
+}
+
+export async function saveReviewIntervals(intervals: number[]): Promise<void> {
+  if (isTauri()) await invoke('save_review_intervals', { intervals })
+}
+
+export async function undoLastAttempt(questionId: number): Promise<Question> {
+  if (isTauri()) return invoke('undo_last_attempt', { questionId })
+  return getQuestion(questionId)
+}
+
+export async function exportRecords(): Promise<ExportResult> {
+  if (isTauri()) return invoke('export_records')
+  return { dbPath: '本地预览', jsonPath: '本地预览' }
+}
+
+export async function getFailedInbox(): Promise<FailedInboxItem[]> {
+  return isTauri() ? invoke('get_failed_inbox') : []
+}
+
+export async function refreshInbox(): Promise<InboxSummary> {
+  if (isTauri()) return invoke('refresh_inbox')
+  return { pendingCount: 0, failedCount: 0, lastProcessedTaskId: null }
+}
+
+export async function getTaskPrompt(taskId: string): Promise<string | null> {
+  if (isTauri()) return invoke('get_task_prompt', { taskId })
+  const task = mockInbox.find((item) => item.taskId === taskId)
+  return task ? `批改任务说明（${task.taskId}）\n题目：${task.summary}` : null
+}
+
+export async function saveGoal(input: { dailyMode: string; dailyProblemTarget: number; dailyMinuteTarget: number }): Promise<void> {
+  if (isTauri()) await invoke('save_goal', { input })
+}
+
+export async function getInbox(): Promise<InboxItem[]> {
+  return isTauri() ? invoke('get_inbox') : mockInbox
+}
+
+export async function confirmInbox(id: number, applyToProfile: boolean): Promise<void> {
+  if (isTauri()) await invoke('confirm_inbox', { id, applyToProfile })
+}
+
+export async function startRecommendationBatch(taskId: string): Promise<RecommendationBatch | null> {
+  return isTauri() ? invoke('start_recommendation_batch', { taskId }) : null
+}
+
+export async function dismissRecommendationBatch(taskId: string): Promise<void> {
+  if (isTauri()) await invoke('dismiss_recommendation_batch', { taskId })
+}
+
+export async function createCodexTask(questionId: number): Promise<CodexTask> {
+  if (isTauri()) return invoke('create_codex_task', { questionId })
+  return {
+    taskId: 'SB-PREVIEW-155', questionId, questionCount: 1,
+    prompt: '你正在为数学刷题 App「刷吧」批改数一草稿。请结合我发送的草稿图片定位最早错误，并将结构化结果写回刷吧收件箱。',
+    inboxDir: '本地预览', outputFile: '本地预览/SB-PREVIEW-155.json',
+  }
+}
+
+export async function createCodexBatchTask(questionIds: number[]): Promise<CodexTask> {
+  if (isTauri()) return invoke('create_codex_batch_task', { questionIds })
+  return {
+    taskId: 'SB-BATCH-PREVIEW-0001', questionId: null, questionCount: questionIds.length,
+    prompt: '你正在为数学刷题 App「刷吧」批改数一草稿。本任务包含多道题，草稿图片按顺序对应题目；若草稿张数少于题目数，只批改上传了草稿的题，不猜测其余题目。',
+    inboxDir: '本地预览', outputFile: '本地预览/SB-BATCH-PREVIEW-0001.json',
+  }
+}
+
+export async function imageDataUrl(path: string): Promise<string> {
+  return isTauri() ? invoke('image_data_url', { path }) : path
+}
+
+export async function getInsights(): Promise<InsightPoint[]> {
+  return isTauri() ? invoke('get_insights') : [
+    { name: '高等数学', attempts: 42, accuracy: 0.69, averageRating: 2.7 },
+    { name: '线性代数', attempts: 31, accuracy: 0.58, averageRating: 2.3 },
+    { name: '概率统计', attempts: 18, accuracy: 0.78, averageRating: 3.1 },
+  ]
+}
+
+export async function getWeaknessRadar(): Promise<WeaknessRadar> {
+  if (isTauri()) return invoke('get_weakness_radar')
+  return {
+    errorTags: [
+      { tag: '符号计算', count: 12, recentCount: 4, lastSeen: new Date().toISOString() },
+      { tag: '概念边界', count: 8, recentCount: 2, lastSeen: new Date().toISOString() },
+    ],
+    weaknessTags: [
+      { tag: '复合求导', count: 9, recentCount: 3, lastSeen: new Date().toISOString() },
+      { tag: '幂零矩阵', count: 6, recentCount: 1, lastSeen: new Date().toISOString() },
+    ],
+    trend: Array.from({ length: 14 }, (_, i) => {
+      const date = new Date(); date.setDate(date.getDate() - 13 + i)
+      return {
+        date: date.toISOString().slice(0, 10),
+        errorTags: i % 3 === 0 ? [{ tag: '符号计算', count: 1 }] : [],
+        weaknessTags: i % 4 === 0 ? [{ tag: '复合求导', count: 1 }] : [],
+      }
+    }),
+  }
+}
+
+export async function getDailyTrend(): Promise<DailyTrendPoint[]> {
+  if (!isTauri()) return Array.from({ length: 14 }, (_, i) => {
+    const date = new Date(); date.setDate(date.getDate() - 13 + i)
+    return { date: date.toISOString().slice(0, 10), attempts: i === 13 ? 5 : i === 12 ? 3 : 0, correct: i === 13 ? 3 : 0, rating: null }
+  })
+  return invoke('get_daily_trend')
+}
+
+export async function getStreak(): Promise<UserStreak> {
+  return isTauri() ? invoke('get_streak') : { currentStreak: 3, bestStreak: 5 }
+}
+
+export async function getDailyLog(): Promise<DailyLog> {
+  if (isTauri()) return invoke('get_daily_log')
+  return {
+    days: [{ date: new Date().toISOString().slice(0, 10), count: 2, correctCount: 1 }],
+    items: [{
+      questionId: mockQuestions[0].id, stem: mockQuestions[0].stem, categoryPath: mockQuestions[0].categoryPath, source: mockQuestions[0].source,
+      result: 'wrong', selfRating: 2, mode: 'paper', attemptedAt: new Date().toISOString(),
+      aiVerdict: 'incorrect', aiSummary: '草稿中把二阶导展开错写成…', aiEarliestError: '展开时漏掉 (u′)² 项', aiErrorTags: ['复合求导'], aiWeaknessTags: ['链式法则'],
+      aiAdvice: '把 u=ln y−sin x 先写完整再展开', aiConfidence: 0.9, aiConfirmedAt: new Date().toISOString(),
+    }],
+  }
+}
+

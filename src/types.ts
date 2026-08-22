@@ -34,6 +34,7 @@ export type RecommendedQuestion = {
 export type BootstrapData = {
   libraryReady: boolean
   libraryDir: string
+  libraryReady: boolean
   questionCount: number
   imageCount: number
   todayDone: number

@@ -1,7 +1,5 @@
 // Three-tier architecture modules (v1.0.0)
-mod db;          // Data Access Layer
-mod services;    // Business Logic Layer
-mod commands;    // Tauri Command Layer
+mod services;    // Business Logic Layer（评分内核等）
 
 use base64::{engine::general_purpose::STANDARD, Engine};
 use chrono::{Datelike, Duration, Local};
@@ -21,7 +19,6 @@ const DEFAULT_LIBRARY: &str = r"E:\考研资料\题库-大观园";
 const CATEGORY_SCHEMA_VERSION: &str = "2";
 const AI_RATING_MIN: f64 = 0.0;
 const AI_RATING_MAX: f64 = 2.0;
-const AI_RATING_AVERAGE: f64 = 1.0;
 
 fn clamp_ai_rating(value: f64) -> f64 {
     value.clamp(AI_RATING_MIN, AI_RATING_MAX)
@@ -77,8 +74,8 @@ struct RecommendedQuestion {
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 struct BootstrapData {
-    library_ready: bool,
     library_dir: String,
+    library_ready: bool,
     question_count: i64,
     image_count: usize,
     today_done: i64,
@@ -2499,8 +2496,8 @@ fn bootstrap(state: State<AppState>) -> Result<BootstrapData, String> {
         recommendations(&conn, 12)?
     };
     Ok(BootstrapData {
-        library_ready: ready,
         library_dir: library.to_string_lossy().into_owned(),
+        library_ready: ready,
         question_count: count,
         image_count,
         today_done,
@@ -4349,6 +4346,31 @@ struct EloStatus {
     streak: i64,
     protection_left: i64,
     history: Vec<EloHistoryPoint>,
+}
+
+#[tauri::command]
+fn get_library_path(state: State<AppState>) -> Result<String, String> {
+    let path = state.library_dir.lock().map_err(|e| e.to_string())?;
+    Ok(path.display().to_string())
+}
+
+#[tauri::command]
+fn set_library_path(path: String, state: State<AppState>) -> Result<(), String> {
+    let candidate = Path::new(&path);
+    if !candidate.is_dir() {
+        return Err("目录不存在，请检查路径".into());
+    }
+    {
+        let conn = state.db.lock().map_err(|e| e.to_string())?;
+        conn.execute(
+            "INSERT INTO settings(key,value) VALUES('library_path',?1)
+             ON CONFLICT(key) DO UPDATE SET value=excluded.value",
+            [&path],
+        )
+        .map_err(|e| e.to_string())?;
+    }
+    *state.library_dir.lock().map_err(|e| e.to_string())? = candidate.to_path_buf();
+    Ok(())
 }
 
 #[tauri::command]
@@ -6255,11 +6277,18 @@ pub fn run() {
             backfill_confirmed_analysis_signals(&conn).map_err(std::io::Error::other)?;
             let supplemental_conn = Connection::open(data_dir.join("supplemental.db"))?;
             init_supplemental_schema(&supplemental_conn)?;
+            let library_path = setting(&conn, "library_path", DEFAULT_LIBRARY);
+            let integrity: String = conn
+                .query_row("PRAGMA integrity_check", [], |r| r.get(0))
+                .unwrap_or_else(|_| "error".into());
+            if integrity != "ok" {
+                eprintln!("[shuaba] 数据库完整性检查未通过：{integrity}，可从 backups/rolling/ 最近备份恢复");
+            }
             app.manage(AppState {
                 db: Mutex::new(conn),
                 supplemental_db: Mutex::new(supplemental_conn),
                 data_dir,
-                library_dir: Mutex::new(PathBuf::from(DEFAULT_LIBRARY)),
+                library_dir: Mutex::new(PathBuf::from(library_path)),
                 image_cache: Mutex::new(HashMap::new()),
             });
             if cfg!(debug_assertions) {
@@ -6279,6 +6308,8 @@ pub fn run() {
             search_question_page,
             get_mastery_map,
             get_mastery_nodes,
+            get_library_path,
+            set_library_path,
             get_elo_status,
             get_session_scoreboard,
             get_season_status,

@@ -2,12 +2,14 @@ import { Archive, LoaderCircle } from 'lucide-react'
 import { useCallback, useEffect, useState } from 'react'
 import {
   advanceSeason,
+  getLibraryPath,
   exportRecords,
   getSeasonStatus,
   listDatabaseBackups,
   restoreDatabaseBackup,
   saveGoal,
   saveReviewIntervals,
+  setLibraryPath,
 } from '../api'
 import { isAudioMuted, setAudioMuted } from '../data/audio'
 import type { BackupInfo, BootstrapData, SeasonStatus } from '../types'
@@ -47,9 +49,11 @@ export function SettingsView({
   const [restoringPath, setRestoringPath] = useState<string | null>(null)
   const [audioMuted, setAudioMutedState] = useState(() => isAudioMuted())
   const [season, setSeason] = useState<SeasonStatus | null>(null)
+  const [libraryPath, setLibraryPath] = useState('')
 
   useEffect(() => {
     void getSeasonStatus().then(setSeason).catch(() => undefined)
+    void getLibraryPath().then(setLibraryPath).catch(() => undefined)
   }, [])
 
   const loadBackups = useCallback(async () => {
@@ -116,6 +120,35 @@ export function SettingsView({
 
   return (
     <div className="settings-view">
+      <section>
+        <div>
+          <h2>题库目录</h2>
+          <p>
+            {data.libraryReady ? '当前题库目录有效。' : '⚠ 未在当前目录找到题库 JSON，请检查路径。'}
+            更换后新路径立即生效，题库按内容哈希增量同步。
+          </p>
+        </div>
+        <div className="setting-control">
+          <input
+            type="text"
+            value={libraryPath}
+            onChange={(e) => setLibraryPath(e.target.value)}
+            placeholder="E:\考研资料\题库-大观园"
+            style={{ flex: 1, minWidth: 220, padding: '6px 10px', borderRadius: 8, border: '1px solid var(--line)', background: 'var(--surface)' }}
+          />
+          <button
+            type="button"
+            className="secondary-button"
+            onClick={() => {
+              void setLibraryPath(libraryPath.trim())
+                .then(() => notify('题库目录已更新，将按哈希增量同步'))
+                .catch((e) => notify(`更新失败：${String(e)}`))
+            }}
+          >
+            保存路径
+          </button>
+        </div>
+      </section>
       <section>
         <div>
           <h2>赛季（备考阶段）</h2>

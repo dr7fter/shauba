@@ -17,6 +17,14 @@ export async function getRecommendations(limit = 12): Promise<RecommendedQuestio
   return isTauri() ? invoke('get_recommendations', { limit }) : mockRecommendations.slice(0, limit)
 }
 
+export async function getLibraryPath(): Promise<string> {
+  return isTauri() ? invoke('get_library_path') : 'E:\考研资料\题库-大观园'
+}
+
+export async function setLibraryPath(path: string): Promise<void> {
+  if (isTauri()) return invoke('set_library_path', { path })
+}
+
 export async function getEloStatus(): Promise<EloStatus> {
   if (isTauri()) return invoke('get_elo_status')
   return { current: 1400, settlements: 0, calibrated: false, lastDelta: null, streak: 0, protectionLeft: 0, history: [] }

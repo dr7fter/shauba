@@ -4161,9 +4161,9 @@ fn list_database_backups(state: State<AppState>) -> Result<Vec<BackupInfo>, Stri
 /// 完美平台式天梯分：千位刻度，定级起点 1400（C 段），每题结算 ±5-15 分，
 /// 九段 D→S 每 200 分一段。历史万位分已按 1400 + (old-10000)×0.1 迁移。
 const ELO_START: f64 = 1400.0;
-const ELO_K_CALIBRATION: f64 = 60.0;
+const ELO_K_CALIBRATION: f64 = 30.0;
 const ELO_CALIBRATION_SETTLEMENTS: i64 = 10;
-const ELO_K: f64 = 25.0;
+const ELO_K: f64 = 10.0;
 /// 期望基准：章节掌握度 1（薄弱）期望 0.70，每升一级 −0.10；
 /// 难度系数每 +0.01 期望 −0.025，最后收敛到 [0.30, 0.78]。
 const ELO_EXPECTED_BASE: f64 = 0.70;
@@ -5503,7 +5503,7 @@ fn create_codex_task(question_id: i64, state: State<AppState>) -> Result<CodexTa
 1. 深度步骤诊断：结合草稿图片逐行定位最早出现的错误断点，而不只判断最终答案。深入分析题意理解、方法选择、条件遗漏、符号计算、循环论证和推理跳步。无法确定时必须明确将 verdict 记为 "uncertain"。
 2. 熟练度与节奏诊断：结合本题「实际作答耗时」与草稿推导步骤判断熟练度。若耗时明显偏长（超过基准时间），指出是否存在方法严重绕路、繁琐硬算或步骤冗余；若做错且耗时极短，指出是否属于粗心抢快。
 3. 六维能力评分：只根据草稿中可举证的行为评分，每项 score 为 0-100（建议 5 分步进），并给出 evidence 与 confidence。六维为：rigor（严谨性）、computation（计算力）、modeling（审题建模）、methodUse（方法使用）、speed（速度）、strategyInsight（策略洞察力）。无法从当前草稿判断时 score 设为 null、confidence 设为 0，并说明 uncertain。
-4. CS 风格 rating：综合六维、实际耗时与题目难度，输出 0.00-2.00 的 rating；总体人群平均值约 1.00。分数按近似正态分布收敛在 1.00 附近，越接近 0.00 或 2.00 越难达到：1.30+ 已明显优秀，1.50+ 应少见，1.60+ 属于极少见的高质量表现。2.00 近似“数学一满分级”表现，只能同时满足高难度、完全正确、方法高效、速度优秀、草稿证据完整等条件，普通全对题不得给 2.00；低于 0.60 也应仅在证据充分时给出。difficultyMultiplier 只反映题目难度，不能直接抬高某个维度。strategyInsight 还要输出 techniqueLevel（1-5）；不要把技巧难度等同于作答能力。
+4. CS 风格 rating：综合六维、实际耗时与题目难度，输出 0.00-2.00 的 rating；总体人群平均值约 1.00。必须按锚点定位，禁止把表现一律打在 1.00-1.20 安全区：0.80=有明显漏洞的正确或方法笨重的部分正确；1.00=中规中矩、方法常规；1.15=常规题全对、方法标准；1.30=全对且方法优于标准解或速度显著占优；1.45=全对+方法精炼+步骤无可挑剔；1.55+=难题全对且接近最优解法（极少给）；2.00 近似“数学一满分级”，普通全对绝对不得给；低于 0.60 仅在证据充分时给出。同一次批改的多道题必须有区分度，全部挤在同一分数视为批改失效。difficultyMultiplier 只反映题目难度，不能直接抬高某个维度。strategyInsight 还要输出 techniqueLevel（1-5）；不要把技巧难度等同于作答能力。六维评分锚点（主观判断允许，但必须对号入座，禁止默认打 70-80 的安全分）：90+=接近完美；75=良好仅少量可优化；60=及格，存在明显但非致命欠缺；45=不合格拖累整题；45以下=严重失效。无证据的维度必须 score:null，严禁猜中间分；同一次批改各维度分数必须有梯度。
 5. 公式排版规范（极其重要）：诊断摘要 (summary)、最早错误 (earliestError)、修复动作 (advice)、更优解法 (betterSolution) 以及 dimensions 中的 evidence/advice，所有数学符号、变量名、公式、计算过程、递推式与结论必须严格使用标准 LaTeX 格式（行内使用 $...$，独立公式使用 $$...$$），严禁在数学式中使用未经 LaTeX 包裹的裸文本。
 6. 修复与秒杀建议：提供一条可落地执行的下一步修复动作（advice），并在 betterSolution 提供更优解法、更简洁思路或秒杀模板（若当前解法已最优可填 null）。
 
@@ -5511,7 +5511,7 @@ fn create_codex_task(question_id: i64, state: State<AppState>) -> Result<CodexTa
 {output}
 
 JSON 必须符合（UTF-8，公式用标准单个反斜杠 LaTeX）。结果必须包含 rating、ratingTier、difficultyMultiplier 和六维 dimensions；无法由草稿确认的维度使用 score:null、confidence:0，并明确写 uncertain：
-{{"schemaVersion":1,"kind":"analysis","taskId":"{task_id}","questionId":{question_id},"summary":"简要诊断（含 $LaTeX$ 公式）","verdict":"correct|partial|incorrect|uncertain","earliestError":"最早错误步骤（含 $LaTeX$ 公式）或 null","errorTags":["错误类型"],"weaknessTags":["薄弱知识"],"advice":"下一步修复动作（含 $LaTeX$ 公式）","betterSolution":"更优解法或更简洁思路（含 $LaTeX$ 公式）或 null","confidence":0.95,"rating":1.00,"ratingTier":"S|A|B|C|D","difficultyMultiplier":1.0,"dimensions":{{"rigor":{{"score":75,"confidence":0.9,"evidence":"依据草稿步骤（含 $LaTeX$）","advice":"改进动作（含 $LaTeX$）"}},"computation":{{"score":75,"confidence":0.9,"evidence":"依据草稿步骤（含 $LaTeX$）"}},"modeling":{{"score":75,"confidence":0.9,"evidence":"依据草稿步骤（含 $LaTeX$）"}},"methodUse":{{"score":75,"confidence":0.9,"evidence":"依据草稿步骤（含 $LaTeX$）"}},"speed":{{"score":75,"confidence":0.9,"evidence":"基于实际耗时"}},"strategyInsight":{{"score":75,"confidence":0.8,"evidence":"依据结构识别（含 $LaTeX$）","techniqueLevel":3,"independentDiscovery":"uncertain"}}}},"recommendedQuestionIds":[],"recommendationReason":null}}
+{{"schemaVersion":1,"kind":"analysis","taskId":"{task_id}","questionId":{question_id},"summary":"简要诊断（含 $LaTeX$ 公式）","verdict":"correct|partial|incorrect|uncertain","earliestError":"最早错误步骤（含 $LaTeX$ 公式）或 null","errorTags":["错误类型"],"weaknessTags":["薄弱知识"],"advice":"下一步修复动作（含 $LaTeX$ 公式）","betterSolution":"更优解法或更简洁思路（含 $LaTeX$ 公式）或 null","confidence":0.95,"rating":1.00,"ratingTier":"S|A|B|C|D","difficultyMultiplier":1.0,"dimensions":{{"rigor":{{"score":88,"confidence":0.9,"evidence":"依据草稿步骤（含 $LaTeX$）","advice":"改进动作（含 $LaTeX$）"}},"computation":{{"score":72,"confidence":0.9,"evidence":"依据草稿步骤（含 $LaTeX$）"}},"modeling":{{"score":65,"confidence":0.9,"evidence":"依据草稿步骤（含 $LaTeX$）"}},"methodUse":{{"score":80,"confidence":0.9,"evidence":"依据草稿步骤（含 $LaTeX$）"}},"speed":{{"score":90,"confidence":0.9,"evidence":"基于实际耗时"}},"strategyInsight":{{"score":58,"confidence":0.8,"evidence":"依据结构识别（含 $LaTeX$）","techniqueLevel":3,"independentDiscovery":"uncertain"}}}},"recommendedQuestionIds":[],"recommendationReason":null}}
 strategyInsight 还必须包含 techniqueLevel（1–5）和 independentDiscovery（confirmed|uncertain|prompted）。不要输出 batchAttempts，单题只输出上面的 analysis 对象。
 不要修改题库源文件。"#,
         stem = q.stem,
@@ -5598,15 +5598,15 @@ fn build_codex_batch_task_prompt(
 3. 深度步骤诊断：每道题定位最早出现的错误断点，而不只判断最终答案。深入分析题意理解、方法选择、条件遗漏、符号计算、循环论证和推理跳步。无法确定时必须将该题的 result 记为 "uncertain" 并说明原因，不要猜。
 4. 熟练度与节奏诊断：综合题目的「实际作答耗时」与草稿步骤判断熟练度。若耗时明显偏长（超过基准时间），在 summary 和 advice 中分析是否存在方法严重绕路、繁琐硬算或步骤冗余；若做错且耗时极短，指出是否属于粗心抢快；并在 selfRating 给出 Codex 流畅度评估（1-4分）。durationSeconds 必须原样填写上方提供的实际作答耗时（秒）。
 5. 公式排版规范（极其重要）：整组摘要 (summary)、逐题诊断、最早断点 (earliestError)、修复动作 (advice) 及最优解法 (betterSolution) 中，所有的数学符号、变量名、公式、计算过程、递推式与结论，必须统一使用标准 LaTeX 格式（行内使用 $...$，独立公式使用 $$...$$），严禁使用未经 LaTeX 包裹的裸文本公式。
-6. 除 selfRating 外，为每道题输出 CS 风格最终 rating，范围 0.00–2.00，平均值约 1.00；分数应近似正态分布并集中在 1.00 附近，越接近 0.00 或 2.00 越难达到。1.30+ 已明显优秀，1.50+ 应少见，1.60+ 属于极少见表现；2.00 近似“数学一满分级”评价，必须同时有高难度、完全正确、方法高效、速度优秀和充分草稿证据，普通全对题不得给 2.00。rating 由正确性、草稿证据、相对耗时和题目难度综合得到；difficultyMultiplier 只表达题目难度，不直接抬高六维能力。
-7. 输出六维能力 dimensions：rigor（严谨性）、computation（计算力）、modeling（审题建模）、methodUse（方法使用）、speed（速度）、strategyInsight（策略洞察力）。每维包含 score（0–100 或无法判断时 null）、confidence（0–1）、evidence（必须引用草稿证据）和可选 advice。无法从草稿确认时必须 score:null、confidence:0，并在 evidence 中写明 uncertain，严禁猜分。strategyInsight 另给 techniqueLevel（1–5，表示本题技巧本身难度）和 independentDiscovery（confirmed|uncertain|prompted）；技巧难度不能直接当作能力分。
+6. 除 selfRating 外，为每道题输出 CS 风格最终 rating，范围 0.00–2.00，平均值约 1.00。必须按锚点定位，禁止把表现一律打在 1.00-1.20 安全区：0.80=有明显漏洞的正确或方法笨重的部分正确；1.00=中规中矩、方法常规；1.15=常规题全对、方法标准；1.30=全对且方法优于标准解或速度显著占优；1.45=全对+方法精炼+步骤无可挑剔；1.55+=难题全对且接近最优解法（极少给）；2.00 近似“数学一满分级”，普通全对绝对不得给。整组题目的 rating 必须拉开区分度：若全部挤在同一分数（如都是 1.10-1.20），视为批改失效，必须依据各题草稿质量差异重新拉开。rating 由正确性、草稿证据、相对耗时和题目难度综合得到；difficultyMultiplier 只表达题目难度，不直接抬高六维能力。
+7. 输出六维能力 dimensions：rigor（严谨性）、computation（计算力）、modeling（审题建模）、methodUse（方法使用）、speed（速度）、strategyInsight（策略洞察力）。每维包含 score（0–100 或无法判断时 null）、confidence（0–1）、evidence（必须引用草稿证据）和可选 advice。六维评分锚点（主观判断允许，但必须对号入座，禁止默认打 70-80 的安全分）：90+=该维度表现接近完美、几乎无可指摘；75=良好，仅少量可优化；60=及格，存在明显但非致命的欠缺；45=不合格，该维度拖累了整题；低于45=严重失效。各维度含义示例：rigor 90+=每步前提清晰零跳步、60=明显跳步但方向对、45以下=关键推理断裂；computation 90+=一次到位零回算、60=有错但影响局部、45以下=计算错误直接导致结论错；modeling 90+=一眼识别结构映射、60=建模绕路、45以下=建模错误；methodUse 90+=最优方法且知道为何最优、60=方法可行但绕、45以下=方法选择错误；strategyInsight 90+=洞察命题意图或有超越标准解的思路、60=按部就班、45以下=完全被动解题。speed 主要依据实际耗时与基准之比客观给出。同一维度在全组的分数必须有梯度——若同组全部落在 70-80，视为打分失效；无证据的维度必须 score:null，严禁猜一个中间分。 无法从草稿确认时必须 score:null、confidence:0，并在 evidence 中写明 uncertain，严禁猜分。strategyInsight 另给 techniqueLevel（1–5，表示本题技巧本身难度）和 independentDiscovery（confirmed|uncertain|prompted）；技巧难度不能直接当作能力分。
 8. 修复与秒杀建议：每道题给出一条可落地执行的修复动作（advice），并在 betterSolution 给出更优解法、更简洁思路或秒杀模板（若原解法已最优或无法确定可填 null）。
 
 完成后请将结果写入这个绝对路径：
 {output}
 
 JSON 必须符合（UTF-8，公式用标准单个反斜杠 LaTeX）。每个 batchAttempt 还必须包含 rating、ratingTier、difficultyMultiplier 和六维 dimensions；无法由草稿确认的维度使用 score:null、confidence:0，并明确写 uncertain：
-{{"schemaVersion":1,"kind":"batch","taskId":"{task_id}","summary":"整组批改摘要（含 $LaTeX$ 公式）","errorTags":["错误类型"],"weaknessTags":["薄弱知识"],"confidence":0.9,"recommendedQuestionIds":[],"batchAttempts":[{{"questionId":155,"result":"correct|wrong|uncertain","selfRating":2,"durationSeconds":120,"summary":"简要诊断（含 $LaTeX$ 公式）","verdict":"correct|partial|incorrect|uncertain","earliestError":"最早错误步骤（含 $LaTeX$ 公式）或 null","errorTags":["错误类型"],"weaknessTags":["薄弱知识"],"advice":"下一步修复动作（含 $LaTeX$ 公式）","betterSolution":"更优解法或更简洁思路（含 $LaTeX$ 公式）或 null","confidence":0.95,"rating":1.00,"ratingTier":"S|A|B|C|D","difficultyMultiplier":1.0,"dimensions":{{"rigor":{{"score":75,"confidence":0.9,"evidence":"依据草稿步骤（含 $LaTeX$）","advice":"改进动作（含 $LaTeX$）"}},"computation":{{"score":75,"confidence":0.9,"evidence":"依据草稿步骤（含 $LaTeX$）"}},"modeling":{{"score":75,"confidence":0.9,"evidence":"依据草稿步骤（含 $LaTeX$）"}},"methodUse":{{"score":75,"confidence":0.9,"evidence":"依据草稿步骤（含 $LaTeX$）"}},"speed":{{"score":75,"confidence":0.9,"evidence":"基于实际耗时"}},"strategyInsight":{{"score":75,"confidence":0.8,"evidence":"依据结构识别（含 $LaTeX$）","techniqueLevel":3,"independentDiscovery":"uncertain"}}}}}}]}}
+{{"schemaVersion":1,"kind":"batch","taskId":"{task_id}","summary":"整组批改摘要（含 $LaTeX$ 公式）","errorTags":["错误类型"],"weaknessTags":["薄弱知识"],"confidence":0.9,"recommendedQuestionIds":[],"batchAttempts":[{{"questionId":155,"result":"correct|wrong|uncertain","selfRating":2,"durationSeconds":120,"summary":"简要诊断（含 $LaTeX$ 公式）","verdict":"correct|partial|incorrect|uncertain","earliestError":"最早错误步骤（含 $LaTeX$ 公式）或 null","errorTags":["错误类型"],"weaknessTags":["薄弱知识"],"advice":"下一步修复动作（含 $LaTeX$ 公式）","betterSolution":"更优解法或更简洁思路（含 $LaTeX$ 公式）或 null","confidence":0.95,"rating":1.00,"ratingTier":"S|A|B|C|D","difficultyMultiplier":1.0,"dimensions":{{"rigor":{{"score":88,"confidence":0.9,"evidence":"依据草稿步骤（含 $LaTeX$）","advice":"改进动作（含 $LaTeX$）"}},"computation":{{"score":72,"confidence":0.9,"evidence":"依据草稿步骤（含 $LaTeX$）"}},"modeling":{{"score":65,"confidence":0.9,"evidence":"依据草稿步骤（含 $LaTeX$）"}},"methodUse":{{"score":80,"confidence":0.9,"evidence":"依据草稿步骤（含 $LaTeX$）"}},"speed":{{"score":90,"confidence":0.9,"evidence":"基于实际耗时"}},"strategyInsight":{{"score":58,"confidence":0.8,"evidence":"依据结构识别（含 $LaTeX$）","techniqueLevel":3,"independentDiscovery":"uncertain"}}}}}}]}}
 示例中的分数仅用于展示字段类型，不要照抄。rating 是该题本次最终表现，不是六维能力分；difficultyMultiplier 只表达题目难度。若某维度无法从草稿确认，必须使用 score:null、confidence:0，并在 evidence 中明确写 uncertain，严禁猜分。
 不要修改题库源文件。"#,
         count = questions.len(),
@@ -6920,10 +6920,10 @@ mod tests {
             },
         )
         .unwrap();
-        // calibration K=60，无进度记录按掌握度 2 → 期望 0.60 → +60*(1.6/2-0.60) = +12
+        // calibration K=30，无进度记录按掌握度 2 → 期望 0.60 → +30*(1.6/2-0.60) = +6
         let (settlements, current) = current_elo(&conn).unwrap();
         assert_eq!(settlements, 1);
-        assert_eq!(current, ELO_START + 12.0);
+        assert_eq!(current, ELO_START + 6.0);
 
         record_attempt_row(
             &conn,
@@ -6939,7 +6939,7 @@ mod tests {
         .unwrap();
         let (settlements, after_wrong) = current_elo(&conn).unwrap();
         assert_eq!(settlements, 2);
-        // 首次 +12 跨越 1401（C→C+）触发晋级保护，随后的失误不掉分
+        // 首次 +6 跨越 1401（C→C+）触发晋级保护，随后的失误不掉分
         assert_eq!(after_wrong, current, "晋级保护期内不掉分：{after_wrong}");
 
         // uncertain 作答不参与结算，正如中途退出不计成绩
@@ -7006,10 +7006,10 @@ mod tests {
             [],
         )
         .unwrap();
-        // 预置 11 次结算（脱离定级期，K=25），分数贴着 1601 晋级线
+        // 预置 11 次结算（脱离定级期，K=10），分数贴着 1601 晋级线
         for _ in 0..11 {
             conn.execute(
-                "INSERT INTO elo_events(question_id,delta,rating_after,performance,expected,created_at) VALUES(1,1,1595,1.0,0.6,'2026-08-20T10:00:00+08:00')",
+                "INSERT INTO elo_events(question_id,delta,rating_after,performance,expected,created_at) VALUES(1,1,1599,1.0,0.6,'2026-08-20T10:00:00+08:00')",
                 [],
             )
             .unwrap();

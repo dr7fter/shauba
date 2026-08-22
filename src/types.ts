@@ -256,6 +256,16 @@ export type SeasonStatus = {
   history: SeasonRecord[]
 }
 
+export type TagClosure = {
+  tag: string
+  questionCount: number
+  recentCorrect: number
+  recentTotal: number
+  beforeCorrect: number
+  beforeTotal: number
+  delta: number | null
+}
+
 export type RatingBucket = { floor: number; count: number }
 
 export type DimensionAverages = {

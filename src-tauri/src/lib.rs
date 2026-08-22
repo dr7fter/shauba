@@ -4754,6 +4754,89 @@ fn advance_season(state: State<AppState>) -> Result<SeasonStatus, String> {
     season_status(&conn)
 }
 
+// ============ 错题闭环追踪：薄弱标签的近 7 天 vs 之前正确率 ============
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct TagClosure {
+    tag: String,
+    question_count: i64,
+    recent_correct: i64,
+    recent_total: i64,
+    before_correct: i64,
+    before_total: i64,
+    /// 近期正确率 - 之前正确率，任一侧无样本时为 None
+    delta: Option<f64>,
+}
+
+#[tauri::command]
+fn get_tag_closure(state: State<AppState>) -> Result<Vec<TagClosure>, String> {
+    let conn = state.db.lock().map_err(|e| e.to_string())?;
+    let recent_start = (Local::now() - Duration::days(7)).to_rfc3339();
+    let mut tag_questions: std::collections::HashMap<String, Vec<i64>> = std::collections::HashMap::new();
+    {
+        let mut stmt = conn
+            .prepare("SELECT question_id, weakness_tags_json FROM codex_analysis_signals")
+            .map_err(|e| e.to_string())?;
+        let rows = stmt
+            .query_map([], |r| Ok((r.get::<_, i64>(0)?, r.get::<_, String>(1)?)))
+            .map_err(|e| e.to_string())?
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(|e| e.to_string())?;
+        drop(stmt);
+        for (question_id, tags_json) in rows {
+            if let Ok(tags) = serde_json::from_str::<Vec<String>>(&tags_json) {
+                for tag in tags {
+                    tag_questions.entry(tag).or_default().push(question_id);
+                }
+            }
+        }
+    }
+    let mut result = Vec::new();
+    for (tag, mut questions) in tag_questions {
+        questions.sort();
+        questions.dedup();
+        let placeholders = questions.iter().map(|_| "?").collect::<Vec<_>>().join(",");
+        let sql = format!(
+            "SELECT
+                SUM(CASE WHEN COALESCE(outcome,result)='correct' AND attempted_at>=?1 THEN 1 ELSE 0 END),
+                SUM(CASE WHEN COALESCE(outcome,result)<>'uncertain' AND attempted_at>=?1 THEN 1 ELSE 0 END),
+                SUM(CASE WHEN COALESCE(outcome,result)='correct' AND attempted_at<?1 THEN 1 ELSE 0 END),
+                SUM(CASE WHEN COALESCE(outcome,result)<>'uncertain' AND attempted_at<?1 THEN 1 ELSE 0 END)
+             FROM attempts WHERE question_id IN ({placeholders})"
+        );
+        let mut params: Vec<Box<dyn rusqlite::ToSql>> = vec![Box::new(recent_start.clone())];
+        for question_id in &questions {
+            params.push(Box::new(*question_id));
+        }
+        params.push(Box::new(recent_start.clone()));
+        for question_id in &questions {
+            params.push(Box::new(*question_id));
+        }
+        let param_refs: Vec<&dyn rusqlite::ToSql> = params.iter().map(|p| p.as_ref()).collect();
+        let (rc, rt, bc, bt): (i64, i64, i64, i64) = conn
+            .query_row(&sql, param_refs.as_slice(), |r| {
+                Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?))
+            })
+            .map_err(|e| e.to_string())?;
+        let delta = if rt > 0 && bt > 0 {
+            Some(((rc as f64 / rt as f64) - (bc as f64 / bt as f64)) * 100.0)
+        } else {
+            None
+        };
+        result.push(TagClosure {
+            tag,
+            question_count: questions.len() as i64,
+            recent_correct: rc,
+            recent_total: rt,
+            before_correct: bc,
+            before_total: bt,
+            delta,
+        });
+    }
+    result.sort_by(|a, b| b.question_count.cmp(&a.question_count));
+    Ok(result)
+}
+
 // ============ 模块 E：Rating 分布审计 ============
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -6315,6 +6398,7 @@ pub fn run() {
             get_season_status,
             advance_season,
             get_rating_distribution,
+            get_tag_closure,
             get_chapter_queue,
             get_focus_queue,
             get_variant_queue,

@@ -11,10 +11,10 @@ import {
   XCircle,
 } from 'lucide-react'
 import { useEffect, useMemo, useState } from 'react'
-import { getDailyTrend, getEloStatus, getPressureGradingReport, getRatingDistribution, getWeaknessRadar, listPressureSessions } from '../api'
+import { getDailyTrend, getEloStatus, getPressureGradingReport, getRatingDistribution, getTagClosure, getWeaknessRadar, listPressureSessions } from '../api'
 import { CS_RATING_MAX, CS_RATING_MIN, averageCsRating, csRankForElo, csRatingTone, deriveGradeCsRating, formatElapsed } from '../utils'
 import { InboxView } from './InboxView'
-import type { BootstrapData, DailyTrendPoint, EloStatus, GradingReport, PressureSession, RatingDistribution, WeaknessRadar } from '../types'
+import type { BootstrapData, DailyTrendPoint, EloStatus, GradingReport, PressureSession, RatingDistribution, TagClosure, WeaknessRadar } from '../types'
 
 type DataTab = 'overview' | 'matches' | 'mistakes' | 'inbox'
 
@@ -89,10 +89,12 @@ export function InsightsView({
   const [distribution, setDistribution] = useState<RatingDistribution | null>(null)
   const [elo, setElo] = useState<EloStatus | null>(null)
   const [weakness, setWeakness] = useState<WeaknessRadar | null>(null)
+  const [tagClosure, setTagClosure] = useState<TagClosure[]>([])
 
   useEffect(() => {
     void getRatingDistribution().then(setDistribution).catch(() => undefined)
     void getEloStatus().then(setElo).catch(() => undefined)
+    void getTagClosure().then(setTagClosure).catch(() => undefined)
   }, [])
   useEffect(() => {
     if (tab === 'mistakes' && !weakness) void getWeaknessRadar().then(setWeakness).catch(() => undefined)
@@ -231,23 +233,44 @@ export function InsightsView({
               </div>
               {elo && elo.history.length > 1 && (() => {
                 const ratings = elo.history.map((point) => point.rating)
-                const min = Math.min(...ratings)
-                const span = Math.max(1, Math.max(...ratings) - min)
-                const coords = elo.history.map((point, i) => [(i / Math.max(1, elo.history.length - 1)) * 100, 40 - ((point.rating - min) / span) * 32] as const)
+                const viewMin = Math.min(...ratings) - 40
+                const viewMax = Math.max(...ratings) + 40
+                const span = Math.max(1, viewMax - viewMin)
+                const width = 100
+                const height = 130
+                const coords = elo.history.map((point, i) => [
+                  (i / Math.max(1, elo.history.length - 1)) * width,
+                  height - ((point.rating - viewMin) / span) * (height - 18) - 6,
+                ] as const)
                 const last = coords[coords.length - 1]
+                const bands = [1000, 1201, 1401, 1601, 1801, 2001, 2201, 2401].filter((b) => b > viewMin && b < viewMax)
+                const bandNames: Record<number, string> = { 1000: 'D+', 1201: 'C', 1401: 'C+', 1601: 'B', 1801: 'B+', 2001: 'A', 2201: 'A+', 2401: 'S' }
                 return (
-                  <svg className="dw-spark" viewBox="0 0 100 44" preserveAspectRatio="none">
-                    <title>ELO 走势</title>
-                    <defs>
-                      <linearGradient id="dwSparkFill" x1="0" y1="0" x2="0" y2="1">
-                        <stop offset="0%" stopColor="#315E9E" stopOpacity="0.35" />
-                        <stop offset="100%" stopColor="#315E9E" stopOpacity="0" />
-                      </linearGradient>
-                    </defs>
-                    <polygon points={`0,44 ${coords.map(([x, y]) => `${x},${y}`).join(' ')} 100,44`} fill="url(#dwSparkFill)" />
-                    <polyline points={coords.map(([x, y]) => `${x},${y}`).join(' ')} fill="none" stroke="#315E9E" strokeWidth="1.6" vectorEffect="non-scaling-stroke" />
-                    <circle className="dw-spark-dot" cx={last[0]} cy={last[1]} r="2.2" />
-                  </svg>
+                  <div style={{ marginTop: 14 }}>
+                    <div className="rating-heatmap-label"><span>ELO 走势（日粒度）</span><em>{elo.history.length} 天 · 悬停查看当日分数</em></div>
+                    <svg viewBox={`0 0 ${width} ${height}`} preserveAspectRatio="none" style={{ width: '100%', height: 130, display: 'block' }}>
+                      <defs>
+                        <linearGradient id="dwTrendFill" x1="0" y1="0" x2="0" y2="1">
+                          <stop offset="0%" stopColor="#315E9E" stopOpacity="0.28" />
+                          <stop offset="100%" stopColor="#315E9E" stopOpacity="0" />
+                        </linearGradient>
+                      </defs>
+                      {bands.map((band) => {
+                        const y = height - ((band - viewMin) / span) * (height - 18) - 6
+                        return <line key={band} x1="0" y1={y} x2={width} y2={y} stroke="var(--line)" strokeWidth="0.4" strokeDasharray="2 2" vectorEffect="non-scaling-stroke" />
+                      })}
+                      <polygon points={`0,${height} ${coords.map(([x, y]) => `${x},${y}`).join(' ')} ${width},${height}`} fill="url(#dwTrendFill)" />
+                      <polyline points={coords.map(([x, y]) => `${x},${y}`).join(' ')} fill="none" stroke="#315E9E" strokeWidth="1.8" vectorEffect="non-scaling-stroke" strokeLinejoin="round" />
+                      <circle cx={last[0]} cy={last[1]} r="2.4" fill="#315E9E" className="dw-spark-dot" />
+                    </svg>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 10, color: 'var(--muted)', marginTop: 2 }}>
+                      <span>{elo.history[0]?.date}</span>
+                      {bands.map((band) => (
+                        <span key={`label-${band}`} style={{ color: 'var(--muted)' }}>{bandNames[band]} {band}</span>
+                      ))}
+                      <span>{elo.history[elo.history.length - 1]?.date}</span>
+                    </div>
+                  </div>
                 )
               })()}
               <div className="dw-stats">
@@ -347,11 +370,27 @@ export function InsightsView({
                   <em>{(weakness?.[group] ?? []).length} 项</em>
                 </div>
                 <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, marginTop: 8 }}>
-                  {(weakness?.[group] ?? []).map((item) => (
-                    <button key={item.tag} type="button" className="qtimer-btn" onClick={() => onStartTagPractice(item.tag)} title="开始该标签专项训练">
-                      {item.tag} × {item.count}
-                    </button>
-                  ))}
+                  {(weakness?.[group] ?? []).map((item) => {
+                    const closure = group === 'weaknessTags' ? tagClosure.find((c) => c.tag === item.tag) : undefined
+                    const arrow = !closure?.delta ? '' : closure.delta >= 10 ? ' ↑' : closure.delta <= -10 ? ' ↓' : ' →'
+                    const arrowColor = !closure?.delta ? 'var(--muted)' : closure.delta >= 10 ? '#258a55' : closure.delta <= -10 ? '#c24135' : 'var(--muted)'
+                    return (
+                      <button
+                        key={item.tag}
+                        type="button"
+                        className="qtimer-btn"
+                        onClick={() => onStartTagPractice(item.tag)}
+                        title={
+                          closure
+                            ? `开始该标签专项训练 · 关联 ${closure.questionCount} 题 · 近7天 ${closure.recentCorrect}/${closure.recentTotal} vs 之前 ${closure.beforeCorrect}/${closure.beforeTotal}`
+                            : '开始该标签专项训练'
+                        }
+                      >
+                        {item.tag} × {item.count}
+                        {arrow && <span style={{ color: arrowColor, fontWeight: 800 }}>{arrow}</span>}
+                      </button>
+                    )
+                  })}
                   {!(weakness?.[group] ?? []).length && <span style={{ color: 'var(--muted)', fontSize: 13 }}>暂无诊断数据，跑一场批量批改后会在这里聚合。</span>}
                 </div>
               </section>

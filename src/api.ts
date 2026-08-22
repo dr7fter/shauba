@@ -1,6 +1,6 @@
 import { invoke } from '@tauri-apps/api/core'
 import { mockBootstrap, mockCategories, mockInbox, mockMastery, mockQuestions, mockRecommendations } from './mock'
-import type { BootstrapData, CategoryNode, CodexTask, DailyLog, DailyTrendPoint, EloStatus, ExportResult, FailedInboxItem, InboxItem, InboxSummary, InsightPoint, MasteryChapter, MasteryNode, PracticeSessionState, Question, QuestionPage, RatingDistribution, RecommendationBatch, RecommendedQuestion, ReviewHistory, ReviewPlan, SeasonStatus, SessionScoreboard, UserStreak, WeaknessRadar, PressureSession, GradingReport } from './types'
+import type { BootstrapData, CategoryNode, CodexTask, DailyLog, DailyTrendPoint, EloStatus, TagClosure, ExportResult, FailedInboxItem, InboxItem, InboxSummary, InsightPoint, MasteryChapter, MasteryNode, PracticeSessionState, Question, QuestionPage, RatingDistribution, RecommendationBatch, RecommendedQuestion, ReviewHistory, ReviewPlan, SeasonStatus, SessionScoreboard, UserStreak, WeaknessRadar, PressureSession, GradingReport } from './types'
 import { createPracticeSessionPayload } from './domain/evidence'
 
 const isTauri = () => '__TAURI_INTERNALS__' in window
@@ -22,7 +22,7 @@ export async function getLibraryPath(): Promise<string> {
 }
 
 export async function setLibraryPath(path: string): Promise<void> {
-  if (isTauri()) return invoke('set_library_path', { path })
+  if (isTauri()) await invoke('set_library_path', { path })
 }
 
 export async function getEloStatus(): Promise<EloStatus> {
@@ -42,6 +42,10 @@ export async function getSeasonStatus(): Promise<SeasonStatus> {
 
 export async function advanceSeason(): Promise<SeasonStatus> {
   return invoke('advance_season')
+}
+
+export async function getTagClosure(): Promise<TagClosure[]> {
+  return isTauri() ? invoke('get_tag_closure') : []
 }
 
 export async function getRatingDistribution(): Promise<RatingDistribution> {

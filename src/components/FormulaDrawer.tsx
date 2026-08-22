@@ -168,9 +168,9 @@ export function FormulaDrawer({ open, onClose, currentQuestion, currentCategoryP
   return (
     <AnimatePresence>
       {open && (
-        <div className="formula-drawer-overlay" onClick={onClose}>
+        <div className="ui-overlay formula-drawer-overlay" onClick={onClose}>
           <motion.aside
-            className="formula-drawer"
+            className="ui-drawer formula-drawer"
             initial={{ x: '100%' }}
             animate={{ x: 0 }}
             exit={{ x: '100%' }}

@@ -172,13 +172,108 @@ export type BatchAttempt = {
   questionId: number
   result: 'correct' | 'wrong' | 'uncertain'
   selfRating: number
+  durationSeconds?: number
   summary: string
   verdict: string | null
   earliestError: string | null
   errorTags: string[]
   weaknessTags: string[]
   advice: string | null
+  betterSolution?: string | null
   confidence: number
+  rating?: number | null
+  ratingTier?: string | null
+  difficultyMultiplier?: number | null
+  dimensions?: RatingDimensions | null
+}
+
+export type RatingDimension = {
+  score: number | null
+  confidence: number
+  evidence: string
+  advice?: string | null
+  techniqueLevel?: number | null
+  independentDiscovery?: 'confirmed' | 'uncertain' | 'prompted' | null
+}
+
+export type RatingDimensions = Partial<Record<
+  'rigor' | 'computation' | 'modeling' | 'methodUse' | 'speed' | 'strategyInsight',
+  RatingDimension
+>>
+
+export type EloHistoryPoint = {
+  date: string
+  rating: number
+}
+
+export type EloStatus = {
+  current: number
+  settlements: number
+  calibrated: boolean
+  lastDelta: number | null
+  history: EloHistoryPoint[]
+}
+
+export type ScoreboardQuestion = {
+  questionId: number
+  stem: string
+  outcome: string
+  rating: number
+  durationSeconds: number
+  impact: number | null
+}
+
+export type SessionScoreboard = {
+  weScore: number | null
+  questions: ScoreboardQuestion[]
+  mvpQuestionId: number | null
+  longestStreak: number
+  fastestKillQuestionId: number | null
+  eloDelta: number
+  totalDuration: number
+  correctCount: number
+  totalCount: number
+}
+
+export type SeasonRecord = {
+  seasonName: string
+  startedAt: string
+  endedAt: string
+  peakRating: number
+  finalRating: number
+  rankIndex: number
+}
+
+export type SeasonStatus = {
+  name: string
+  index: number
+  startedAt: string
+  currentElo: number
+  history: SeasonRecord[]
+}
+
+export type RatingBucket = { floor: number; count: number }
+
+export type DimensionAverages = {
+  rigor: number | null
+  computation: number | null
+  modeling: number | null
+  methodUse: number | null
+  speed: number | null
+  strategyInsight: number | null
+  sample: number
+}
+
+export type RatingDistribution = {
+  buckets: RatingBucket[]
+  mean: number | null
+  sd: number | null
+  count: number
+  p95: number | null
+  above130: number
+  below070: number
+  drift: boolean
+  dimensions: DimensionAverages | null
 }
 
 export type InboxItem = {
@@ -192,6 +287,7 @@ export type InboxItem = {
   errorTags: string[]
   weaknessTags: string[]
   advice: string | null
+  betterSolution?: string | null
   confidence: number
   status: 'pending' | 'confirmed' | 'dismissed'
   createdAt: string
@@ -200,6 +296,10 @@ export type InboxItem = {
   batchAttempts?: BatchAttempt[]
   recommendationQuestionCount?: number | null
   recommendationBatchStatus?: RecommendationBatch['status'] | null
+  rating?: number | null
+  ratingTier?: string | null
+  difficultyMultiplier?: number | null
+  dimensions?: RatingDimensions | null
 }
 
 export type CodexTask = {
@@ -310,20 +410,6 @@ export type ErrorBreakpoint = {
   desc: string
 }
 
-export type RewardEvent = {
-  eventId: string
-  rewardType: string
-  amount: number
-  metaJson?: string | null
-  createdAt: string
-}
-
-export type RewardSummary = {
-  totalClaimedExp: number
-  newlyClaimed: boolean
-  eventId: string
-}
-
 export type BackupInfo = {
   fileName: string
   path: string
@@ -348,4 +434,76 @@ export type PracticeSessionState = {
 }
 
 export type ThemeMode = 'light' | 'warm' | 'dark' | 'system'
+
+// 压力模拟模式
+export type PressureAnswer = {
+  questionId: number
+  userAnswer: string
+  submitTime?: number
+  duration: number
+}
+
+export type PressureSession = {
+  sessionId: string
+  mode: 'pressure'
+  questionIds?: number[]
+  startTime: number
+  endTime: number | null
+  totalDuration: number
+  questions: PressureAnswer[]
+  taskId?: string | null
+  status: 'ongoing' | 'awaiting_codex' | 'submitted' | 'graded' | 'graded_partial' | 'abandoned'
+  createdAt: number
+}
+
+export type QuestionGrade = {
+  questionId: number
+  correct: boolean
+  userAnswer: string
+  correctAnswer: string
+  feedback: string
+  duration: number
+  result?: 'correct' | 'wrong' | 'uncertain'
+  verdict?: 'correct' | 'partial' | 'incorrect' | 'uncertain' | null
+  selfRating?: number | null
+  earliestError?: string | null
+  errorTags?: string[]
+  weaknessTags?: string[]
+  advice?: string | null
+  betterSolution?: string | null
+  confidence?: number | null
+  rating?: number | null
+  ratingTier?: string | null
+  difficultyMultiplier?: number | null
+  dimensions?: RatingDimensions | null
+}
+
+export type GradingSummary = {
+  correctCount: number
+  totalCount: number
+  accuracy: number
+  strengths: string[]
+  weaknesses: string[]
+  suggestions: string[]
+  partialCount?: number
+  wrongCount?: number
+  uncertainCount?: number
+  gradedCount?: number
+  totalDuration?: number
+  averageDuration?: number
+}
+
+export type GradingReport = {
+  sessionId: string
+  sourceTaskId?: string | null
+  status?: 'graded' | 'graded_partial'
+  questionIds?: number[]
+  ungradedQuestionIds?: number[]
+  grades: QuestionGrade[]
+  summary: GradingSummary
+  confirmedAt?: number | null
+  createdAt: number
+}
 export type FontScaleMode = 'standard' | 'medium' | 'large'
+export type View = 'today' | 'library' | 'review' | 'mastery' | 'insights' | 'settings'
+export type AttemptMode = 'paper' | 'review'

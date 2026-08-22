@@ -1,0 +1,230 @@
+/* =====================================================
+   刷吧设计 tokens —— 唯一颜色/字号/度量定义层
+   规则：
+   1. 所有颜色只在本文件定义（含主题覆盖）；
+   2. 其它样式只允许 var(--*)，禁止硬编码 hex/rgba；
+   3. [data-theme] 只覆盖 token 值，不写组件级补丁。
+   ===================================================== */
+
+:root {
+  /* 表面 */
+  --canvas: #f5f7f5;
+  --surface: #ffffff;
+  --sunken: #f1f5f9;
+  --paper: #ffffff;
+  /* 文字 */
+  --ink: #27322e;
+  --muted: #6f7b75;
+  --quiet: #98a19d;
+  --on-color: #ffffff;
+  /* 线条 */
+  --line: #dfe5e1;
+  --line-strong: #a9c4b6;
+  --line-success: #a9cfbc;
+  --line-warn: #e8cf9a;
+  --line-danger: #f3b8b0;
+  --line-info: #b9d3e2;
+  --line-violet: #d8cdf2;
+  --line-gold: #e7ceaa;
+  /* 品牌绿（低饱和） */
+  --green: #738f80;
+  --green-dark: #536d5e;
+  --green-soft: #e8efea;
+  /* 语义状态色 */
+  --success: #2f8561;
+  --success-strong: #2b7a5a;
+  --success-soft: #f1f8f4;
+  --ink-on-soft: #1e362d;
+  --warn: #d97706;
+  --warn-strong: #92400e;
+  --warn-soft: #fef3c7;
+  --danger: #b91c1c;
+  --danger-strong: #7f1d1d;
+  --danger-soft: #fee2e2;
+  --info: #2f6e91;
+  --info-soft: #e9eff1;
+  /* 扩展语义色 */
+  --violet: #6d5fc4;
+  --violet-strong: #4f46e5;
+  --violet-soft: #f5f3ff;
+  --gold: #a88d22;
+  --gold-strong: #6c4d08;
+  --gold-soft: #fdf7e7;
+  /* 旧语义色（保留，逐步迁移） */
+  --blue: #718995;
+  --blue-soft: #e9eff1;
+  --coral: #a97874;
+  --coral-soft: #f3eae8;
+  --yellow: #a38d62;
+  --yellow-soft: #f2eee3;
+  /* 亮色（深色面/游戏场景用，固定值） */
+  --success-bright: #34c07c;
+  --warn-bright: #facc15;
+  --danger-bright: #fa5151;
+  --info-bright: #7cc7ee;
+  --violet-bright: #a5b4fc;
+  --gold-bright: #ffdf9e;
+  /* 游戏中心深色面（固定值） */
+  --game-bg: #141d18;
+  --game-bg-alt: #1e293b;
+  --game-bg-deep: #0d1411;
+  --game-violet: #1e1b2e;
+  --game-violet-deep: #110e1e;
+  /* 遮罩与叠层 */
+  --scrim: rgba(15, 23, 42, 0.65);
+  --surface-glass: rgba(255, 255, 255, 0.9);
+  --overlay-1: rgba(255, 255, 255, 0.08);
+  --overlay-2: rgba(255, 255, 255, 0.15);
+  --overlay-3: rgba(255, 255, 255, 0.4);
+  --overlay-ink-1: rgba(55, 70, 62, 0.14);
+  --overlay-ink-2: rgba(55, 70, 62, 0.06);
+  --overlay-violet: rgba(125, 100, 196, 0.16);
+  --overlay-success-1: rgba(25, 138, 105, 0.22);
+  --overlay-success-2: rgba(25, 138, 105, 0.11);
+  --overlay-danger: rgba(178, 79, 68, 0.15);
+  --overlay-gold: rgba(193, 139, 39, 0.14);
+  --shadow-drop: drop-shadow(0 4px 8px rgba(0, 0, 0, 0.35));
+  /* 海拔 */
+  --shadow-1: 0 5px 18px rgba(36, 59, 47, 0.04);
+  --shadow-2: 0 12px 30px rgba(20, 35, 28, 0.16);
+  --shadow-3: 0 16px 42px rgba(55, 70, 62, 0.11);
+  --shadow: 0 16px 42px rgba(55, 70, 62, 0.11);
+  --ring: 2px solid rgba(115, 143, 128, 0.45);
+  --ring-success: 0 0 0 4px rgba(49, 173, 127, 0.12);
+  /* 字体系统 (温润纸感 + 现代西文) */
+  --font-ui: "Inter", "Source Han Sans SC", "Noto Sans SC", "HarmonyOS Sans SC", "PingFang SC", "Hiragino Sans GB", "Segoe UI", "Microsoft YaHei UI", -apple-system, BlinkMacSystemFont, sans-serif;
+  --font-stem: "LXGW WenKai Screen", "LXGW WenKai", "霞鹜文楷", "Noto Serif SC", "Source Han Serif SC", "Songti SC", "SimSun", serif;
+  --font-mono: "JetBrains Mono", "Fira Code", "SF Mono", "Cascadia Code", ui-monospace, monospace;
+  /* 字号阶梯（随 data-font-scale 倍率缩放） */
+  --fs-scale: 1;
+  --fs-xs: calc(11px * var(--fs-scale));
+  --fs-sm: calc(12px * var(--fs-scale));
+  --fs-base: calc(13px * var(--fs-scale));
+  --fs-md: calc(14px * var(--fs-scale));
+  --fs-lg: calc(16px * var(--fs-scale));
+  --fs-xl: calc(18px * var(--fs-scale));
+  --fs-2xl: calc(22px * var(--fs-scale));
+  --fs-3xl: calc(32px * var(--fs-scale));
+  --fs-stem: calc(20px * var(--fs-scale));
+  --fs-display: calc(28px * var(--fs-scale));
+  --fs-hero: calc(48px * var(--fs-scale));
+  --fs-giant: calc(72px * var(--fs-scale));
+  /* 间距（4px 基） */
+  --sp-1: 4px;
+  --sp-2: 8px;
+  --sp-3: 12px;
+  --sp-4: 16px;
+  --sp-5: 20px;
+  --sp-6: 24px;
+  --sp-8: 32px;
+  --sp-12: 48px;
+  /* 圆角 */
+  --r-xs: 4px;
+  --r-sm: 6px;
+  --r-md: 8px;
+  --r-lg: 12px;
+  --r-full: 999px;
+  /* 控件尺寸 */
+  --h-sm: 28px;
+  --h-md: 36px;
+  --h-lg: 42px;
+  --icon-sm: 16px;
+  --icon-md: 18px;
+  --icon-lg: 20px;
+  /* 动效 */
+  --dur-1: 120ms;
+  --dur-2: 240ms;
+  /* 层级 */
+  --z-topbar: 10;
+  --z-drawer: 30;
+  --z-modal: 40;
+  --z-toast: 50;
+  /* 遮罩补充（轻蒙版/抽屉蒙版） */
+  --scrim-soft: rgba(39, 50, 46, 0.32);
+  --shade-dark-1: rgba(18, 28, 22, 0.35);
+  /* 白色叠层补充 */
+  --overlay-white-1: rgba(255, 255, 255, 0.12);
+  --overlay-white-2: rgba(255, 255, 255, 0.18);
+  --overlay-white-3: rgba(255, 255, 255, 0.25);
+  /* 彩色点缀 */
+  --overlay-gold-bright: rgba(232, 190, 112, 0.2);
+  --warn-bright-faint: rgba(250, 204, 21, 0.2);
+  --fill-radar: rgba(36, 122, 85, 0.25);
+  --line-danger-soft: rgba(162, 79, 71, 0.2);
+  --line-glass: rgba(255, 255, 255, 0.3);
+  /* 抽屉/方向性阴影 */
+  --shadow-drawer: 0 12px 36px rgba(18, 38, 30, 0.28);
+  --shadow-drawer-left: -8px 0 32px rgba(18, 38, 28, 0.2);
+  --shadow-drawer-left-lg: -14px 0 38px rgba(44, 58, 51, 0.14);
+  --shadow-drawer-right: 12px 0 30px rgba(20, 35, 28, 0.16);
+  --shadow-blitz: 0 20px 45px rgba(0, 0, 0, 0.22);
+  /* 彩色辉光（按钮/状态） */
+  --glow-danger-soft: 0 1px 4px rgba(250, 81, 81, 0.4);
+  --glow-warn-faint: 0 2px 10px rgba(217, 119, 6, 0.06);
+  --glow-warn-mid: 0 2px 6px rgba(217, 119, 6, 0.25);
+  /* 环形描边/内描边 */
+  --ring-success-1: 0 0 0 1px var(--success);
+  --ring-warn-1: 0 0 0 1px var(--warn);
+  --ring-danger-1: 0 0 0 1px var(--danger);
+  --ring-success-3: 0 0 0 3px rgba(43, 122, 90, 0.12);
+  --ring-inset-success: inset 0 0 0 2px rgba(25, 138, 105, 0.22);
+  /* 页签顶部标记 */
+  --tab-marker-danger: inset 0 3px 0 var(--danger);
+  --tab-marker-violet: inset 0 3px 0 var(--violet);
+  /* 脉冲动画端点 */
+  --ring-warn-pulse: 0 0 0 0 rgba(245, 158, 11, 0.4);
+  --ring-warn-pulse-out: 0 0 0 5px rgba(245, 158, 11, 0);
+  /* 复习看板绿色叠层 */
+  --overlay-green-tile: rgba(76, 111, 93, 0.12);
+  --overlay-green-track: rgba(80, 104, 91, 0.14);
+  /* 更大圆角（模态/大卡片） */
+  --r-xl: 16px;
+}
+
+[data-font-scale="medium"] { --fs-scale: 1.1; }
+[data-font-scale="large"] { --fs-scale: 1.2; }
+
+[data-theme="warm"] {
+  --canvas: #faf6ee;
+  --surface: #fdfaf2;
+  --sunken: #f6f1e6;
+  --paper: #fdfaf2;
+  --ink: #29241e;
+  --muted: #796e62;
+  --quiet: #9e9386;
+  --on-color: #fffdf8;
+  --line: #e8ded2;
+  --line-strong: #cbb694;
+  --line-success: #a9c4a4;
+  --line-warn: #ddc08c;
+  --line-danger: #dcb4ab;
+  --line-info: #aec2cc;
+  --line-violet: #cfc4de;
+  --line-gold: #dcc396;
+  --green: #49785a;
+  --green-dark: #2f523c;
+  --green-soft: #eef3eb;
+  --success: #49785a;
+  --success-strong: #3c6549;
+  --success-soft: #eef3eb;
+  --ink-on-soft: #24402f;
+  --warn: #b45309;
+  --warn-strong: #78350f;
+  --warn-soft: #f6ead2;
+  --danger: #a24f47;
+  --danger-strong: #6d2320;
+  --danger-soft: #f4e6e2;
+  --info: #2f627d;
+  --info-soft: #e7edf0;
+  --violet: #6a5fa8;
+  --violet-strong: #4a41b8;
+  --violet-soft: #f2edfa;
+  --gold: #8f7a2a;
+  --gold-strong: #5f4408;
+  --gold-soft: #f8efd8;
+  --scrim: rgba(41, 36, 30, 0.65);
+  --surface-glass: rgba(253, 250, 242, 0.9);
+  --scrim-soft: rgba(41, 36, 30, 0.32);
+  --shade-dark-1: rgba(30, 26, 20, 0.35);
+}
+

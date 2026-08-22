@@ -1,0 +1,140 @@
+/* Phase 2: 数据可视化动画效果 */
+
+/* 数字跳动动画 */
+@keyframes countUp {
+  0% {
+    transform: scale(1);
+  }
+  50% {
+    transform: scale(1.15);
+  }
+  100% {
+    transform: scale(1);
+  }
+}
+
+@keyframes pulseGlow {
+  0%, 100% {
+    box-shadow: 0 0 0 0 rgba(47, 133, 97, 0.4);
+  }
+  50% {
+    box-shadow: 0 0 0 8px rgba(47, 133, 97, 0);
+  }
+}
+
+/* 里程碑庆祝动画 */
+@keyframes celebrate {
+  0% {
+    transform: scale(1);
+    opacity: 1;
+  }
+  25% {
+    transform: scale(1.1);
+  }
+  50% {
+    transform: scale(0.95);
+  }
+  75% {
+    transform: scale(1.05);
+  }
+  100% {
+    transform: scale(1);
+    opacity: 1;
+  }
+}
+
+@keyframes confetti {
+  0% {
+    transform: translateY(0) rotate(0deg);
+    opacity: 1;
+  }
+  100% {
+    transform: translateY(-100px) rotate(360deg);
+    opacity: 0;
+  }
+}
+
+/* 进度条填充动画 */
+@keyframes progressFill {
+  0% {
+    transform: scaleX(0);
+    transform-origin: left;
+  }
+  100% {
+    transform: scaleX(1);
+    transform-origin: left;
+  }
+}
+
+/* 专注模式过渡 */
+@keyframes zenFadeIn {
+  from {
+    opacity: 0;
+    filter: blur(4px);
+  }
+  to {
+    opacity: 1;
+    filter: blur(0);
+  }
+}
+
+/* 数据上升动画 */
+.stat-animate {
+  animation: countUp 0.5s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+.milestone-celebrate {
+  animation: celebrate 0.6s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+.progress-glow {
+  animation: pulseGlow 1.5s ease-in-out infinite;
+}
+
+/* 数据增长指示器 */
+.data-growth {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: var(--fs-xs);
+  font-weight: 600;
+  padding: 3px 8px;
+  border-radius: var(--r-sm);
+  background: var(--success-soft);
+  color: var(--success-strong);
+}
+.data-growth.positive {
+  background: var(--success-soft);
+  color: var(--success-strong);
+}
+.data-growth.negative {
+  background: var(--warn-soft);
+  color: var(--warn-strong);
+}
+.data-growth svg {
+  flex-shrink: 0;
+}
+
+/* 专注模式样式 */
+.zen-mode .queue-panel {
+  display: none;
+}
+.zen-mode .question-workspace {
+  max-width: 900px;
+  margin: 0 auto;
+  background: var(--surface);
+  box-shadow: 0 0 40px rgba(0, 0, 0, 0.08);
+}
+.zen-mode .main-area {
+  background: var(--canvas);
+}
+.zen-mode .question-meta {
+  opacity: 0.6;
+  transition: opacity 200ms ease;
+}
+.zen-mode .question-meta:hover {
+  opacity: 1;
+}
+.zen-mode .answer-panel-inline {
+  animation: zenFadeIn 400ms ease;
+}

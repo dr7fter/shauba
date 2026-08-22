@@ -1,6 +1,6 @@
 import { invoke } from '@tauri-apps/api/core'
 import { mockBootstrap, mockCategories, mockInbox, mockMastery, mockQuestions, mockRecommendations } from './mock'
-import type { BootstrapData, CategoryNode, CodexTask, DailyLog, DailyTrendPoint, ExportResult, FailedInboxItem, InboxItem, InboxSummary, InsightPoint, MasteryChapter, MasteryNode, PracticeSessionState, Question, QuestionPage, RecommendationBatch, RecommendedQuestion, ReviewHistory, ReviewPlan, UserStreak, WeaknessRadar } from './types'
+import type { BootstrapData, CategoryNode, CodexTask, DailyLog, DailyTrendPoint, EloStatus, ExportResult, FailedInboxItem, InboxItem, InboxSummary, InsightPoint, MasteryChapter, MasteryNode, PracticeSessionState, Question, QuestionPage, RatingDistribution, RecommendationBatch, RecommendedQuestion, ReviewHistory, ReviewPlan, SeasonStatus, SessionScoreboard, UserStreak, WeaknessRadar, PressureSession, GradingReport } from './types'
 import { createPracticeSessionPayload } from './domain/evidence'
 
 const isTauri = () => '__TAURI_INTERNALS__' in window
@@ -15,6 +15,30 @@ export async function getQuestion(id: number): Promise<Question> {
 
 export async function getRecommendations(limit = 12): Promise<RecommendedQuestion[]> {
   return isTauri() ? invoke('get_recommendations', { limit }) : mockRecommendations.slice(0, limit)
+}
+
+export async function getEloStatus(): Promise<EloStatus> {
+  if (isTauri()) return invoke('get_elo_status')
+  return { current: 10000, settlements: 0, calibrated: false, lastDelta: null, history: [] }
+}
+
+export async function getSessionScoreboard(sessionId: string | null): Promise<SessionScoreboard> {
+  if (isTauri()) return invoke('get_session_scoreboard', { sessionId })
+  return { weScore: null, questions: [], mvpQuestionId: null, longestStreak: 0, fastestKillQuestionId: null, eloDelta: 0, totalDuration: 0, correctCount: 0, totalCount: 0 }
+}
+
+export async function getSeasonStatus(): Promise<SeasonStatus> {
+  if (isTauri()) return invoke('get_season_status')
+  return { name: '基础期', index: 0, startedAt: '', currentElo: 10000, history: [] }
+}
+
+export async function advanceSeason(): Promise<SeasonStatus> {
+  return invoke('advance_season')
+}
+
+export async function getRatingDistribution(): Promise<RatingDistribution> {
+  if (isTauri()) return invoke('get_rating_distribution')
+  return { buckets: [], mean: null, sd: null, count: 0, p95: null, above130: 0, below070: 0, drift: false, dimensions: null }
 }
 
 export async function getReviewQueue(limit = 50): Promise<RecommendedQuestion[]> {
@@ -73,7 +97,7 @@ export async function getMasteryNodes(): Promise<MasteryNode[]> {
     return { id: chapter.id * 10 + leafIndex, parentId: chapter.id, chapterId: chapter.id, name, path: `${chapter.path} / ${name}`, depth: 3,
       total: 18 + leafIndex * 9 + chapterIndex * 3, attempted, attemptCount: attempted, dueCount: attempted > 2 ? 1 : 0, weakCount: attempted > 0 ? 1 : 0,
       coverage: attempted / (18 + leafIndex * 9 + chapterIndex * 3), accuracy: attempted ? .55 + leafIndex * .07 : null,
-      rating: attempted ? 2.2 + leafIndex * .25 : null, masteryScore: attempted >= 3 ? 38 + leafIndex * 10 : null,
+      rating: attempted ? Math.min(2, 0.88 + leafIndex * .12) : null, masteryScore: attempted >= 3 ? 38 + leafIndex * 10 : null,
       evidenceLevel: attempted >= 3 ? '多次独立作答' : attempted ? '初步作答证据' : '无可评分证据',
       evidenceSources: attempted ? [`自评 ${attempted}`] : [], retestCorrectCount: 0 }
   }))
@@ -131,21 +155,6 @@ export async function recordAttempt(input: {
 }): Promise<Question> {
   if (isTauri()) return invoke('record_attempt', { input })
   return { ...(await getQuestion(input.questionId)), attempts: 1, mastery: input.selfRating }
-}
-
-export async function claimRewardEvent(
-  eventId: string,
-  rewardType: string,
-  amount: number,
-  metaJson?: string | null,
-): Promise<{ totalClaimedExp: number; newlyClaimed: boolean; eventId: string }> {
-  if (isTauri()) return invoke('claim_reward_event', { eventId, rewardType, amount, metaJson })
-  return { totalClaimedExp: amount, newlyClaimed: true, eventId }
-}
-
-export async function getRewardEvents(): Promise<import('./types').RewardEvent[]> {
-  if (isTauri()) return invoke('get_reward_events')
-  return []
 }
 
 export async function savePracticeSession(
@@ -244,8 +253,12 @@ export async function createCodexTask(questionId: number): Promise<CodexTask> {
   }
 }
 
-export async function createCodexBatchTask(questionIds: number[]): Promise<CodexTask> {
-  if (isTauri()) return invoke('create_codex_batch_task', { questionIds })
+export async function createCodexBatchTask(
+  questionIds: number[],
+  durations?: Record<number, number>,
+  sessionId?: string,
+): Promise<CodexTask> {
+  if (isTauri()) return invoke('create_codex_batch_task', { questionIds, durations, sessionId })
   return {
     taskId: 'SB-BATCH-PREVIEW-0001', questionId: null, questionCount: questionIds.length,
     prompt: '你正在为数学刷题 App「刷吧」批改数一草稿。本任务包含多道题，草稿图片按顺序对应题目；若草稿张数少于题目数，只批改上传了草稿的题，不猜测其余题目。',
@@ -259,9 +272,9 @@ export async function imageDataUrl(path: string): Promise<string> {
 
 export async function getInsights(): Promise<InsightPoint[]> {
   return isTauri() ? invoke('get_insights') : [
-    { name: '高等数学', attempts: 42, accuracy: 0.69, averageRating: 2.7 },
-    { name: '线性代数', attempts: 31, accuracy: 0.58, averageRating: 2.3 },
-    { name: '概率统计', attempts: 18, accuracy: 0.78, averageRating: 3.1 },
+    { name: '高等数学', attempts: 42, accuracy: 0.69, averageRating: 1.18 },
+    { name: '线性代数', attempts: 31, accuracy: 0.58, averageRating: 0.94 },
+    { name: '概率统计', attempts: 18, accuracy: 0.78, averageRating: 1.42 },
   ]
 }
 
@@ -290,7 +303,10 @@ export async function getWeaknessRadar(): Promise<WeaknessRadar> {
 export async function getDailyTrend(): Promise<DailyTrendPoint[]> {
   if (!isTauri()) return Array.from({ length: 14 }, (_, i) => {
     const date = new Date(); date.setDate(date.getDate() - 13 + i)
-    return { date: date.toISOString().slice(0, 10), attempts: i === 13 ? 5 : i === 12 ? 3 : 0, correct: i === 13 ? 3 : 0, rating: null }
+    const attempts = i === 13 ? 5 : i === 12 ? 3 : i > 8 ? 2 : 0
+    const correct = i === 13 ? 3 : i === 12 ? 2 : i > 8 ? 1 : 0
+    const rating = attempts > 0 ? Math.min(2, 0.76 + i * 0.025) : null
+    return { date: date.toISOString().slice(0, 10), attempts, correct, rating }
   })
   return invoke('get_daily_trend')
 }
@@ -310,4 +326,72 @@ export async function getDailyLog(): Promise<DailyLog> {
       aiAdvice: '把 u=ln y−sin x 先写完整再展开', aiConfidence: 0.9, aiConfirmedAt: new Date().toISOString(),
     }],
   }
+}
+
+// 压力模拟模式 API
+export async function createPressureSession(questionIds: number[]): Promise<PressureSession> {
+  if (isTauri()) return invoke('create_pressure_session', { questionIds })
+  return {
+    sessionId: 'mock-' + Date.now(),
+    mode: 'pressure',
+    startTime: Date.now(),
+    endTime: null,
+    totalDuration: 0,
+    questions: [],
+    status: 'ongoing',
+    createdAt: Date.now(),
+  }
+}
+
+export async function submitPressureAnswer(
+  sessionId: string,
+  questionId: number,
+  userAnswer: string,
+  duration: number
+): Promise<void> {
+  if (isTauri()) {
+    return invoke('submit_pressure_answer', { sessionId, questionId, userAnswer, duration })
+  }
+}
+
+export async function abandonPressureSession(sessionId: string): Promise<void> {
+  if (isTauri()) await invoke('abandon_pressure_session', { sessionId })
+}
+
+export async function completePressureSession(sessionId: string): Promise<PressureSession> {
+  if (isTauri()) return invoke('complete_pressure_session', { sessionId })
+  return {
+    sessionId,
+    mode: 'pressure',
+    startTime: Date.now() - 3600000,
+    endTime: Date.now(),
+    totalDuration: 3600,
+    questions: [],
+    status: 'submitted',
+    createdAt: Date.now(),
+  }
+}
+
+export async function savePressureGradingReport(
+  sessionId: string,
+  report: GradingReport
+): Promise<void> {
+  if (isTauri()) {
+    return invoke('save_pressure_grading_report', { sessionId, reportJson: JSON.stringify(report) })
+  }
+}
+
+export async function getPressureSession(sessionId: string): Promise<PressureSession | null> {
+  if (isTauri()) return invoke('get_pressure_session', { sessionId })
+  return null
+}
+
+export async function getPressureGradingReport(sessionId: string): Promise<GradingReport | null> {
+  if (isTauri()) return invoke('get_pressure_grading_report', { sessionId })
+  return null
+}
+
+export async function listPressureSessions(): Promise<PressureSession[]> {
+  if (isTauri()) return invoke('list_pressure_sessions')
+  return []
 }

@@ -25,16 +25,16 @@ export function BlitzExamModal({
 
   return (
     <AnimatePresence>
-      <div className="blitz-modal-overlay" onClick={onClose}>
+      <div className="ui-overlay blitz-modal-overlay" onClick={onClose}>
         <motion.div
-          className="blitz-modal-card"
+          className="ui-modal blitz-modal-card"
           initial={{ opacity: 0, scale: 0.88, y: 20 }}
           animate={{ opacity: 1, scale: 1, y: 0 }}
           exit={{ opacity: 0, scale: 0.9, y: 15 }}
           onClick={(e) => e.stopPropagation()}
         >
           {/* Close button */}
-          <button className="blitz-close-btn" onClick={onClose}>
+          <button className="ui-modal-close blitz-close-btn" onClick={onClose}>
             <X size={16} />
           </button>
 

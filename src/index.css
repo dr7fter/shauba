@@ -1,27 +1,16 @@
+@import "./styles/tokens.css";
+@import "./styles/ui.css";
+@import "./styles/achievement.css";
+@import "./styles/animations.css";
+
 :root {
-  font-family: "HarmonyOS Sans SC", "HarmonyOS Sans", "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei UI", "Microsoft YaHei", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
-  color: #1c2925;
-  background: #eef3f0;
+  font-family: var(--font-ui);
+  color: var(--ink);
+  background: var(--canvas);
   font-synthesis: none;
   text-rendering: optimizeLegibility;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
-  --ink: #27322e;
-  --muted: #6f7b75;
-  --quiet: #98a19d;
-  --line: #dfe5e1;
-  --paper: #ffffff;
-  --canvas: #f5f7f5;
-  --green: #738f80;
-  --green-dark: #536d5e;
-  --green-soft: #e8efea;
-  --blue: #718995;
-  --blue-soft: #e9eff1;
-  --coral: #a97874;
-  --coral-soft: #f3eae8;
-  --yellow: #a38d62;
-  --yellow-soft: #f2eee3;
-  --shadow: 0 16px 42px rgba(55, 70, 62, 0.11);
 }
 
 * { box-sizing: border-box; }
@@ -29,8 +18,8 @@ html, body, #root { width: 100%; min-width: 320px; min-height: 100%; margin: 0; 
 body { min-height: 100vh; overflow: hidden; }
 button, input, select { font: inherit; letter-spacing: 0; }
 button { color: inherit; }
-button:focus-visible, input:focus-visible, select:focus-visible { outline: 2px solid rgba(115, 143, 128, .45); outline-offset: 2px; }
+button:focus-visible, input:focus-visible, select:focus-visible { outline: var(--ring); outline-offset: 2px; }
 
 ::-webkit-scrollbar { width: 8px; height: 8px; }
-::-webkit-scrollbar-thumb { background: #cbd7d2; border-radius: 8px; }
+::-webkit-scrollbar-thumb { background: var(--line); border-radius: var(--r-md); }
 ::-webkit-scrollbar-track { background: transparent; }

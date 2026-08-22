@@ -1,3 +1,8 @@
+// Three-tier architecture modules (v1.0.0)
+mod db;          // Data Access Layer
+mod services;    // Business Logic Layer
+mod commands;    // Tauri Command Layer
+
 use base64::{engine::general_purpose::STANDARD, Engine};
 use chrono::{Datelike, Duration, Local};
 use rand::Rng;
@@ -14,6 +19,13 @@ use tauri::{Manager, State};
 
 const DEFAULT_LIBRARY: &str = r"E:\考研资料\题库-大观园";
 const CATEGORY_SCHEMA_VERSION: &str = "2";
+const AI_RATING_MIN: f64 = 0.0;
+const AI_RATING_MAX: f64 = 2.0;
+const AI_RATING_AVERAGE: f64 = 1.0;
+
+fn clamp_ai_rating(value: f64) -> f64 {
+    value.clamp(AI_RATING_MIN, AI_RATING_MAX)
+}
 
 struct AppState {
     db: Mutex<Connection>,
@@ -93,6 +105,40 @@ struct BootstrapData {
     reward_events_count: i64,
 }
 
+/// 六维证据分（0-100），来自 Codex 批改 payload，落库到 attempts 的 dim_* 列。
+#[derive(Debug, Deserialize, Serialize, Clone, Copy, Default, PartialEq)]
+struct AttemptDimensions {
+    rigor: Option<f64>,
+    computation: Option<f64>,
+    modeling: Option<f64>,
+    method_use: Option<f64>,
+    speed: Option<f64>,
+    strategy_insight: Option<f64>,
+}
+
+impl AttemptDimensions {
+    fn is_empty(&self) -> bool {
+        self.rigor.is_none()
+            && self.computation.is_none()
+            && self.modeling.is_none()
+            && self.method_use.is_none()
+            && self.speed.is_none()
+            && self.strategy_insight.is_none()
+    }
+
+    fn from_dimension_map(map: &HashMap<String, RatingDimension>) -> Self {
+        let pick = |key: &str| map.get(key).and_then(|d| d.score).filter(|s| (0.0..=100.0).contains(s));
+        AttemptDimensions {
+            rigor: pick("rigor"),
+            computation: pick("computation"),
+            modeling: pick("modeling"),
+            method_use: pick("methodUse"),
+            speed: pick("speed"),
+            strategy_insight: pick("strategyInsight"),
+        }
+    }
+}
+
 #[derive(Debug, Deserialize, Clone, Default)]
 #[serde(rename_all = "camelCase")]
 struct AttemptInput {
@@ -116,6 +162,14 @@ struct AttemptInput {
     session_id: Option<String>,
     #[serde(default)]
     diagnosis_id: Option<String>,
+    #[serde(default)]
+    ai_rating: Option<f64>,
+    #[serde(default)]
+    difficulty_multiplier: Option<f64>,
+    #[serde(default)]
+    technique_level: Option<i32>,
+    #[serde(default)]
+    dimensions: Option<AttemptDimensions>,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
@@ -199,12 +253,14 @@ struct PaperAttempt {
     diagnosis: Option<String>,
 }
 
-#[derive(Debug, Serialize, Deserialize, Clone)]
+#[derive(Debug, Serialize, Deserialize, Clone, Default)]
 #[serde(rename_all = "camelCase")]
 struct BatchAttempt {
     question_id: i64,
     result: String,
     self_rating: i32,
+    #[serde(default)]
+    duration_seconds: i64,
     summary: String,
     #[serde(default)]
     verdict: Option<String>,
@@ -216,7 +272,50 @@ struct BatchAttempt {
     weakness_tags: Vec<String>,
     #[serde(default)]
     advice: Option<String>,
+    #[serde(default)]
+    better_solution: Option<String>,
     confidence: f64,
+    #[serde(default)]
+    rating: Option<f64>,
+    #[serde(default)]
+    rating_tier: Option<String>,
+    #[serde(default)]
+    difficulty_multiplier: Option<f64>,
+    #[serde(default)]
+    dimensions: HashMap<String, RatingDimension>,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+#[serde(rename_all = "camelCase")]
+struct RatingDimension {
+    #[serde(default)]
+    score: Option<f64>,
+    #[serde(default)]
+    confidence: f64,
+    #[serde(default)]
+    evidence: String,
+    #[serde(default)]
+    advice: Option<String>,
+    #[serde(default)]
+    technique_level: Option<i32>,
+    #[serde(default)]
+    independent_discovery: Option<String>,
+}
+
+#[derive(Debug)]
+struct PressureBatchContext {
+    session_id: String,
+    question_ids: Vec<i64>,
+    durations: HashMap<i64, i64>,
+}
+
+enum PressureTaskMatch {
+    Current(PressureBatchContext),
+    Stale {
+        session_id: String,
+        current_task_id: Option<String>,
+    },
+    None,
 }
 
 #[derive(Debug, Deserialize)]
@@ -227,7 +326,7 @@ struct GoalInput {
     daily_minute_target: i64,
 }
 
-#[derive(Debug, Serialize, Deserialize, Clone)]
+#[derive(Debug, Serialize, Deserialize, Clone, Default)]
 #[serde(rename_all = "camelCase")]
 struct CodexPayload {
     schema_version: i32,
@@ -243,6 +342,8 @@ struct CodexPayload {
     weakness_tags: Vec<String>,
     advice: Option<String>,
     #[serde(default)]
+    better_solution: Option<String>,
+    #[serde(default)]
     confidence: f64,
     #[serde(default)]
     recommended_question_ids: Vec<i64>,
@@ -253,9 +354,17 @@ struct CodexPayload {
     paper_attempts: Vec<PaperAttempt>,
     #[serde(default)]
     batch_attempts: Vec<BatchAttempt>,
+    #[serde(default)]
+    rating: Option<f64>,
+    #[serde(default)]
+    rating_tier: Option<String>,
+    #[serde(default)]
+    difficulty_multiplier: Option<f64>,
+    #[serde(default)]
+    dimensions: HashMap<String, RatingDimension>,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, Default)]
 #[serde(rename_all = "camelCase")]
 struct InboxItem {
     id: i64,
@@ -268,6 +377,7 @@ struct InboxItem {
     error_tags: Vec<String>,
     weakness_tags: Vec<String>,
     advice: Option<String>,
+    better_solution: Option<String>,
     confidence: f64,
     status: String,
     created_at: String,
@@ -276,6 +386,10 @@ struct InboxItem {
     batch_attempts: Vec<BatchAttempt>,
     recommendation_question_count: Option<i64>,
     recommendation_batch_status: Option<String>,
+    rating: Option<f64>,
+    rating_tier: Option<String>,
+    difficulty_multiplier: Option<f64>,
+    dimensions: HashMap<String, RatingDimension>,
 }
 
 #[derive(Debug, Serialize, Clone)]
@@ -569,6 +683,15 @@ fn init_schema(conn: &Connection) -> rusqlite::Result<()> {
             confidence REAL,
             session_id TEXT,
             diagnosis_id TEXT,
+            ai_rating REAL,
+            difficulty_multiplier REAL,
+            technique_level INTEGER,
+            dim_rigor REAL,
+            dim_computation REAL,
+            dim_modeling REAL,
+            dim_method_use REAL,
+            dim_speed REAL,
+            dim_strategy_insight REAL,
             FOREIGN KEY(question_id) REFERENCES questions(id)
           );
          CREATE INDEX IF NOT EXISTS idx_attempts_question ON attempts(question_id);
@@ -601,6 +724,33 @@ CREATE TABLE IF NOT EXISTS progress (
            FOREIGN KEY(question_id) REFERENCES questions(id)
          );
          CREATE INDEX IF NOT EXISTS idx_codex_analysis_signals_confirmed ON codex_analysis_signals(confirmed_at DESC);
+         CREATE TABLE IF NOT EXISTS codex_batch_applications (
+           task_id TEXT NOT NULL,
+           question_id INTEGER NOT NULL,
+           applied_at TEXT NOT NULL,
+           PRIMARY KEY(task_id, question_id)
+         );
+         CREATE TABLE IF NOT EXISTS elo_events (
+           id INTEGER PRIMARY KEY AUTOINCREMENT,
+           attempt_id INTEGER,
+           question_id INTEGER NOT NULL,
+           delta REAL NOT NULL,
+           rating_after REAL NOT NULL,
+           performance REAL NOT NULL,
+           expected REAL NOT NULL,
+           created_at TEXT NOT NULL,
+           session_id TEXT,
+           reason TEXT NOT NULL DEFAULT 'match'
+         );
+         CREATE TABLE IF NOT EXISTS season_history (
+           id INTEGER PRIMARY KEY AUTOINCREMENT,
+           season_name TEXT NOT NULL,
+           started_at TEXT NOT NULL,
+           ended_at TEXT NOT NULL,
+           peak_rating REAL NOT NULL,
+           final_rating REAL NOT NULL,
+           rank_index INTEGER NOT NULL
+         );
          CREATE TABLE IF NOT EXISTS recommendation_overrides (
            question_id INTEGER PRIMARY KEY,
            reason TEXT NOT NULL,
@@ -692,6 +842,35 @@ fn migrate_schema_impl(conn: &Connection, inject_failure: bool) -> rusqlite::Res
         ensure_column(conn, "attempts", "confidence", "confidence REAL")?;
         ensure_column(conn, "attempts", "session_id", "session_id TEXT")?;
         ensure_column(conn, "attempts", "diagnosis_id", "diagnosis_id TEXT")?;
+        ensure_column(conn, "attempts", "ai_rating", "ai_rating REAL")?;
+        ensure_column(conn, "attempts", "difficulty_multiplier", "difficulty_multiplier REAL")?;
+        ensure_column(conn, "attempts", "technique_level", "technique_level INTEGER")?;
+        ensure_column(conn, "attempts", "dim_rigor", "dim_rigor REAL")?;
+        ensure_column(conn, "attempts", "dim_computation", "dim_computation REAL")?;
+        ensure_column(conn, "attempts", "dim_modeling", "dim_modeling REAL")?;
+        ensure_column(conn, "attempts", "dim_method_use", "dim_method_use REAL")?;
+        ensure_column(conn, "attempts", "dim_speed", "dim_speed REAL")?;
+        ensure_column(conn, "attempts", "dim_strategy_insight", "dim_strategy_insight REAL")?;
+        ensure_column(conn, "elo_events", "session_id", "session_id TEXT")?;
+        ensure_column(conn, "elo_events", "reason", "reason TEXT NOT NULL DEFAULT 'match'")?;
+        // 一次性迁移：万位 CS2 刻度 → 完美平台千位刻度
+        if setting(conn, "elo_wanmei_migrated", "") != "1" {
+            conn.execute_batch(
+                "UPDATE elo_events
+                 SET rating_after = 1400.0 + (rating_after - 10000.0) * 0.1,
+                     delta = delta * 0.1;
+                 INSERT INTO settings(key,value) VALUES('elo_wanmei_migrated','1')
+                 ON CONFLICT(key) DO UPDATE SET value=excluded.value;",
+            )?;
+        }
+        conn.execute_batch(
+            "CREATE TABLE IF NOT EXISTS codex_batch_applications (
+               task_id TEXT NOT NULL,
+               question_id INTEGER NOT NULL,
+               applied_at TEXT NOT NULL,
+               PRIMARY KEY(task_id, question_id)
+             );",
+        )?;
 
         conn.execute_batch(
             "UPDATE attempts SET outcome = result WHERE outcome IS NULL;
@@ -782,8 +961,58 @@ fn init_supplemental_schema(conn: &Connection) -> rusqlite::Result<()> {
            difficulty INTEGER NOT NULL DEFAULT 2,
            created_at TEXT NOT NULL
          );
-         CREATE INDEX IF NOT EXISTS idx_supplemental_category ON supplemental_questions(category_path);",
+         CREATE INDEX IF NOT EXISTS idx_supplemental_category ON supplemental_questions(category_path);
+         CREATE TABLE IF NOT EXISTS pressure_sessions (
+            session_id TEXT PRIMARY KEY,
+            question_ids TEXT NOT NULL,
+            start_time INTEGER NOT NULL,
+            end_time INTEGER,
+            status TEXT NOT NULL,
+            task_id TEXT,
+            created_at INTEGER NOT NULL
+         );
+         CREATE TABLE IF NOT EXISTS pressure_answers (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            session_id TEXT NOT NULL,
+            question_id INTEGER NOT NULL,
+            user_answer TEXT NOT NULL,
+            duration INTEGER NOT NULL,
+            submit_time INTEGER NOT NULL,
+            FOREIGN KEY (session_id) REFERENCES pressure_sessions(session_id)
+         );
+         CREATE TABLE IF NOT EXISTS pressure_reports (
+            session_id TEXT PRIMARY KEY,
+            report_json TEXT NOT NULL,
+            created_at INTEGER NOT NULL,
+            FOREIGN KEY (session_id) REFERENCES pressure_sessions(session_id)
+         );
+         CREATE TABLE IF NOT EXISTS pressure_task_links (
+            task_id TEXT PRIMARY KEY,
+            session_id TEXT NOT NULL,
+            is_current INTEGER NOT NULL DEFAULT 1,
+            created_at INTEGER NOT NULL,
+            FOREIGN KEY (session_id) REFERENCES pressure_sessions(session_id)
+         );
+         CREATE INDEX IF NOT EXISTS idx_pressure_sessions_created_at ON pressure_sessions(created_at);
+         CREATE INDEX IF NOT EXISTS idx_pressure_answers_session ON pressure_answers(session_id);
+         CREATE INDEX IF NOT EXISTS idx_pressure_task_links_session ON pressure_task_links(session_id, is_current);",
     )
+    // Existing 0.9 databases were created before task_id and task history existed.
+    // Keep the migration additive so retry tasks can supersede old tasks safely.
+    .and_then(|_| ensure_column(conn, "pressure_sessions", "task_id", "task_id TEXT"))
+    .and_then(|_| {
+        conn.execute_batch(
+            "INSERT OR IGNORE INTO pressure_task_links(task_id,session_id,is_current,created_at)
+             SELECT task_id,session_id,1,created_at
+             FROM pressure_sessions
+             WHERE task_id IS NOT NULL AND task_id<>'';
+             UPDATE pressure_task_links
+             SET is_current=CASE WHEN task_id=(
+                 SELECT ps.task_id FROM pressure_sessions ps
+                 WHERE ps.session_id=pressure_task_links.session_id
+             ) THEN 1 ELSE 0 END;",
+        )
+    })
 }
 
 fn setting(conn: &Connection, key: &str, fallback: &str) -> String {
@@ -957,12 +1186,11 @@ fn import_library(conn: &mut Connection, library: &Path) -> Result<i64, String> 
         .and_then(Value::as_array)
         .ok_or("题库缺少 questions 数组")?;
     let tx = conn.transaction().map_err(|e| e.to_string())?;
-    tx.execute("DELETE FROM questions", [])
-        .map_err(|e| e.to_string())?;
+    // 通过 content_hash 增量同步题库，保留本地 progress/attempts 等用户数据。
     let mut inserted = 0_i64;
     {
         let mut stmt = tx
-            .prepare("INSERT INTO questions(id,stem,options_json,correct_answer,explanation,source,question_type,category_path,image_paths_json,is_core,difficulty,content_hash) VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12)")
+            .prepare("INSERT INTO questions(id,stem,options_json,correct_answer,explanation,source,question_type,category_path,image_paths_json,is_core,difficulty,content_hash) VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12) ON CONFLICT(id) DO UPDATE SET stem=excluded.stem,options_json=excluded.options_json,correct_answer=excluded.correct_answer,explanation=excluded.explanation,source=excluded.source,question_type=excluded.question_type,category_path=excluded.category_path,image_paths_json=excluded.image_paths_json,is_core=excluded.is_core,difficulty=excluded.difficulty,content_hash=excluded.content_hash WHERE questions.content_hash IS NULL OR questions.content_hash<>excluded.content_hash")
             .map_err(|e| e.to_string())?;
         for q in questions {
             let eligible = q
@@ -1361,6 +1589,70 @@ fn save_analysis_signal(conn: &Connection, payload: &CodexPayload) -> Result<(),
     Ok(())
 }
 
+fn apply_analysis_rating_to_latest_attempt(
+    conn: &Connection,
+    payload: &CodexPayload,
+) -> Result<(), String> {
+    let (Some(question_id), Some(rating)) = (payload.question_id, payload.rating) else {
+        return Ok(());
+    };
+    // Anchor the rating to the attempt the task was actually created for. If
+    // the question was answered again while Codex was grading, the newest
+    // attempt belongs to a different solution and must not receive this score.
+    let task_created_at: Option<String> = conn
+        .query_row(
+            "SELECT created_at FROM codex_inbox WHERE task_id=?1 ORDER BY id DESC LIMIT 1",
+            [payload.task_id.as_str()],
+            |r| r.get(0),
+        )
+        .optional()
+        .map_err(|e| e.to_string())?;
+    let mut target_id: Option<i64> = None;
+    if let Some(created_at) = task_created_at.as_deref() {
+        target_id = conn
+            .query_row(
+                "SELECT id FROM attempts
+                 WHERE question_id=?1 AND attempted_at<=?2
+                 ORDER BY attempted_at DESC, id DESC LIMIT 1",
+                params![question_id, created_at],
+                |r| r.get(0),
+            )
+            .optional()
+            .map_err(|e| e.to_string())?;
+    }
+    if target_id.is_none() {
+        // Legacy tasks without an inbox row: fall back to the latest attempt.
+        target_id = conn
+            .query_row(
+                "SELECT id FROM attempts
+                 WHERE question_id=?1
+                 ORDER BY attempted_at DESC, id DESC LIMIT 1",
+                [question_id],
+                |r| r.get(0),
+            )
+            .optional()
+            .map_err(|e| e.to_string())?;
+    }
+    let Some(target_id) = target_id else {
+        return Ok(());
+    };
+    conn.execute(
+        "UPDATE attempts
+         SET ai_rating=?1,
+             confidence=COALESCE(?2, confidence),
+             diagnosis_id=COALESCE(diagnosis_id, ?3)
+         WHERE id=?4",
+        params![
+            clamp_ai_rating(rating),
+            Some(payload.confidence.clamp(0.0, 1.0)),
+            payload.task_id,
+            target_id,
+        ],
+    )
+    .map_err(|e| e.to_string())?;
+    Ok(())
+}
+
 fn backfill_confirmed_analysis_signals(conn: &Connection) -> Result<(), String> {
     let mut stmt = conn
         .prepare(
@@ -1376,6 +1668,7 @@ fn backfill_confirmed_analysis_signals(conn: &Connection) -> Result<(), String> 
     for raw in payloads {
         if let Ok(payload) = serde_json::from_str::<CodexPayload>(&raw) {
             save_analysis_signal(conn, &payload)?;
+            apply_analysis_rating_to_latest_attempt(conn, &payload)?;
         }
     }
     Ok(())
@@ -1515,6 +1808,26 @@ fn insert_codex_payload(conn: &Connection, payload: &CodexPayload) -> Result<(),
             if !(1..=4).contains(&attempt.self_rating) {
                 return Err(format!("题号 {} 的自评等级无效", attempt.question_id));
             }
+            if let Some(rating) = attempt.rating {
+                if !(AI_RATING_MIN..=AI_RATING_MAX).contains(&rating) {
+                    return Err(format!("题号 {} 的 CS rating 必须在 0.00–2.00", attempt.question_id));
+                }
+            }
+            if let Some(multiplier) = attempt.difficulty_multiplier {
+                if !(0.5..=1.5).contains(&multiplier) {
+                    return Err(format!("题号 {} 的 difficultyMultiplier 超出合理范围", attempt.question_id));
+                }
+            }
+            for (key, dimension) in &attempt.dimensions {
+                if let Some(score) = dimension.score {
+                    if !(0.0..=100.0).contains(&score) {
+                        return Err(format!("题号 {} 的维度 {} 分数无效", attempt.question_id, key));
+                    }
+                }
+                if !(0.0..=1.0).contains(&dimension.confidence) {
+                    return Err(format!("题号 {} 的维度 {} 置信度无效", attempt.question_id, key));
+                }
+            }
         }
     }
     let tx = conn.unchecked_transaction().map_err(|e| e.to_string())?;
@@ -1530,9 +1843,71 @@ fn insert_codex_payload(conn: &Connection, payload: &CodexPayload) -> Result<(),
     Ok(())
 }
 
-fn apply_batch_payload(conn: &Connection, payload: &CodexPayload) -> Result<(), String> {
+fn resolved_batch_duration(
+    attempt: &BatchAttempt,
+    pressure_durations: Option<&HashMap<i64, i64>>,
+) -> i64 {
+    let duration = if attempt.duration_seconds > 0 {
+        attempt.duration_seconds
+    } else {
+        pressure_durations
+            .and_then(|durations| durations.get(&attempt.question_id).copied())
+            .unwrap_or(30)
+    };
+    duration.clamp(1, 1800)
+}
+
+fn apply_batch_payload(
+    conn: &Connection,
+    payload: &CodexPayload,
+    pressure_durations: Option<&HashMap<i64, i64>>,
+) -> Result<(), String> {
     let tx = conn.unchecked_transaction().map_err(|e| e.to_string())?;
     for attempt in &payload.batch_attempts {
+        // The application marker and all writes for one batch live in the same
+        // main-database transaction. If confirmation is retried after a crash,
+        // already-applied questions cannot advance progress a second time.
+        let inserted = tx
+            .execute(
+                "INSERT OR IGNORE INTO codex_batch_applications(task_id,question_id,applied_at) VALUES(?1,?2,?3)",
+                params![
+                    &payload.task_id,
+                    attempt.question_id,
+                    Local::now().to_rfc3339()
+                ],
+            )
+            .map_err(|e| e.to_string())?;
+        if inserted == 0 {
+            continue;
+        }
+
+        // Every returned question keeps a diagnosis signal, including
+        // uncertain results. Uncertain still never becomes a formal attempt.
+        let signal = CodexPayload {
+            schema_version: 1,
+            kind: "analysis".into(),
+            task_id: format!("{}-{}", payload.task_id, attempt.question_id),
+            question_id: Some(attempt.question_id),
+            summary: attempt.summary.clone(),
+            verdict: attempt.verdict.clone(),
+            earliest_error: attempt.earliest_error.clone(),
+            error_tags: attempt.error_tags.clone(),
+            weakness_tags: attempt.weakness_tags.clone(),
+            advice: attempt.advice.clone(),
+            better_solution: attempt.better_solution.clone(),
+            confidence: attempt.confidence,
+            recommended_question_ids: vec![],
+            recommendation_reason: None,
+            paper_title: None,
+            paper_attempts: vec![],
+            batch_attempts: vec![],
+            rating: attempt.rating,
+            rating_tier: attempt.rating_tier.clone(),
+            difficulty_multiplier: attempt.difficulty_multiplier,
+            dimensions: attempt.dimensions.clone(),
+        };
+        save_analysis_signal(&tx, &signal)?;
+
         if attempt.result == "uncertain" {
             continue;
         }
@@ -1540,7 +1915,7 @@ fn apply_batch_payload(conn: &Connection, payload: &CodexPayload) -> Result<(), 
             &tx,
             &AttemptInput {
                 question_id: attempt.question_id,
-                duration_seconds: 30,
+                duration_seconds: resolved_batch_duration(attempt, pressure_durations),
                 result: attempt.result.clone(),
                 self_rating: attempt.self_rating,
                 selected_answer: None,
@@ -1556,31 +1931,305 @@ fn apply_batch_payload(conn: &Connection, payload: &CodexPayload) -> Result<(), 
                 confidence: Some(attempt.confidence),
                 session_id: Some(payload.task_id.clone()),
                 diagnosis_id: Some(format!("{}-{}", payload.task_id, attempt.question_id)),
+                ai_rating: attempt.rating,
+                difficulty_multiplier: attempt.difficulty_multiplier,
+                technique_level: attempt
+                    .dimensions
+                    .get("strategyInsight")
+                    .and_then(|d| d.technique_level),
+                dimensions: Some(AttemptDimensions::from_dimension_map(
+                    &attempt.dimensions,
+                )),
             },
         )?;
-        // 每道题单独保存画像，避免同批次互相覆盖。
-        let signal = CodexPayload {
-            schema_version: 1,
-            kind: "analysis".into(),
-            task_id: format!("{}-{}", payload.task_id, attempt.question_id),
-            question_id: Some(attempt.question_id),
-            summary: attempt.summary.clone(),
-            verdict: attempt.verdict.clone(),
-            earliest_error: attempt.earliest_error.clone(),
-            error_tags: attempt.error_tags.clone(),
-            weakness_tags: attempt.weakness_tags.clone(),
-            advice: attempt.advice.clone(),
-            confidence: attempt.confidence,
-            recommended_question_ids: vec![],
-            recommendation_reason: None,
-            paper_title: None,
-            paper_attempts: vec![],
-            batch_attempts: vec![],
-        };
-        save_analysis_signal(&tx, &signal)?;
     }
     tx.commit().map_err(|e| e.to_string())?;
     Ok(())
+}
+
+fn pressure_task_match(conn: &Connection, task_id: &str) -> Result<PressureTaskMatch, String> {
+    let linked: Option<(String, bool)> = conn
+        .query_row(
+            "SELECT session_id,is_current FROM pressure_task_links WHERE task_id=?1",
+            [task_id],
+            |row| Ok((row.get(0)?, row.get::<_, i64>(1)? != 0)),
+        )
+        .optional()
+        .map_err(|e| e.to_string())?;
+
+    let session_id = if let Some((session_id, is_current)) = linked {
+        if !is_current {
+            let current_task_id = conn
+                .query_row(
+                    "SELECT task_id FROM pressure_sessions WHERE session_id=?1",
+                    [&session_id],
+                    |row| row.get(0),
+                )
+                .optional()
+                .map_err(|e| e.to_string())?
+                .flatten();
+            return Ok(PressureTaskMatch::Stale {
+                session_id,
+                current_task_id,
+            });
+        }
+        session_id
+    } else {
+        // Compatibility for a database/session created before task history was
+        // introduced, or a test fixture inserted after schema initialization.
+        match conn
+            .query_row(
+                "SELECT session_id FROM pressure_sessions WHERE task_id=?1",
+                [task_id],
+                |row| row.get::<_, String>(0),
+            )
+            .optional()
+            .map_err(|e| e.to_string())?
+        {
+            Some(session_id) => session_id,
+            None => return Ok(PressureTaskMatch::None),
+        }
+    };
+
+    let (question_ids_json, status, current_task_id): (String, String, Option<String>) = conn
+        .query_row(
+            "SELECT question_ids,status,task_id FROM pressure_sessions WHERE session_id=?1",
+            [&session_id],
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+        )
+        .map_err(|e| e.to_string())?;
+    if current_task_id.as_deref() != Some(task_id)
+        || !matches!(
+            status.as_str(),
+            "awaiting_codex" | "graded" | "graded_partial"
+        )
+    {
+        return Ok(PressureTaskMatch::Stale {
+            session_id,
+            current_task_id,
+        });
+    }
+
+    let question_ids: Vec<i64> = serde_json::from_str(&question_ids_json)
+        .map_err(|e| format!("压力会话题目列表损坏: {e}"))?;
+    let mut durations = HashMap::new();
+    let mut stmt = conn
+        .prepare("SELECT question_id,duration FROM pressure_answers WHERE session_id=?1")
+        .map_err(|e| e.to_string())?;
+    let rows = stmt
+        .query_map([&session_id], |row| {
+            Ok((row.get::<_, i64>(0)?, row.get::<_, i64>(1)?))
+        })
+        .map_err(|e| e.to_string())?;
+    for row in rows {
+        let (question_id, duration) = row.map_err(|e| e.to_string())?;
+        durations.insert(question_id, duration.clamp(1, 1800));
+    }
+
+    Ok(PressureTaskMatch::Current(PressureBatchContext {
+        session_id,
+        question_ids,
+        durations,
+    }))
+}
+
+fn validate_pressure_batch_payload(
+    context: &PressureBatchContext,
+    payload: &CodexPayload,
+) -> Result<(), String> {
+    let expected: HashSet<i64> = context.question_ids.iter().copied().collect();
+    let mut returned = HashSet::new();
+    for attempt in &payload.batch_attempts {
+        if !expected.contains(&attempt.question_id) {
+            return Err(format!(
+                "题号 {} 不属于压力会话 {}",
+                attempt.question_id, context.session_id
+            ));
+        }
+        if !returned.insert(attempt.question_id) {
+            return Err(format!("整组回传重复包含题号 {}", attempt.question_id));
+        }
+    }
+    Ok(())
+}
+
+fn push_unique_nonempty(items: &mut Vec<String>, value: &str) {
+    let value = value.trim();
+    if !value.is_empty() && !items.iter().any(|item| item == value) {
+        items.push(value.to_owned());
+    }
+}
+
+fn batch_grade_class(attempt: &BatchAttempt) -> &'static str {
+    if attempt.result == "uncertain" || attempt.verdict.as_deref() == Some("uncertain") {
+        "uncertain"
+    } else {
+        match attempt.verdict.as_deref() {
+            Some("partial") => "partial",
+            Some("incorrect") => "wrong",
+            Some("correct") => "correct",
+            _ if attempt.result == "correct" => "correct",
+            _ => "wrong",
+        }
+    }
+}
+
+fn build_pressure_grading_report(
+    context: &PressureBatchContext,
+    payload: &CodexPayload,
+    now: i64,
+) -> (String, Value) {
+    let returned_by_id: HashMap<i64, &BatchAttempt> = payload
+        .batch_attempts
+        .iter()
+        .map(|attempt| (attempt.question_id, attempt))
+        .collect();
+    let returned_ids: HashSet<i64> = returned_by_id.keys().copied().collect();
+    let ungraded_question_ids: Vec<i64> = context
+        .question_ids
+        .iter()
+        .copied()
+        .filter(|question_id| !returned_ids.contains(question_id))
+        .collect();
+    let status = if ungraded_question_ids.is_empty() {
+        "graded"
+    } else {
+        "graded_partial"
+    };
+
+    let mut correct_count = 0_i64;
+    let mut partial_count = 0_i64;
+    let mut wrong_count = 0_i64;
+    let mut uncertain_count = 0_i64;
+    let mut strengths = Vec::new();
+    let mut weaknesses = Vec::new();
+    let mut suggestions = Vec::new();
+    let mut grades = Vec::new();
+    let mut resolved_durations = context.durations.clone();
+
+    for attempt in &payload.batch_attempts {
+        resolved_durations.insert(
+            attempt.question_id,
+            resolved_batch_duration(attempt, Some(&context.durations)),
+        );
+    }
+
+    for question_id in &context.question_ids {
+        let Some(attempt) = returned_by_id.get(question_id).copied() else {
+            continue;
+        };
+        let grade_class = batch_grade_class(attempt);
+        match grade_class {
+            "correct" => {
+                correct_count += 1;
+                push_unique_nonempty(&mut strengths, &attempt.summary);
+            }
+            "partial" => partial_count += 1,
+            "uncertain" => uncertain_count += 1,
+            _ => wrong_count += 1,
+        }
+        for weakness in &attempt.weakness_tags {
+            push_unique_nonempty(&mut weaknesses, weakness);
+        }
+        if let Some(advice) = attempt.advice.as_deref() {
+            push_unique_nonempty(&mut suggestions, advice);
+        }
+        grades.push(json!({
+            "questionId": attempt.question_id,
+            "correct": grade_class == "correct",
+            "userAnswer": "",
+            "correctAnswer": "",
+            "feedback": attempt.summary,
+            "duration": resolved_durations.get(question_id).copied().unwrap_or(30),
+            "result": attempt.result,
+            "verdict": attempt.verdict,
+            "selfRating": attempt.self_rating,
+            "earliestError": attempt.earliest_error,
+            "errorTags": attempt.error_tags,
+            "weaknessTags": attempt.weakness_tags,
+            "advice": attempt.advice,
+            "betterSolution": attempt.better_solution,
+            "confidence": attempt.confidence.clamp(0.0, 1.0),
+            "rating": attempt.rating.map(|value| value.clamp(AI_RATING_MIN, AI_RATING_MAX)),
+            "ratingTier": attempt.rating_tier,
+            "difficultyMultiplier": attempt.difficulty_multiplier,
+            "dimensions": attempt.dimensions,
+        }));
+    }
+
+    let total_count = context.question_ids.len() as i64;
+    let graded_count = correct_count + partial_count + wrong_count;
+    let accuracy = if graded_count > 0 {
+        correct_count as f64 * 100.0 / graded_count as f64
+    } else {
+        0.0
+    };
+    let total_duration: i64 = context
+        .question_ids
+        .iter()
+        .map(|question_id| resolved_durations.get(question_id).copied().unwrap_or(0))
+        .sum();
+    let average_duration = if total_count > 0 {
+        total_duration as f64 / total_count as f64
+    } else {
+        0.0
+    };
+
+    (
+        status.into(),
+        json!({
+            "sessionId": context.session_id,
+            "sourceTaskId": payload.task_id,
+            "status": status,
+            "questionIds": context.question_ids,
+            "ungradedQuestionIds": ungraded_question_ids,
+            "grades": grades,
+            "summary": {
+                "correctCount": correct_count,
+                "partialCount": partial_count,
+                "wrongCount": wrong_count,
+                "uncertainCount": uncertain_count,
+                "gradedCount": graded_count,
+                "totalCount": total_count,
+                "accuracy": accuracy,
+                "strengths": strengths,
+                "weaknesses": weaknesses,
+                "suggestions": suggestions,
+                "totalDuration": total_duration,
+                "averageDuration": average_duration,
+            },
+            "confirmedAt": now,
+            "createdAt": now,
+        }),
+    )
+}
+
+fn save_pressure_batch_report(
+    conn: &Connection,
+    context: &PressureBatchContext,
+    payload: &CodexPayload,
+) -> Result<String, String> {
+    validate_pressure_batch_payload(context, payload)?;
+    let now = Local::now().timestamp_millis();
+    let (status, report) = build_pressure_grading_report(context, payload, now);
+    let report_json = serde_json::to_string(&report).map_err(|e| e.to_string())?;
+    let tx = conn.unchecked_transaction().map_err(|e| e.to_string())?;
+    let updated = tx
+        .execute(
+            "UPDATE pressure_sessions SET status=?1 WHERE session_id=?2 AND task_id=?3 AND status IN ('awaiting_codex','graded','graded_partial')",
+            params![&status, &context.session_id, &payload.task_id],
+        )
+        .map_err(|e| e.to_string())?;
+    if updated != 1 {
+        return Err("压力会话已变化，无法保存当前批改报告".into());
+    }
+    tx.execute(
+        "INSERT OR REPLACE INTO pressure_reports(session_id,report_json,created_at) VALUES(?1,?2,?3)",
+        params![&context.session_id, report_json, now],
+    )
+    .map_err(|e| e.to_string())?;
+    tx.commit().map_err(|e| e.to_string())?;
+    Ok(status)
 }
 
 fn clear_recommendation_overrides(conn: &Connection, task_id: &str) -> Result<(), String> {
@@ -1687,13 +2336,9 @@ fn bootstrap(state: State<AppState>) -> Result<BootstrapData, String> {
         .unwrap_or(0);
     let library = state.library_dir.lock().map_err(|e| e.to_string())?.clone();
     let ready = library.join("all_questions_20260813.json").exists();
-    if count == 0 && ready {
+    if ready {
+        // 每次启动按 content_hash 增量同步，题库内容更新时不会继续使用旧题面。
         count = import_library(&mut conn, &library)?;
-    } else if ready {
-        let category_version = setting(&conn, "category_schema_version", "0");
-        if category_version != CATEGORY_SCHEMA_VERSION {
-            import_category_metadata(&mut conn, &library)?;
-        }
     }
     let today = Local::now().date_naive().to_string();
     let today_done = conn
@@ -1948,8 +2593,15 @@ fn dynamic_mastery_score(
     } else {
         overall_accuracy
     };
-    let rating_norm = rating.unwrap_or(0.0) / 4.0;
-    let mut score = (recent_accuracy * 0.55 + rating_norm * 0.30 + overall_accuracy * 0.15) * 100.0;
+    // Without rating evidence the weight goes back to accuracy instead of
+    // fabricating an average rating for chapters that never produced one.
+    let mut score = match rating {
+        Some(value) => {
+            let rating_norm = value.clamp(AI_RATING_MIN, AI_RATING_MAX) / AI_RATING_MAX;
+            (recent_accuracy * 0.55 + rating_norm * 0.30 + overall_accuracy * 0.15) * 100.0
+        }
+        None => (recent_accuracy * 0.70 + overall_accuracy * 0.30) * 100.0,
+    };
 
     let days_since = last_attempt_at
         .and_then(|s| s.get(0..10))
@@ -2000,7 +2652,9 @@ fn mastery_evidence_summary(
 #[tauri::command]
 fn get_mastery_map(state: State<AppState>) -> Result<Vec<MasteryChapter>, String> {
     let conn = state.db.lock().map_err(|e| e.to_string())?;
-    let today = Local::now().date_naive().to_string();
+    let today_date = Local::now().date_naive();
+    let today = today_date.to_string();
+    let chapter_ratings = services::rating::chapter_ratings(&conn, today_date)?;
     let recent_start = (Local::now().date_naive() - Duration::days(6)).to_string();
     let mut stmt = conn
         .prepare(
@@ -2021,7 +2675,6 @@ fn get_mastery_map(state: State<AppState>) -> Result<Vec<MasteryChapter>, String
                SELECT question_id,COUNT(*) raw_attempt_count,
                       SUM(CASE WHEN COALESCE(outcome,result)<>'uncertain' THEN 1 ELSE 0 END) attempt_count,
                       SUM(CASE WHEN COALESCE(outcome,result)='correct' THEN 1 ELSE 0 END) correct_attempts,
-                      AVG(CASE WHEN COALESCE(outcome,result)<>'uncertain' THEN COALESCE(fluency_rating,self_rating) END) rating,
                       MAX(attempted_at) last_attempt_at,
                       SUM(CASE WHEN COALESCE(outcome,result)='correct' AND attempted_at>=?2 THEN 1 ELSE 0 END) recent_correct,
                       SUM(CASE WHEN COALESCE(outcome,result)<>'uncertain' AND attempted_at>=?2 THEN 1 ELSE 0 END) recent_attempts,
@@ -2039,7 +2692,6 @@ fn get_mastery_map(state: State<AppState>) -> Result<Vec<MasteryChapter>, String
                     COALESCE(SUM(ast.attempt_count),0) attempt_count,
                     SUM(CASE WHEN p.next_review<=?1 THEN 1 ELSE 0 END) due_count,
                     SUM(CASE WHEN p.mastery<=2 THEN 1 ELSE 0 END) weak_count,
-                    AVG(ast.rating) rating,
                     COALESCE(SUM(ast.recent_correct),0) recent_correct,
                     COALESCE(SUM(ast.recent_attempts),0) recent_attempts,
                     MAX(ast.last_attempt_at) last_attempt_at,
@@ -2058,21 +2710,22 @@ fn get_mastery_map(state: State<AppState>) -> Result<Vec<MasteryChapter>, String
         .map_err(|e| e.to_string())?;
     let rows = stmt
         .query_map(params![today, recent_start], |r| {
+            let chapter_id: i64 = r.get(0)?;
             let total: i64 = r.get(3)?;
             let attempted: i64 = r.get(4)?;
             let correct: i64 = r.get(5)?;
             let attempts: i64 = r.get(6)?;
             let due_count: i64 = r.get(7)?;
             let weak_count: i64 = r.get(8)?;
-            let rating: Option<f64> = r.get(9)?;
-            let recent_correct: i64 = r.get(10)?;
-            let recent_attempts: i64 = r.get(11)?;
-            let last_attempt_at: Option<String> = r.get(12)?;
-            let retest_correct_count: i64 = r.get(13)?;
+            let rating: Option<f64> = chapter_ratings.get(&chapter_id).copied();
+            let recent_correct: i64 = r.get(9)?;
+            let recent_attempts: i64 = r.get(10)?;
+            let last_attempt_at: Option<String> = r.get(11)?;
+            let retest_correct_count: i64 = r.get(12)?;
             let (evidence_level, evidence_sources) = mastery_evidence_summary(
                 attempts,
                 retest_correct_count,
-                [r.get(14)?, r.get(15)?, r.get(16)?, r.get(17)?, r.get(18)?],
+                [r.get(13)?, r.get(14)?, r.get(15)?, r.get(16)?, r.get(17)?],
             );
             let coverage = if total > 0 {
                 attempted as f64 / total as f64
@@ -2117,7 +2770,7 @@ fn get_mastery_map(state: State<AppState>) -> Result<Vec<MasteryChapter>, String
                 format!("{recent_desc} · {last_desc} · {attempted}/{total} 题有样本")
             };
             Ok(MasteryChapter {
-                id: r.get(0)?,
+                id: chapter_id,
                 name: r.get(1)?,
                 root_name: r.get(2)?,
                 total,
@@ -2144,7 +2797,9 @@ fn get_mastery_map(state: State<AppState>) -> Result<Vec<MasteryChapter>, String
 #[tauri::command]
 fn get_mastery_nodes(state: State<AppState>) -> Result<Vec<MasteryNode>, String> {
     let conn = state.db.lock().map_err(|e| e.to_string())?;
-    let today = Local::now().date_naive().to_string();
+    let today_date = Local::now().date_naive();
+    let today = today_date.to_string();
+    let node_ratings = services::rating::node_ratings(&conn, today_date)?;
     let recent_start = (Local::now().date_naive() - Duration::days(6)).to_string();
     let mut stmt = conn
         .prepare(
@@ -2169,7 +2824,6 @@ fn get_mastery_nodes(state: State<AppState>) -> Result<Vec<MasteryNode>, String>
                SELECT question_id,COUNT(*) raw_attempt_count,
                       SUM(CASE WHEN COALESCE(outcome,result)<>'uncertain' THEN 1 ELSE 0 END) attempt_count,
                       SUM(CASE WHEN COALESCE(outcome,result)='correct' THEN 1 ELSE 0 END) correct_attempts,
-                      AVG(CASE WHEN COALESCE(outcome,result)<>'uncertain' THEN COALESCE(fluency_rating,self_rating) END) rating,
                       MAX(attempted_at) last_attempt_at,
                       SUM(CASE WHEN COALESCE(outcome,result)='correct' AND attempted_at>=?2 THEN 1 ELSE 0 END) recent_correct,
                       SUM(CASE WHEN COALESCE(outcome,result)<>'uncertain' AND attempted_at>=?2 THEN 1 ELSE 0 END) recent_attempts,
@@ -2187,7 +2841,6 @@ fn get_mastery_nodes(state: State<AppState>) -> Result<Vec<MasteryNode>, String>
                     SUM(CASE WHEN p.next_review<=?1 THEN 1 ELSE 0 END) due_count,
                     SUM(CASE WHEN p.mastery<=2 THEN 1 ELSE 0 END) weak_count,
                     COALESCE(SUM(ast.correct_attempts),0) correct_attempts,
-                    AVG(ast.rating) rating,
                     COALESCE(SUM(ast.recent_correct),0) recent_correct,
                     COALESCE(SUM(ast.recent_attempts),0) recent_attempts,
                     MAX(ast.last_attempt_at) last_attempt_at,
@@ -2207,21 +2860,22 @@ fn get_mastery_nodes(state: State<AppState>) -> Result<Vec<MasteryNode>, String>
         .map_err(|e| e.to_string())?;
     let rows = stmt
         .query_map(params![today, recent_start], |r| {
+            let node_id: i64 = r.get(0)?;
             let total: i64 = r.get(6)?;
             let attempted: i64 = r.get(7)?;
             let attempts: i64 = r.get(8)?;
             let due_count: i64 = r.get(9)?;
             let weak_count: i64 = r.get(10)?;
             let correct: i64 = r.get(11)?;
-            let rating: Option<f64> = r.get(12)?;
-            let recent_correct: i64 = r.get(13)?;
-            let recent_attempts: i64 = r.get(14)?;
-            let last_attempt_at: Option<String> = r.get(15)?;
-            let retest_correct_count: i64 = r.get(16)?;
+            let rating: Option<f64> = node_ratings.get(&node_id).copied();
+            let recent_correct: i64 = r.get(12)?;
+            let recent_attempts: i64 = r.get(13)?;
+            let last_attempt_at: Option<String> = r.get(14)?;
+            let retest_correct_count: i64 = r.get(15)?;
             let (evidence_level, evidence_sources) = mastery_evidence_summary(
                 attempts,
                 retest_correct_count,
-                [r.get(17)?, r.get(18)?, r.get(19)?, r.get(20)?, r.get(21)?],
+                [r.get(16)?, r.get(17)?, r.get(18)?, r.get(19)?, r.get(20)?],
             );
             let coverage = if total > 0 {
                 attempted as f64 / total as f64
@@ -2250,7 +2904,7 @@ fn get_mastery_nodes(state: State<AppState>) -> Result<Vec<MasteryNode>, String>
                 due_ratio,
             );
             Ok(MasteryNode {
-                id: r.get(0)?,
+                id: node_id,
                 parent_id: r.get(1)?,
                 chapter_id: r.get(2)?,
                 name: r.get(3)?,
@@ -3449,6 +4103,636 @@ fn list_database_backups(state: State<AppState>) -> Result<Vec<BackupInfo>, Stri
     Ok(list)
 }
 
+/// CS-Premier-style career ELO. Every graded attempt settles like a match:
+/// `delta = K * (performance - expected)`. Expected performance derives from
+/// the question difficulty and your mastery of its chapter — beating a hard
+/// question in a weak chapter pays much more than stomping an easy one.
+/// Consecutive same-direction results apply a momentum multiplier, and a
+/// fresh promotion grants three settlements of loss protection.
+/// 完美平台式天梯分：千位刻度，定级起点 1400（C 段），每题结算 ±5-15 分，
+/// 九段 D→S 每 200 分一段。历史万位分已按 1400 + (old-10000)×0.1 迁移。
+const ELO_START: f64 = 1400.0;
+const ELO_K_CALIBRATION: f64 = 60.0;
+const ELO_CALIBRATION_SETTLEMENTS: i64 = 10;
+const ELO_K: f64 = 25.0;
+/// 期望基准：章节掌握度 1（薄弱）期望 0.70，每升一级 −0.10；
+/// 难度系数每 +0.01 期望 −0.025，最后收敛到 [0.30, 0.78]。
+const ELO_EXPECTED_BASE: f64 = 0.70;
+const ELO_EXPECTED_MASTERY_STEP: f64 = 0.10;
+const ELO_EXPECTED_DIFFICULTY_STEP: f64 = 2.5;
+const ELO_EXPECTED_MIN: f64 = 0.30;
+const ELO_EXPECTED_MAX: f64 = 0.78;
+const ELO_REVIEW_BONUS: f64 = 0.06;
+const ELO_MOMENTUM_MULTIPLIER: f64 = 1.15;
+const ELO_MOMENTUM_MIN_STREAK: usize = 3;
+const ELO_PROMOTION_PROTECTION: i64 = 3;
+
+fn current_elo(conn: &Connection) -> Result<(i64, f64), String> {
+    let settlements: i64 = conn
+        .query_row("SELECT COUNT(*) FROM elo_events", [], |r| r.get(0))
+        .map_err(|e| e.to_string())?;
+    let current: f64 = conn
+        .query_row(
+            "SELECT rating_after FROM elo_events ORDER BY id DESC LIMIT 1",
+            [],
+            |r| r.get(0),
+        )
+        .optional()
+        .map_err(|e| e.to_string())?
+        .unwrap_or(ELO_START);
+    Ok((settlements, current))
+}
+
+fn settle_elo(
+    conn: &Connection,
+    input: &AttemptInput,
+    outcome: &str,
+    fluency_rating: i32,
+    duration: i64,
+    attempt_id: i64,
+) -> Result<(), String> {
+    let question_type: Option<String> = conn
+        .query_row(
+            "SELECT question_type FROM questions WHERE id=?1",
+            [input.question_id],
+            |r| r.get(0),
+        )
+        .optional()
+        .map_err(|e| e.to_string())?;
+    let bench = services::rating::benchmark_seconds(
+        question_type.as_deref().unwrap_or("solution"),
+    );
+    // 评分回退链与掌握度内核一致：六维 HLTV 合成 > Codex rating > 特征曲线
+    let dims = input.dimensions.unwrap_or_default();
+    let dims_evidence = services::rating::DimensionEvidence {
+        rigor: dims.rigor,
+        computation: dims.computation,
+        modeling: dims.modeling,
+        method_use: dims.method_use,
+        speed: dims.speed,
+        strategy_insight: dims.strategy_insight,
+        technique_level: input.technique_level,
+    };
+    let performance = if !dims_evidence.is_empty() {
+        services::rating::hltv_rating(
+            outcome,
+            &dims_evidence,
+            duration,
+            bench,
+            input.difficulty_multiplier,
+        )
+    } else {
+        input
+            .ai_rating
+            .filter(|value| {
+                (services::rating::RATING_MIN..=services::rating::RATING_MAX).contains(value)
+            })
+            .unwrap_or_else(|| {
+                services::rating::attempt_rating(outcome, fluency_rating, duration, bench)
+            })
+    };
+    let score = performance / services::rating::RATING_MAX;
+    // 期望由题目难度与章节掌握度共同决定：薄弱章节的难题期望最低，收益最大
+    let mastery: f64 = conn
+        .query_row(
+            "SELECT mastery FROM progress WHERE question_id=?1",
+            [input.question_id],
+            |r| r.get::<_, i64>(0).map(|v| v as f64),
+        )
+        .optional()
+        .map_err(|e| e.to_string())?
+        .unwrap_or(2.0);
+    let dm = input.difficulty_multiplier.unwrap_or(1.0);
+    let mut expected = ELO_EXPECTED_BASE
+        - ELO_EXPECTED_MASTERY_STEP * (mastery - 1.0)
+        - ELO_EXPECTED_DIFFICULTY_STEP * (dm - 1.0);
+    if input.mode.as_deref() == Some("review") {
+        expected += ELO_REVIEW_BONUS;
+    }
+    let expected = expected.clamp(ELO_EXPECTED_MIN, ELO_EXPECTED_MAX);
+
+    let (settlements, current) = current_elo(conn)?;
+    let mut k = if settlements < ELO_CALIBRATION_SETTLEMENTS {
+        ELO_K_CALIBRATION
+    } else {
+        ELO_K
+    };
+    // 连胜/连败动量：连续 3 次同向结算说明状态火热（或崩盘），波动放大
+    if settlements > 0 {
+        let mut stmt = conn
+            .prepare("SELECT delta FROM elo_events ORDER BY id DESC LIMIT 5")
+            .map_err(|e| e.to_string())?;
+        let recent: Vec<f64> = stmt
+            .query_map([], |r| r.get::<_, f64>(0))
+            .map_err(|e| e.to_string())?
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(|e| e.to_string())?;
+        drop(stmt);
+        let head = recent.first().copied().unwrap_or(0.0);
+        if head != 0.0 {
+            let streak = recent
+                .iter()
+                .take_while(|d| d.signum() == head.signum())
+                .count();
+            if streak >= ELO_MOMENTUM_MIN_STREAK {
+                k *= ELO_MOMENTUM_MULTIPLIER;
+            }
+        }
+    }
+
+    let mut delta = (k * (score - expected)).round();
+    // 晋级保护：刚升段的 3 次结算内不因失误掉分
+    let mut protection_left: i64 = setting(conn, "elo_protection_left", "0")
+        .parse()
+        .unwrap_or(0);
+    let band_before = services::rating::rank_band_index(current);
+    let band_after = services::rating::rank_band_index(current + delta);
+    if band_after > band_before {
+        protection_left = ELO_PROMOTION_PROTECTION;
+    } else if delta < 0.0 && protection_left > 0 {
+        delta = 0.0;
+        protection_left -= 1;
+    }
+    conn.execute(
+        "INSERT INTO settings(key,value) VALUES('elo_protection_left',?1)
+         ON CONFLICT(key) DO UPDATE SET value=excluded.value",
+        [protection_left.to_string()],
+    )
+    .map_err(|e| e.to_string())?;
+
+    let rating_after = (current + delta).max(0.0);
+    conn.execute(
+        "INSERT INTO elo_events(attempt_id,question_id,delta,rating_after,performance,expected,created_at,session_id,reason)
+         VALUES(?1,?2,?3,?4,?5,?6,?7,?8,'match')",
+        params![
+            attempt_id,
+            input.question_id,
+            delta,
+            rating_after,
+            performance,
+            expected,
+            Local::now().to_rfc3339(),
+            input.session_id,
+        ],
+    )
+    .map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct EloHistoryPoint {
+    date: String,
+    rating: f64,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct EloStatus {
+    current: f64,
+    settlements: i64,
+    calibrated: bool,
+    last_delta: Option<f64>,
+    history: Vec<EloHistoryPoint>,
+}
+
+#[tauri::command]
+fn get_elo_status(state: State<AppState>) -> Result<EloStatus, String> {
+    let conn = state.db.lock().map_err(|e| e.to_string())?;
+    let (settlements, current) = current_elo(&conn)?;
+    let last_delta: Option<f64> = conn
+        .query_row(
+            "SELECT delta FROM elo_events ORDER BY id DESC LIMIT 1",
+            [],
+            |r| r.get(0),
+        )
+        .optional()
+        .map_err(|e| e.to_string())?;
+    let mut stmt = conn
+        .prepare("SELECT substr(created_at,1,10), rating_after FROM elo_events ORDER BY id ASC")
+        .map_err(|e| e.to_string())?;
+    let rows = stmt
+        .query_map([], |r| Ok((r.get::<_, String>(0)?, r.get::<_, f64>(1)?)))
+        .map_err(|e| e.to_string())?
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|e| e.to_string())?;
+    let mut history: Vec<EloHistoryPoint> = Vec::new();
+    for (date, rating) in rows {
+        match history.last_mut() {
+            Some(point) if point.date == date => point.rating = rating,
+            _ => history.push(EloHistoryPoint { date, rating }),
+        }
+    }
+    Ok(EloStatus {
+        current,
+        settlements,
+        calibrated: settlements >= ELO_CALIBRATION_SETTLEMENTS,
+        last_delta,
+        history,
+    })
+}
+
+// ============ 模块 C/E 共用：按条件取作答行并按回退链算 rating ============
+struct RatingRow {
+    question_id: i64,
+    stem: String,
+    outcome: String,
+    fluency: i32,
+    ai_rating: Option<f64>,
+    duration: i64,
+    bench: i64,
+    dims: services::rating::DimensionEvidence,
+    dim_scores: Vec<f64>,
+}
+
+fn fetch_rating_rows(conn: &Connection, filter: &str, param: &str) -> Result<Vec<RatingRow>, String> {
+    let sql = format!(
+        "SELECT a.question_id, q.stem, COALESCE(a.outcome,a.result), COALESCE(a.fluency_rating,a.self_rating),
+                a.ai_rating, COALESCE(a.duration_seconds,600), q.question_type,
+                a.dim_rigor, a.dim_computation, a.dim_modeling, a.dim_method_use, a.dim_speed,
+                a.dim_strategy_insight, a.technique_level, a.difficulty_multiplier
+         FROM attempts a JOIN questions q ON q.id=a.question_id
+         WHERE {filter} AND COALESCE(a.outcome,a.result)<>'uncertain'
+         ORDER BY a.id"
+    );
+    let mut stmt = conn.prepare(&sql).map_err(|e| e.to_string())?;
+    let rows = stmt
+        .query_map([param], |r| {
+            Ok((
+                r.get::<_, i64>(0)?,
+                r.get::<_, String>(1)?,
+                r.get::<_, String>(2)?,
+                r.get::<_, i32>(3)?,
+                r.get::<_, Option<f64>>(4)?,
+                r.get::<_, i64>(5)?,
+                r.get::<_, String>(6)?,
+                r.get::<_, Option<f64>>(7)?,
+                r.get::<_, Option<f64>>(8)?,
+                r.get::<_, Option<f64>>(9)?,
+                r.get::<_, Option<f64>>(10)?,
+                r.get::<_, Option<f64>>(11)?,
+                r.get::<_, Option<f64>>(12)?,
+                r.get::<_, Option<i32>>(13)?,
+                r.get::<_, Option<f64>>(14)?,
+            ))
+        })
+        .map_err(|e| e.to_string())?
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|e| e.to_string())?;
+    drop(stmt);
+    Ok(rows
+        .into_iter()
+        .map(|(question_id, stem, outcome, fluency, ai_rating, duration, qtype, rigor, computation, modeling, method_use, speed, strategy, technique, dm)| RatingRow {
+            question_id,
+            stem,
+            outcome,
+            fluency,
+            ai_rating,
+            duration,
+            bench: services::rating::benchmark_seconds(&qtype),
+            dims: services::rating::DimensionEvidence {
+                rigor,
+                computation,
+                modeling,
+                method_use,
+                speed,
+                strategy_insight: strategy,
+                technique_level: technique,
+            },
+            dim_scores: [rigor, computation, modeling, method_use, speed, strategy]
+                .into_iter()
+                .flatten()
+                .collect(),
+        })
+        .collect())
+}
+
+fn row_rating(row: &RatingRow) -> f64 {
+    if !row.dims.is_empty() {
+        services::rating::hltv_rating(&row.outcome, &row.dims, row.duration, row.bench, None)
+    } else if let Some(value) = row
+        .ai_rating
+        .filter(|v| (services::rating::RATING_MIN..=services::rating::RATING_MAX).contains(v))
+    {
+        value
+    } else {
+        services::rating::attempt_rating(&row.outcome, row.fluency, row.duration, row.bench)
+    }
+}
+
+fn row_impact(row: &RatingRow) -> Option<f64> {
+    let s = row.dims.strategy_insight?;
+    let m = row.dims.method_use.unwrap_or(s);
+    Some(0.6 * s + 0.4 * m + if row.dims.technique_level.unwrap_or(0) >= 4 { 5.0 } else { 0.0 })
+}
+
+// ============ 模块 C：赛后战绩面板（WE 评分 + MVP） ============
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct ScoreboardQuestion {
+    question_id: i64,
+    stem: String,
+    outcome: String,
+    rating: f64,
+    duration_seconds: i64,
+    impact: Option<f64>,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct SessionScoreboard {
+    we_score: Option<i64>,
+    questions: Vec<ScoreboardQuestion>,
+    mvp_question_id: Option<i64>,
+    longest_streak: i64,
+    fastest_kill_question_id: Option<i64>,
+    elo_delta: f64,
+    total_duration: i64,
+    correct_count: i64,
+    total_count: i64,
+}
+
+#[tauri::command]
+fn get_session_scoreboard(
+    session_id: Option<String>,
+    state: State<AppState>,
+) -> Result<SessionScoreboard, String> {
+    let conn = state.db.lock().map_err(|e| e.to_string())?;
+    let today = Local::now().date_naive().to_string();
+    let (attempt_filter, elo_filter, param) = match session_id.as_deref() {
+        Some(id) => ("a.session_id=?1".to_string(), format!("session_id='{id}'"), id.to_string()),
+        None => (
+            "substr(a.attempted_at,1,10)=?1".to_string(),
+            format!("substr(created_at,1,10)='{today}' AND reason='match'"),
+            today,
+        ),
+    };
+    let rows = fetch_rating_rows(&conn, &attempt_filter, &param)?;
+    let elo_delta: f64 = conn
+        .query_row(
+            &format!("SELECT COALESCE(SUM(delta),0) FROM elo_events WHERE {elo_filter}"),
+            [],
+            |r| r.get(0),
+        )
+        .map_err(|e| e.to_string())?;
+    let all_dim_scores: Vec<f64> = rows.iter().flat_map(|r| r.dim_scores.iter().copied()).collect();
+    let we_score = if !all_dim_scores.is_empty() {
+        Some((all_dim_scores.iter().sum::<f64>() / all_dim_scores.len() as f64).round() as i64)
+    } else if !rows.is_empty() {
+        let avg = rows.iter().map(row_rating).sum::<f64>() / rows.len() as f64;
+        Some((avg / services::rating::RATING_MAX * 100.0).round() as i64)
+    } else {
+        None
+    };
+    let mut longest_streak = 0i64;
+    let mut current_streak = 0i64;
+    let mut fastest: Option<(f64, i64)> = None;
+    let mut mvp: Option<(f64, i64)> = None;
+    for row in &rows {
+        if row.outcome == "correct" {
+            current_streak += 1;
+            longest_streak = longest_streak.max(current_streak);
+            let pace = row.duration as f64 / row.bench as f64;
+            if pace <= 0.5 && fastest.map(|(p, _)| pace < p).unwrap_or(true) {
+                fastest = Some((pace, row.question_id));
+            }
+            if row.outcome == "correct" {
+                if let Some(impact) = row_impact(row) {
+                    if mvp.map(|(i, _)| impact > i).unwrap_or(true) {
+                        mvp = Some((impact, row.question_id));
+                    }
+                }
+            }
+        } else {
+            current_streak = 0;
+        }
+    }
+    let mvp_question_id = mvp.map(|(_, id)| id).or(fastest.map(|(_, id)| id));
+    let questions = rows
+        .iter()
+        .map(|row| ScoreboardQuestion {
+            question_id: row.question_id,
+            stem: row.stem.clone(),
+            outcome: row.outcome.clone(),
+            rating: row_rating(row),
+            duration_seconds: row.duration,
+            impact: row_impact(row),
+        })
+        .collect();
+    Ok(SessionScoreboard {
+        we_score,
+        questions,
+        mvp_question_id,
+        longest_streak,
+        fastest_kill_question_id: fastest.filter(|(p, _)| *p <= 0.5).map(|(_, id)| id),
+        elo_delta,
+        total_duration: rows.iter().map(|r| r.duration).sum(),
+        correct_count: rows.iter().filter(|r| r.outcome == "correct").count() as i64,
+        total_count: rows.len() as i64,
+    })
+}
+
+// ============ 模块 D：赛季制（备考三阶段） ============
+const SEASON_NAMES: [&str; 3] = ["基础期", "强化期", "冲刺期"];
+const SEASON_RESET_PULL: f64 = 0.75;
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct SeasonRecord {
+    season_name: String,
+    started_at: String,
+    ended_at: String,
+    peak_rating: f64,
+    final_rating: f64,
+    rank_index: i64,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct SeasonStatus {
+    name: String,
+    index: i64,
+    started_at: String,
+    current_elo: f64,
+    history: Vec<SeasonRecord>,
+}
+
+fn season_status(conn: &Connection) -> Result<SeasonStatus, String> {
+    let index: i64 = setting(conn, "season_index", "0").parse().unwrap_or(0);
+    let started_at = setting(
+        conn,
+        "season_start",
+        &Local::now().to_rfc3339(),
+    );
+    let (_, current) = current_elo(conn)?;
+    let mut stmt = conn
+        .prepare("SELECT season_name,started_at,ended_at,peak_rating,final_rating,rank_index FROM season_history ORDER BY id")
+        .map_err(|e| e.to_string())?;
+    let history = stmt
+        .query_map([], |r| {
+            Ok(SeasonRecord {
+                season_name: r.get(0)?,
+                started_at: r.get(1)?,
+                ended_at: r.get(2)?,
+                peak_rating: r.get(3)?,
+                final_rating: r.get(4)?,
+                rank_index: r.get(5)?,
+            })
+        })
+        .map_err(|e| e.to_string())?
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|e| e.to_string())?;
+    Ok(SeasonStatus {
+        name: SEASON_NAMES[index.clamp(0, 2) as usize].into(),
+        index,
+        started_at,
+        current_elo: current,
+        history,
+    })
+}
+
+#[tauri::command]
+fn get_season_status(state: State<AppState>) -> Result<SeasonStatus, String> {
+    let conn = state.db.lock().map_err(|e| e.to_string())?;
+    season_status(&conn)
+}
+
+#[tauri::command]
+fn advance_season(state: State<AppState>) -> Result<SeasonStatus, String> {
+    let conn = state.db.lock().map_err(|e| e.to_string())?;
+    let index: i64 = setting(&conn, "season_index", "0").parse().unwrap_or(0);
+    if index >= 2 {
+        return Err("已在最终赛季（冲刺期），无法再切换".into());
+    }
+    let (settlements, current) = current_elo(&conn)?;
+    let now = Local::now().to_rfc3339();
+    let started_at = setting(&conn, "season_start", &now);
+    if settlements > 0 {
+        let peak: f64 = conn
+            .query_row(
+                "SELECT COALESCE(MAX(rating_after),?1) FROM elo_events WHERE created_at>=?2",
+                params![current, started_at],
+                |r| r.get(0),
+            )
+            .map_err(|e| e.to_string())?;
+        conn.execute(
+            "INSERT INTO season_history(season_name,started_at,ended_at,peak_rating,final_rating,rank_index)
+             VALUES(?1,?2,?3,?4,?5,?6)",
+            params![
+                SEASON_NAMES[index as usize],
+                started_at,
+                now,
+                peak,
+                current,
+                services::rating::rank_band_index(current) as i64
+            ],
+        )
+        .map_err(|e| e.to_string())?;
+        // 软重置：向 10000 收敛 25%，写一条赛季重置事件
+        let new_current = ELO_START + (current - ELO_START) * SEASON_RESET_PULL;
+        conn.execute(
+            "INSERT INTO elo_events(question_id,delta,rating_after,performance,expected,created_at,session_id,reason)
+             VALUES(0,?1,?2,0,0,?3,NULL,'season_reset')",
+            params![new_current - current, new_current, now],
+        )
+        .map_err(|e| e.to_string())?;
+    }
+    conn.execute(
+        "INSERT INTO settings(key,value) VALUES('season_index',?1),('season_start',?2)
+         ON CONFLICT(key) DO UPDATE SET value=excluded.value",
+        params![(index + 1).to_string(), now],
+    )
+    .map_err(|e| e.to_string())?;
+    season_status(&conn)
+}
+
+// ============ 模块 E：Rating 分布审计 ============
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct RatingBucket {
+    floor: f64,
+    count: i64,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct DimensionAverages {
+    rigor: Option<f64>,
+    computation: Option<f64>,
+    modeling: Option<f64>,
+    method_use: Option<f64>,
+    speed: Option<f64>,
+    strategy_insight: Option<f64>,
+    sample: i64,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct RatingDistribution {
+    buckets: Vec<RatingBucket>,
+    mean: Option<f64>,
+    sd: Option<f64>,
+    count: i64,
+    p95: Option<f64>,
+    above_130: f64,
+    below_070: f64,
+    drift: bool,
+    dimensions: Option<DimensionAverages>,
+}
+
+#[tauri::command]
+fn get_rating_distribution(state: State<AppState>) -> Result<RatingDistribution, String> {
+    let conn = state.db.lock().map_err(|e| e.to_string())?;
+    let cutoff = (Local::now() - Duration::days(90)).to_rfc3339();
+    let rows = fetch_rating_rows(&conn, "a.attempted_at>=?1", &cutoff)?;
+    let mut ratings: Vec<f64> = rows.iter().map(row_rating).collect();
+    ratings.sort_by(|a, b| a.total_cmp(b));
+    let count = ratings.len() as i64;
+    let mut buckets = Vec::new();
+    for bucket in 0..20i64 {
+        let floor = bucket as f64 / 10.0;
+        let upper = floor + 0.1;
+        buckets.push(RatingBucket {
+            floor,
+            count: ratings.iter().filter(|r| **r >= floor && (**r as f64) < upper).count() as i64,
+        });
+    }
+    if ratings.is_empty() {
+        return Ok(RatingDistribution { buckets, mean: None, sd: None, count: 0, p95: None, above_130: 0.0, below_070: 0.0, drift: false, dimensions: None });
+    }
+    let avg_dim = |pick: fn(&services::rating::DimensionEvidence) -> Option<f64>| -> Option<f64> {
+        let values: Vec<f64> = rows.iter().filter_map(|r| pick(&r.dims)).collect();
+        (!values.is_empty()).then(|| (values.iter().sum::<f64>() / values.len() as f64 * 10.0).round() / 10.0)
+    };
+    let sample = rows.iter().filter(|r| !r.dims.is_empty()).count() as i64;
+    let mean = ratings.iter().sum::<f64>() / count as f64;
+    let variance = ratings.iter().map(|r| (r - mean).powi(2)).sum::<f64>() / count as f64;
+    let sd = variance.sqrt();
+    let p95 = ratings[((count as f64 * 0.95).ceil() as usize).saturating_sub(1).min(count as usize - 1)];
+    let above_130 = ratings.iter().filter(|r| **r >= 1.3).count() as f64 / count as f64 * 100.0;
+    let below_070 = ratings.iter().filter(|r| **r <= 0.7).count() as f64 / count as f64 * 100.0;
+    let drift = count >= 50 && (mean - 1.0).abs() > 0.08;
+    Ok(RatingDistribution {
+        buckets,
+        mean: Some((mean * 100.0).round() / 100.0),
+        sd: Some((sd * 100.0).round() / 100.0),
+        count,
+        p95: Some(p95),
+        above_130: (above_130 * 10.0).round() / 10.0,
+        below_070: (below_070 * 10.0).round() / 10.0,
+        drift,
+        dimensions: Some(DimensionAverages {
+            rigor: avg_dim(|d| d.rigor),
+            computation: avg_dim(|d| d.computation),
+            modeling: avg_dim(|d| d.modeling),
+            method_use: avg_dim(|d| d.method_use),
+            speed: avg_dim(|d| d.speed),
+            strategy_insight: avg_dim(|d| d.strategy_insight),
+            sample,
+        }),
+    })
+}
+
 fn record_attempt_row(conn: &Connection, input: &AttemptInput) -> Result<(), String> {
     let now = Local::now();
     let duration = input.duration_seconds.clamp(1, 1800);
@@ -3458,12 +4742,15 @@ fn record_attempt_row(conn: &Connection, input: &AttemptInput) -> Result<(), Str
     let fluency_rating = input.fluency_rating.unwrap_or(rating).clamp(1, 4);
     let session_id = input.session_id.as_deref().unwrap_or("");
     let diagnosis_id = input.diagnosis_id.as_deref();
+    let dims = input.dimensions.unwrap_or_default();
 
     conn.execute(
         "INSERT INTO attempts(
             question_id, attempted_at, duration_seconds, result, self_rating, selected_answer, mode,
-            outcome, evidence_source, fluency_rating, confidence, session_id, diagnosis_id
-        ) VALUES(?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)",
+            outcome, evidence_source, fluency_rating, confidence, session_id, diagnosis_id, ai_rating,
+            difficulty_multiplier, technique_level,
+            dim_rigor, dim_computation, dim_modeling, dim_method_use, dim_speed, dim_strategy_insight
+        ) VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14,?15,?16,?17,?18,?19,?20,?21,?22)",
         params![
             input.question_id,
             now.to_rfc3339(),
@@ -3478,12 +4765,26 @@ fn record_attempt_row(conn: &Connection, input: &AttemptInput) -> Result<(), Str
             input.confidence,
             session_id,
             diagnosis_id,
+            input.ai_rating.map(|value| value.clamp(AI_RATING_MIN, AI_RATING_MAX)),
+            input.difficulty_multiplier,
+            input.technique_level,
+            dims.rigor,
+            dims.computation,
+            dims.modeling,
+            dims.method_use,
+            dims.speed,
+            dims.strategy_insight,
         ],
     )
     .map_err(|e| e.to_string())?;
+    let attempt_id = conn.last_insert_rowid();
     if outcome == "uncertain" {
         complete_active_recommendation_item(conn, input.question_id)?;
         return Ok(());
+    }
+    // ELO settlement must never block the attempt itself.
+    if let Err(error) = settle_elo(conn, input, outcome, fluency_rating, duration, attempt_id) {
+        eprintln!("ELO settlement skipped for question {}: {error}", input.question_id);
     }
     // Correctness controls mastery direction; fluency only refines a confirmed result.
     let progress_rating = if outcome == "correct" {
@@ -3509,19 +4810,18 @@ fn record_attempt_row(conn: &Connection, input: &AttemptInput) -> Result<(), Str
         };
         (d, 1)
     } else {
-        // Successful recall (rating 3 or 4)
+        // Successful recall (rating 3 or 4): the interval doubles with each
+        // consecutive success instead of jumping to a flat ×2, approximating
+        // SM-2's expanding schedule (1×, 2×, 4×, 8×, capped at 180 days).
         let prev_count = prev_progress.map(|(c, _)| c).unwrap_or(0);
         let next_count = prev_count + 1;
-        let d = if progress_rating == 4 && next_count >= 2 {
-            // Mastered repeatedly: expand interval to double (up to 30 or configurable max)
-            (intervals[3] * 2).clamp(intervals[3], 180)
+        let base = if progress_rating == 3 {
+            intervals[2]
         } else {
-            match progress_rating {
-                3 => intervals[2],
-                _ => intervals[3],
-            }
+            intervals[3]
         };
-        (d, next_count)
+        let growth = 2_i64.pow((next_count - 1).min(3) as u32);
+        ((base * growth).min(180), next_count)
     };
     let next = (now.date_naive() + Duration::days(days)).to_string();
     conn.execute(
@@ -3617,7 +4917,7 @@ fn export_records(state: State<AppState>) -> Result<ExportResult, String> {
     }
     let conn = state.db.lock().map_err(|e| e.to_string())?;
     let attempts: Vec<Value> = conn
-        .prepare("SELECT id,question_id,attempted_at,duration_seconds,result,self_rating,mode,outcome,evidence_source,fluency_rating,confidence,session_id,diagnosis_id FROM attempts ORDER BY attempted_at")
+        .prepare("SELECT id,question_id,attempted_at,duration_seconds,result,self_rating,mode,outcome,evidence_source,fluency_rating,confidence,session_id,diagnosis_id,ai_rating FROM attempts ORDER BY attempted_at")
         .map_err(|e| e.to_string())?
         .query_map([], |row| {
             Ok(json!({
@@ -3634,6 +4934,7 @@ fn export_records(state: State<AppState>) -> Result<ExportResult, String> {
                 "confidence": row.get::<_, Option<f64>>(10)?,
                 "sessionId": row.get::<_, Option<String>>(11)?,
                 "diagnosisId": row.get::<_, Option<String>>(12)?,
+                "aiRating": row.get::<_, Option<f64>>(13)?,
             }))
         })
         .map_err(|e| e.to_string())?
@@ -3682,7 +4983,7 @@ fn export_records(state: State<AppState>) -> Result<ExportResult, String> {
         .map_err(|e| e.to_string())?;
     let doc = json!({
         "app": "刷吧",
-        "version": "0.7.0",
+        "version": "0.9.0",
         "exportedAt": Local::now().to_rfc3339(),
         "attempts": attempts,
         "progress": progress,
@@ -3776,12 +5077,17 @@ fn get_inbox(state: State<AppState>) -> Result<Vec<InboxItem>, String> {
                 error_tags: vec![],
                 weakness_tags: vec![],
                 advice: None,
+                better_solution: None,
                 confidence: 0.0,
                 recommended_question_ids: vec![],
                 recommendation_reason: None,
                 paper_title: None,
                 paper_attempts: vec![],
                 batch_attempts: vec![],
+                rating: None,
+                rating_tier: None,
+                difficulty_multiplier: None,
+                dimensions: HashMap::new(),
             });
             Ok(InboxItem {
                 id: r.get(0)?,
@@ -3794,6 +5100,7 @@ fn get_inbox(state: State<AppState>) -> Result<Vec<InboxItem>, String> {
                 error_tags: p.error_tags,
                 weakness_tags: p.weakness_tags,
                 advice: p.advice,
+                better_solution: p.better_solution,
                 confidence: p.confidence,
                 status: r.get(5)?,
                 created_at: r.get(6)?,
@@ -3806,6 +5113,10 @@ fn get_inbox(state: State<AppState>) -> Result<Vec<InboxItem>, String> {
                     None
                 },
                 recommendation_batch_status: None,
+                rating: p.rating,
+                rating_tier: p.rating_tier,
+                difficulty_multiplier: p.difficulty_multiplier,
+                dimensions: p.dimensions,
             })
         })
         .map_err(|e| e.to_string())?;
@@ -3879,28 +5190,69 @@ fn confirm_inbox(id: i64, apply_to_profile: bool, state: State<AppState>) -> Res
                     confidence: Some(1.0),
                     session_id: Some(payload.task_id.clone()),
                     diagnosis_id: attempt.diagnosis,
+                    ai_rating: None,
+                    difficulty_multiplier: None,
+                    technique_level: None,
+                    dimensions: None,
                 };
                 record_attempt_row(&tx, &input)?;
             }
             tx.commit().map_err(|e| e.to_string())?;
         } else if payload.kind == "batch" {
-            apply_batch_payload(&conn, &payload)?;
+            let supplemental_conn = state
+                .supplemental_db
+                .lock()
+                .map_err(|e| e.to_string())?;
+            match pressure_task_match(&supplemental_conn, &payload.task_id)? {
+                PressureTaskMatch::Current(context) => {
+                    validate_pressure_batch_payload(&context, &payload)?;
+                    apply_batch_payload(&conn, &payload, Some(&context.durations))?;
+                    // The report is a deterministic snapshot from the payload and
+                    // saved pressure timings; it never calls Codex again.
+                    save_pressure_batch_report(&supplemental_conn, &context, &payload)?;
+                }
+                PressureTaskMatch::Stale {
+                    session_id,
+                    current_task_id,
+                } => {
+                    // Keep the old payload for diagnosis, but make it impossible
+                    // to apply it to the learning profile.
+                    conn.execute(
+                        "UPDATE codex_inbox SET status='dismissed' WHERE id=?1 AND status='pending'",
+                        [id],
+                    )
+                    .map_err(|e| e.to_string())?;
+                    return Err(format!(
+                        "压力任务已过期，未应用到作答记录（会话 {} 当前任务：{}）",
+                        session_id,
+                        current_task_id.unwrap_or_else(|| "无".into())
+                    ));
+                }
+                PressureTaskMatch::None => {
+                    apply_batch_payload(&conn, &payload, None)?;
+                }
+            }
         } else if payload.kind == "analysis" {
             save_analysis_signal(&conn, &payload)?;
+            apply_analysis_rating_to_latest_attempt(&conn, &payload)?;
         }
     }
-    conn.execute(
-        "UPDATE codex_inbox SET status=?1 WHERE id=?2",
-        params![
-            if apply_to_profile {
-                "confirmed"
-            } else {
-                "dismissed"
-            },
-            id
-        ],
-    )
-    .map_err(|e| e.to_string())?;
+    let updated = conn
+        .execute(
+            "UPDATE codex_inbox SET status=?1 WHERE id=?2 AND status='pending'",
+            params![
+                if apply_to_profile {
+                    "confirmed"
+                } else {
+                    "dismissed"
+                },
+                id
+            ],
+        )
+        .map_err(|e| e.to_string())?;
+    if updated != 1 {
+        return Err("回传已被其他操作处理，未重复应用".into());
+    }
     Ok(())
 }
 
@@ -3918,27 +5270,63 @@ fn create_codex_task(question_id: i64, state: State<AppState>) -> Result<CodexTa
         .data_dir
         .join("codex-inbox")
         .join(format!("{task_id}.json"));
+
+    let type_label = match q.question_type.as_str() {
+        "single_choice" => "单选题 · 基准3分",
+        "multiple_choice" => "多选题 · 基准4分",
+        "fill_in" => "填空题 · 基准5分",
+        _ => "解答/证明题 · 基准10分",
+    };
+    let bench_sec = match q.question_type.as_str() {
+        "single_choice" => 180,
+        "multiple_choice" => 240,
+        "fill_in" => 300,
+        _ => 600,
+    };
+    let dur_sec = latest_attempt_duration(&conn, question_id)?;
+    let timing_info = if let Some(sec) = dur_sec {
+        let m = sec / 60;
+        let s = sec % 60;
+        let pace_eval = if sec <= bench_sec / 2 {
+            "⚡ 极速秒杀"
+        } else if sec <= bench_sec {
+            "✓ 节奏标准"
+        } else if sec <= bench_sec * 3 / 2 {
+            "⏱ 稍有迟疑"
+        } else {
+            "⚠️ 耗时偏长(可能计算绕路)"
+        };
+        format!(" | ⏱ 作答耗时：{m}分{s:02}秒 [{pace_eval}]")
+    } else {
+        "".to_string()
+    };
+
     let prompt = format!(
-        r#"你正在为数学刷题 App「刷吧」批改数一草稿。
+        r#"你正在为数学刷题 App「刷吧」深度批改数一草稿。
 任务编号：{task_id}
-题目 ID：{question_id}
+题目 ID：{question_id}（{type_label}）{timing_info}
 题目：{stem}
 参考答案：{answer}
 
-请结合我随后发送的草稿图片，定位最早出现的错误，而不只判断最终答案。分析题意理解、方法选择、条件遗漏、符号计算和推理跳步。无法确定时必须明确说不确定。
+批改要求：
+1. 深度步骤诊断：结合草稿图片逐行定位最早出现的错误断点，而不只判断最终答案。深入分析题意理解、方法选择、条件遗漏、符号计算、循环论证和推理跳步。无法确定时必须明确将 verdict 记为 "uncertain"。
+2. 熟练度与节奏诊断：结合本题「实际作答耗时」与草稿推导步骤判断熟练度。若耗时明显偏长（超过基准时间），指出是否存在方法严重绕路、繁琐硬算或步骤冗余；若做错且耗时极短，指出是否属于粗心抢快。
+3. 六维能力评分：只根据草稿中可举证的行为评分，每项 score 为 0-100（建议 5 分步进），并给出 evidence 与 confidence。六维为：rigor（严谨性）、computation（计算力）、modeling（审题建模）、methodUse（方法使用）、speed（速度）、strategyInsight（策略洞察力）。无法从当前草稿判断时 score 设为 null、confidence 设为 0，并说明 uncertain。
+4. CS 风格 rating：综合六维、实际耗时与题目难度，输出 0.00-2.00 的 rating；总体人群平均值约 1.00。分数按近似正态分布收敛在 1.00 附近，越接近 0.00 或 2.00 越难达到：1.30+ 已明显优秀，1.50+ 应少见，1.60+ 属于极少见的高质量表现。2.00 近似“数学一满分级”表现，只能同时满足高难度、完全正确、方法高效、速度优秀、草稿证据完整等条件，普通全对题不得给 2.00；低于 0.60 也应仅在证据充分时给出。difficultyMultiplier 只反映题目难度，不能直接抬高某个维度。strategyInsight 还要输出 techniqueLevel（1-5）；不要把技巧难度等同于作答能力。
+5. 公式排版规范（极其重要）：诊断摘要 (summary)、最早错误 (earliestError)、修复动作 (advice)、更优解法 (betterSolution) 以及 dimensions 中的 evidence/advice，所有数学符号、变量名、公式、计算过程、递推式与结论必须严格使用标准 LaTeX 格式（行内使用 $...$，独立公式使用 $$...$$），严禁在数学式中使用未经 LaTeX 包裹的裸文本。
+6. 修复与秒杀建议：提供一条可落地执行的下一步修复动作（advice），并在 betterSolution 提供更优解法、更简洁思路或秒杀模板（若当前解法已最优可填 null）。
 
 完成后请将结果写入这个绝对路径：
 {output}
 
-JSON 必须符合：
-{{"schemaVersion":1,"kind":"analysis","taskId":"{task_id}","questionId":{question_id},"summary":"简要诊断","verdict":"correct|partial|incorrect|uncertain","earliestError":"最早错误步骤或 null","errorTags":["错误类型"],"weaknessTags":["薄弱知识"],"advice":"下一步修复动作","confidence":0.0,"recommendedQuestionIds":[],"recommendationReason":null}}
+JSON 必须符合（UTF-8，公式用标准单个反斜杠 LaTeX）。结果必须包含 rating、ratingTier、difficultyMultiplier 和六维 dimensions；无法由草稿确认的维度使用 score:null、confidence:0，并明确写 uncertain：
+{{"schemaVersion":1,"kind":"analysis","taskId":"{task_id}","questionId":{question_id},"summary":"简要诊断（含 $LaTeX$ 公式）","verdict":"correct|partial|incorrect|uncertain","earliestError":"最早错误步骤（含 $LaTeX$ 公式）或 null","errorTags":["错误类型"],"weaknessTags":["薄弱知识"],"advice":"下一步修复动作（含 $LaTeX$ 公式）","betterSolution":"更优解法或更简洁思路（含 $LaTeX$ 公式）或 null","confidence":0.95,"rating":1.00,"ratingTier":"S|A|B|C|D","difficultyMultiplier":1.0,"dimensions":{{"rigor":{{"score":75,"confidence":0.9,"evidence":"依据草稿步骤（含 $LaTeX$）","advice":"改进动作（含 $LaTeX$）"}},"computation":{{"score":75,"confidence":0.9,"evidence":"依据草稿步骤（含 $LaTeX$）"}},"modeling":{{"score":75,"confidence":0.9,"evidence":"依据草稿步骤（含 $LaTeX$）"}},"methodUse":{{"score":75,"confidence":0.9,"evidence":"依据草稿步骤（含 $LaTeX$）"}},"speed":{{"score":75,"confidence":0.9,"evidence":"基于实际耗时"}},"strategyInsight":{{"score":75,"confidence":0.8,"evidence":"依据结构识别（含 $LaTeX$）","techniqueLevel":3,"independentDiscovery":"uncertain"}}}},"recommendedQuestionIds":[],"recommendationReason":null}}
+strategyInsight 还必须包含 techniqueLevel（1–5）和 independentDiscovery（confirmed|uncertain|prompted）。不要输出 batchAttempts，单题只输出上面的 analysis 对象。
 不要修改题库源文件。"#,
         stem = q.stem,
         answer = q.correct_answer,
         output = output.to_string_lossy()
     );
-    // P2-14: archive the prompt so the task can be re-copied even after the
-    // in-app popup closes.
     let tasks_dir = state.data_dir.join("codex-tasks");
     fs::create_dir_all(&tasks_dir).map_err(|e| e.to_string())?;
     let _ = fs::write(tasks_dir.join(format!("{task_id}.txt")), &prompt);
@@ -3956,9 +5344,101 @@ JSON 必须符合：
     })
 }
 
+fn build_codex_batch_task_prompt(
+    task_id: &str,
+    questions: &[Question],
+    durations: Option<&HashMap<i64, i32>>,
+    output_path: &str,
+) -> String {
+    let numbered: Vec<String> = questions
+        .iter()
+        .enumerate()
+        .map(|(index, q)| {
+            let type_label = match q.question_type.as_str() {
+                "single_choice" => "单选题 · 基准3分",
+                "multiple_choice" => "多选题 · 基准4分",
+                "fill_in" => "填空题 · 基准5分",
+                _ => "解答/证明题 · 基准10分",
+            };
+            let bench_sec = match q.question_type.as_str() {
+                "single_choice" => 180,
+                "multiple_choice" => 240,
+                "fill_in" => 300,
+                _ => 600,
+            };
+            let dur_sec = durations.and_then(|m| m.get(&q.id).copied());
+            let timing_info = if let Some(sec) = dur_sec {
+                let m = sec / 60;
+                let s = sec % 60;
+                let pace_eval = if sec <= bench_sec / 2 {
+                    "⚡ 极速秒杀"
+                } else if sec <= bench_sec {
+                    "✓ 节奏标准"
+                } else if sec <= bench_sec * 3 / 2 {
+                    "⏱ 稍有迟疑"
+                } else {
+                    "⚠️ 耗时偏长(可能计算绕路)"
+                };
+                format!(" | ⏱ 作答耗时：{m}分{s:02}秒 [{pace_eval}]")
+            } else {
+                "".to_string()
+            };
+
+            format!(
+                "{}. 题目 ID：{id}（{type_label}）{timing_info}\n题目：{stem}\n参考答案：{answer}",
+                index + 1,
+                id = q.id,
+                stem = q.stem,
+                answer = q.correct_answer
+            )
+        })
+        .collect();
+
+    format!(
+        r#"你正在为数学刷题 App「刷吧」批改数一草稿。
+任务编号：{task_id}
+本任务包含 {count} 道题，按下面编号依次列出；你随后收到的每张草稿图片按发送顺序对应一道题：
+
+{numbered}
+
+批改要求：
+1. 一张草稿对应一道题：第 K 张图片对应第 K 题，请逐张核对题目编号后批改。
+2. 草稿张数少于题目数时：只批改实际收到草稿的题，未收到草稿的题不要猜测、不要编造、直接在 batchAttempts 中省略。
+3. 深度步骤诊断：每道题定位最早出现的错误断点，而不只判断最终答案。深入分析题意理解、方法选择、条件遗漏、符号计算、循环论证和推理跳步。无法确定时必须将该题的 result 记为 "uncertain" 并说明原因，不要猜。
+4. 熟练度与节奏诊断：综合题目的「实际作答耗时」与草稿步骤判断熟练度。若耗时明显偏长（超过基准时间），在 summary 和 advice 中分析是否存在方法严重绕路、繁琐硬算或步骤冗余；若做错且耗时极短，指出是否属于粗心抢快；并在 selfRating 给出 Codex 流畅度评估（1-4分）。durationSeconds 必须原样填写上方提供的实际作答耗时（秒）。
+5. 公式排版规范（极其重要）：整组摘要 (summary)、逐题诊断、最早断点 (earliestError)、修复动作 (advice) 及最优解法 (betterSolution) 中，所有的数学符号、变量名、公式、计算过程、递推式与结论，必须统一使用标准 LaTeX 格式（行内使用 $...$，独立公式使用 $$...$$），严禁使用未经 LaTeX 包裹的裸文本公式。
+6. 除 selfRating 外，为每道题输出 CS 风格最终 rating，范围 0.00–2.00，平均值约 1.00；分数应近似正态分布并集中在 1.00 附近，越接近 0.00 或 2.00 越难达到。1.30+ 已明显优秀，1.50+ 应少见，1.60+ 属于极少见表现；2.00 近似“数学一满分级”评价，必须同时有高难度、完全正确、方法高效、速度优秀和充分草稿证据，普通全对题不得给 2.00。rating 由正确性、草稿证据、相对耗时和题目难度综合得到；difficultyMultiplier 只表达题目难度，不直接抬高六维能力。
+7. 输出六维能力 dimensions：rigor（严谨性）、computation（计算力）、modeling（审题建模）、methodUse（方法使用）、speed（速度）、strategyInsight（策略洞察力）。每维包含 score（0–100 或无法判断时 null）、confidence（0–1）、evidence（必须引用草稿证据）和可选 advice。无法从草稿确认时必须 score:null、confidence:0，并在 evidence 中写明 uncertain，严禁猜分。strategyInsight 另给 techniqueLevel（1–5，表示本题技巧本身难度）和 independentDiscovery（confirmed|uncertain|prompted）；技巧难度不能直接当作能力分。
+8. 修复与秒杀建议：每道题给出一条可落地执行的修复动作（advice），并在 betterSolution 给出更优解法、更简洁思路或秒杀模板（若原解法已最优或无法确定可填 null）。
+
+完成后请将结果写入这个绝对路径：
+{output}
+
+JSON 必须符合（UTF-8，公式用标准单个反斜杠 LaTeX）。每个 batchAttempt 还必须包含 rating、ratingTier、difficultyMultiplier 和六维 dimensions；无法由草稿确认的维度使用 score:null、confidence:0，并明确写 uncertain：
+{{"schemaVersion":1,"kind":"batch","taskId":"{task_id}","summary":"整组批改摘要（含 $LaTeX$ 公式）","errorTags":["错误类型"],"weaknessTags":["薄弱知识"],"confidence":0.9,"recommendedQuestionIds":[],"batchAttempts":[{{"questionId":155,"result":"correct|wrong|uncertain","selfRating":2,"durationSeconds":120,"summary":"简要诊断（含 $LaTeX$ 公式）","verdict":"correct|partial|incorrect|uncertain","earliestError":"最早错误步骤（含 $LaTeX$ 公式）或 null","errorTags":["错误类型"],"weaknessTags":["薄弱知识"],"advice":"下一步修复动作（含 $LaTeX$ 公式）","betterSolution":"更优解法或更简洁思路（含 $LaTeX$ 公式）或 null","confidence":0.95,"rating":1.00,"ratingTier":"S|A|B|C|D","difficultyMultiplier":1.0,"dimensions":{{"rigor":{{"score":75,"confidence":0.9,"evidence":"依据草稿步骤（含 $LaTeX$）","advice":"改进动作（含 $LaTeX$）"}},"computation":{{"score":75,"confidence":0.9,"evidence":"依据草稿步骤（含 $LaTeX$）"}},"modeling":{{"score":75,"confidence":0.9,"evidence":"依据草稿步骤（含 $LaTeX$）"}},"methodUse":{{"score":75,"confidence":0.9,"evidence":"依据草稿步骤（含 $LaTeX$）"}},"speed":{{"score":75,"confidence":0.9,"evidence":"基于实际耗时"}},"strategyInsight":{{"score":75,"confidence":0.8,"evidence":"依据结构识别（含 $LaTeX$）","techniqueLevel":3,"independentDiscovery":"uncertain"}}}}}}]}}
+示例中的分数仅用于展示字段类型，不要照抄。rating 是该题本次最终表现，不是六维能力分；difficultyMultiplier 只表达题目难度。若某维度无法从草稿确认，必须使用 score:null、confidence:0，并在 evidence 中明确写 uncertain，严禁猜分。
+不要修改题库源文件。"#,
+        count = questions.len(),
+        numbered = numbered.join("\n\n"),
+        output = output_path
+    )
+}
+
+fn latest_attempt_duration(conn: &Connection, question_id: i64) -> Result<Option<i32>, String> {
+    conn.query_row(
+        "SELECT duration_seconds FROM attempts WHERE question_id=?1 ORDER BY attempted_at DESC LIMIT 1",
+        [question_id],
+        |row| row.get(0),
+    )
+    .optional()
+    .map_err(|e| e.to_string())
+}
+
 #[tauri::command]
 fn create_codex_batch_task(
     question_ids: Vec<i64>,
+    durations: Option<HashMap<i64, i32>>,
+    session_id: Option<String>,
     state: State<AppState>,
 ) -> Result<CodexTask, String> {
     let conn = state.db.lock().map_err(|e| e.to_string())?;
@@ -3982,46 +5462,27 @@ fn create_codex_batch_task(
         .data_dir
         .join("codex-inbox")
         .join(format!("{task_id}.json"));
-    let numbered: Vec<String> = questions
-        .iter()
-        .enumerate()
-        .map(|(index, q)| {
-            format!(
-                "{}. 题目 ID：{id}\n题目：{stem}\n参考答案：{answer}",
-                index + 1,
-                id = q.id,
-                stem = q.stem,
-                answer = q.correct_answer
-            )
-        })
-        .collect();
-    let prompt = format!(
-        r#"你正在为数学刷题 App「刷吧」批改数一草稿。
-任务编号：{task_id}
-本任务包含 {count} 道题，按下面编号依次列出；你随后收到的每张草稿图片按发送顺序对应一道题：
 
-{numbered}
+    // Prepare complete durations map (falling back to database history if not supplied in map)
+    let mut complete_durations = durations.unwrap_or_default();
+    for q in &questions {
+        if !complete_durations.contains_key(&q.id) {
+            if let Some(sec) = latest_attempt_duration(&conn, q.id)? {
+                complete_durations.insert(q.id, sec);
+            }
+        }
+    }
 
-批改要求：
-1. 一张草稿对应一道题：第 K 张图片就是第 K 题，请逐张核对题目编号后批改。
-2. 你最常遇到的情况是草稿张数少于题目数：此时只批改实际收到草稿的那些题，未收到草稿的题不要猜测、不要编造结果、不要写“未作答”之类的占位条目，直接省略。
-3. 每道题定位最早出现的错误，而不只判断最终答案。分析题意理解、方法选择、条件遗漏、符号计算和推理跳步。无法确定时必须将该题的 result 记为 "uncertain" 并说明原因，不要猜。
-4. 除 result 与 selfRating 外，其余字段填写你作为批改者的判断：verdict 为 correct|partial|incorrect|uncertain，summary 为简要诊断，earliestError 为最早错误步骤或 null，errorTags 为错误类型标签，weaknessTags 为薄弱知识标签，advice 为一条可执行的修复动作，confidence 为 0 到 1 的置信度。
-
-完成后请将结果写入这个绝对路径：
-{output}
-
-JSON 必须符合：
-{{"schemaVersion":1,"kind":"batch","taskId":"{task_id}","summary":"整组批改摘要","errorTags":["错误类型"],"weaknessTags":["薄弱知识"],"confidence":0.9,"recommendedQuestionIds":[],"batchAttempts":[{{"questionId":155,"result":"correct|wrong|uncertain","selfRating":2,"summary":"简要诊断","verdict":"correct|partial|incorrect|uncertain","earliestError":"最早错误步骤或 null","errorTags":["错误类型"],"weaknessTags":["薄弱知识"],"advice":"下一步修复动作","confidence":0.9}}]}}
-不要修改题库源文件。"#,
-        count = questions.len(),
-        numbered = numbered.join("\n\n"),
-        output = output.to_string_lossy()
+    let prompt = build_codex_batch_task_prompt(
+        &task_id,
+        &questions,
+        Some(&complete_durations),
+        &output.to_string_lossy(),
     );
     let tasks_dir = state.data_dir.join("codex-tasks");
     fs::create_dir_all(&tasks_dir).map_err(|e| e.to_string())?;
     let _ = fs::write(tasks_dir.join(format!("{task_id}.txt")), &prompt);
-    Ok(CodexTask {
+    let task = CodexTask {
         task_id,
         question_id: None,
         question_count: questions.len(),
@@ -4032,7 +5493,11 @@ JSON 必须符合：
             .to_string_lossy()
             .into_owned(),
         output_file: output.to_string_lossy().into_owned(),
-    })
+    };
+    if let Some(session_id) = session_id.as_deref() {
+        attach_pressure_task(&state, session_id, &task.task_id)?;
+    }
+    Ok(task)
 }
 
 #[tauri::command]
@@ -4067,7 +5532,7 @@ fn image_data_url(path: String, state: State<AppState>) -> Result<String, String
 #[tauri::command]
 fn get_insights(state: State<AppState>) -> Result<Vec<InsightPoint>, String> {
     let conn = state.db.lock().map_err(|e| e.to_string())?;
-    let mut stmt=conn.prepare("SELECT CASE WHEN instr(q.category_path,' / ')>0 THEN substr(q.category_path,1,instr(q.category_path,' / ')-1) ELSE q.category_path END subject,SUM(CASE WHEN COALESCE(a.outcome,a.result)<>'uncertain' THEN 1 ELSE 0 END),AVG(CASE WHEN COALESCE(a.outcome,a.result)='uncertain' THEN NULL WHEN COALESCE(a.outcome,a.result)='correct' THEN 1.0 ELSE 0.0 END),AVG(CASE WHEN COALESCE(a.outcome,a.result)<>'uncertain' THEN COALESCE(a.fluency_rating,a.self_rating) END) FROM attempts a JOIN questions q ON q.id=a.question_id GROUP BY subject ORDER BY COUNT(a.id) DESC").map_err(|e|e.to_string())?;
+    let mut stmt=conn.prepare("SELECT CASE WHEN instr(q.category_path,' / ')>0 THEN substr(q.category_path,1,instr(q.category_path,' / ')-1) ELSE q.category_path END subject,SUM(CASE WHEN COALESCE(a.outcome,a.result)<>'uncertain' THEN 1 ELSE 0 END),AVG(CASE WHEN COALESCE(a.outcome,a.result)='uncertain' THEN NULL WHEN COALESCE(a.outcome,a.result)='correct' THEN 1.0 ELSE 0.0 END),AVG(CASE WHEN COALESCE(a.outcome,a.result)<>'uncertain' THEN COALESCE(a.ai_rating, MAX(0.0, MIN(2.0, 1.0 + (COALESCE(a.fluency_rating,a.self_rating)-2.5) * ((2.0-0.0)/3.0)))) END) FROM attempts a JOIN questions q ON q.id=a.question_id GROUP BY subject ORDER BY COUNT(a.id) DESC").map_err(|e|e.to_string())?;
     let rows = stmt
         .query_map([], |r| {
             Ok(InsightPoint {
@@ -4242,7 +5707,7 @@ fn get_daily_trend(state: State<AppState>) -> Result<Vec<DailyTrendPoint>, Strin
         let date = (today - Duration::days(offset)).to_string();
         let (attempts, correct, rating): (i64, i64, Option<f64>) = conn
             .query_row(
-                "SELECT SUM(CASE WHEN COALESCE(outcome,result)<>'uncertain' THEN 1 ELSE 0 END), COALESCE(SUM(CASE WHEN COALESCE(outcome,result)='correct' THEN 1 ELSE 0 END),0), AVG(CASE WHEN COALESCE(outcome,result)<>'uncertain' THEN COALESCE(fluency_rating,self_rating) END) FROM attempts WHERE substr(attempted_at,1,10)=?1",
+                "SELECT SUM(CASE WHEN COALESCE(outcome,result)<>'uncertain' THEN 1 ELSE 0 END), COALESCE(SUM(CASE WHEN COALESCE(outcome,result)='correct' THEN 1 ELSE 0 END),0), AVG(CASE WHEN COALESCE(outcome,result)<>'uncertain' THEN COALESCE(ai_rating, MAX(0.0, MIN(2.0, 1.0 + (COALESCE(fluency_rating,self_rating)-2.5) * ((2.0-0.0)/3.0)))) END) FROM attempts WHERE substr(attempted_at,1,10)=?1",
                 [&date],
                 |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
             )
@@ -4318,6 +5783,368 @@ fn get_streak(state: State<AppState>) -> Result<UserStreak, String> {
     })
 }
 
+// 压力模拟模式 API
+#[tauri::command]
+fn create_pressure_session(
+    question_ids: Vec<i64>,
+    state: State<AppState>,
+) -> Result<Value, String> {
+    if question_ids.is_empty() {
+        return Err("压力模拟至少需要一道题".into());
+    }
+    let start_time = Local::now().timestamp_millis();
+    let session_id = format!("pressure-{start_time}");
+    let conn = state.supplemental_db.lock().map_err(|e| e.to_string())?;
+
+    conn.execute(
+        "INSERT INTO pressure_sessions (session_id, question_ids, start_time, status, task_id, created_at) VALUES (?1, ?2, ?3, ?4, NULL, ?5)",
+        params![
+            &session_id,
+            serde_json::to_string(&question_ids).map_err(|e| e.to_string())?,
+            start_time,
+            "ongoing",
+            start_time,
+        ],
+    )
+    .map_err(|e| e.to_string())?;
+
+    Ok(json!({
+        "sessionId": session_id,
+        "mode": "pressure",
+        "startTime": start_time,
+        "endTime": null,
+        "totalDuration": 0,
+        "questions": [],
+        "taskId": null,
+        "status": "ongoing",
+        "createdAt": start_time,
+    }))
+}
+
+#[tauri::command]
+fn submit_pressure_answer(
+    session_id: String,
+    question_id: i64,
+    user_answer: String,
+    duration: i64,
+    state: State<AppState>,
+) -> Result<(), String> {
+    let conn = state.supplemental_db.lock().map_err(|e| e.to_string())?;
+
+    if !user_answer.trim().is_empty() {
+        return Err("连续纸笔模式不接收屏幕答案，请把草稿交给 Codex 批改".into());
+    }
+    let status: String = conn
+        .query_row(
+            "SELECT status FROM pressure_sessions WHERE session_id=?1",
+            [&session_id],
+            |row| row.get(0),
+        )
+        .map_err(|e| e.to_string())?;
+    if status != "ongoing" {
+        return Err("压力会话已结束，不能继续记录题目".into());
+    }
+    let question_ids: String = conn
+        .query_row(
+            "SELECT question_ids FROM pressure_sessions WHERE session_id=?1",
+            [&session_id],
+            |row| row.get(0),
+        )
+        .map_err(|e| e.to_string())?;
+    let allowed: Vec<i64> = serde_json::from_str(&question_ids).unwrap_or_default();
+    if !allowed.contains(&question_id) {
+        return Err("题目不属于当前压力会话".into());
+    }
+    let bounded_duration = duration.clamp(1, 1800);
+
+    conn.execute(
+        "INSERT INTO pressure_answers (session_id, question_id, user_answer, duration, submit_time) SELECT ?1, ?2, '', ?3, ?4 WHERE NOT EXISTS (SELECT 1 FROM pressure_answers WHERE session_id=?1 AND question_id=?2)",
+        params![
+            &session_id,
+            question_id,
+            bounded_duration,
+            Local::now().timestamp_millis(),
+        ],
+    )
+    .map_err(|e| e.to_string())?;
+
+    Ok(())
+}
+
+#[tauri::command]
+fn complete_pressure_session(
+    session_id: String,
+    state: State<AppState>,
+) -> Result<Value, String> {
+    let conn = state.supplemental_db.lock().map_err(|e| e.to_string())?;
+
+    let end_time = Local::now().timestamp_millis();
+
+    let status: String = conn
+        .query_row(
+            "SELECT status FROM pressure_sessions WHERE session_id=?1",
+            [&session_id],
+            |row| row.get(0),
+        )
+        .map_err(|e| e.to_string())?;
+    if status != "ongoing" {
+        return Err("压力会话不是进行中状态".into());
+    }
+
+    // 获取会话信息
+    let mut stmt = conn
+        .prepare("SELECT start_time FROM pressure_sessions WHERE session_id = ?1")
+        .map_err(|e| e.to_string())?;
+
+    let start_time: i64 = stmt
+        .query_row([&session_id], |row| row.get(0))
+        .map_err(|e| e.to_string())?;
+
+    let question_ids: String = conn
+        .query_row(
+            "SELECT question_ids FROM pressure_sessions WHERE session_id=?1",
+            [&session_id],
+            |row| row.get(0),
+        )
+        .map_err(|e| e.to_string())?;
+    let expected: Vec<i64> = serde_json::from_str(&question_ids).unwrap_or_default();
+    let recorded: i64 = conn
+        .query_row(
+            "SELECT COUNT(DISTINCT question_id) FROM pressure_answers WHERE session_id=?1",
+            [&session_id],
+            |row| row.get(0),
+        )
+        .map_err(|e| e.to_string())?;
+    if recorded != expected.len() as i64 {
+        return Err("压力会话尚未完成全部题目".into());
+    }
+
+    conn.execute(
+        "UPDATE pressure_sessions SET end_time = ?1, status = ?2 WHERE session_id = ?3 AND status = 'ongoing'",
+        params![end_time, "awaiting_codex", &session_id],
+    )
+    .map_err(|e| e.to_string())?;
+
+    let total_duration = (end_time - start_time) / 1000;
+
+    Ok(json!({
+        "sessionId": session_id,
+        "mode": "pressure",
+        "startTime": start_time,
+        "endTime": end_time,
+        "totalDuration": total_duration,
+        "questions": pressure_answers_for_session(&conn, &session_id)?,
+        "taskId": conn.query_row("SELECT task_id FROM pressure_sessions WHERE session_id=?1", [&session_id], |row| row.get::<_, Option<String>>(0)).map_err(|e| e.to_string())?,
+        "status": "awaiting_codex",
+        "createdAt": start_time,
+    }))
+}
+
+fn pressure_answers_for_session(conn: &Connection, session_id: &str) -> Result<Vec<Value>, String> {
+    let mut stmt = conn
+        .prepare("SELECT question_id, duration, submit_time FROM pressure_answers WHERE session_id=?1 ORDER BY id")
+        .map_err(|e| e.to_string())?;
+    let result = stmt.query_map([session_id], |row| {
+        Ok(json!({
+            "questionId": row.get::<_, i64>(0)?,
+            "userAnswer": "",
+            "duration": row.get::<_, i64>(1)?,
+            "submitTime": row.get::<_, i64>(2)?,
+        }))
+    })
+    .map_err(|e| e.to_string())?
+    .collect::<Result<Vec<_>, _>>()
+    .map_err(|e| e.to_string());
+    result
+}
+
+#[tauri::command]
+fn abandon_pressure_session(session_id: String, state: State<AppState>) -> Result<(), String> {
+    let conn = state.supplemental_db.lock().map_err(|e| e.to_string())?;
+    conn.execute(
+        "UPDATE pressure_sessions SET status='abandoned', end_time=?1 WHERE session_id=?2 AND status='ongoing'",
+        params![Local::now().timestamp_millis(), session_id],
+    )
+    .map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+fn attach_pressure_task_row(
+    conn: &Connection,
+    session_id: &str,
+    task_id: &str,
+) -> Result<(), String> {
+    let tx = conn.unchecked_transaction().map_err(|e| e.to_string())?;
+    let updated = tx
+        .execute(
+            "UPDATE pressure_sessions SET task_id=?1 WHERE session_id=?2 AND status='awaiting_codex'",
+            params![task_id, session_id],
+        )
+        .map_err(|e| e.to_string())?;
+    if updated != 1 {
+        return Err("压力会话不存在或当前状态不允许绑定 Codex 任务".into());
+    }
+    tx.execute(
+        "UPDATE pressure_task_links SET is_current=0 WHERE session_id=?1",
+        [session_id],
+    )
+    .map_err(|e| e.to_string())?;
+    tx.execute(
+        "INSERT INTO pressure_task_links(task_id,session_id,is_current,created_at)
+         VALUES(?1,?2,1,?3)
+         ON CONFLICT(task_id) DO UPDATE SET
+           session_id=excluded.session_id,
+           is_current=1,
+           created_at=excluded.created_at",
+        params![task_id, session_id, Local::now().timestamp_millis()],
+    )
+    .map_err(|e| e.to_string())?;
+    tx.commit().map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+fn attach_pressure_task(
+    state: &State<AppState>,
+    session_id: &str,
+    task_id: &str,
+) -> Result<(), String> {
+    let conn = state.supplemental_db.lock().map_err(|e| e.to_string())?;
+    attach_pressure_task_row(&conn, session_id, task_id)
+}
+
+#[tauri::command]
+fn save_pressure_grading_report(
+    session_id: String,
+    report_json: String,
+    state: State<AppState>,
+) -> Result<(), String> {
+    let conn = state.supplemental_db.lock().map_err(|e| e.to_string())?;
+
+    conn.execute(
+        "INSERT OR REPLACE INTO pressure_reports (session_id, report_json, created_at) VALUES (?1, ?2, ?3)",
+        params![
+            &session_id,
+            &report_json,
+            Local::now().timestamp_millis(),
+        ],
+    )
+    .map_err(|e| e.to_string())?;
+
+    // 更新会话状态为已批改
+    conn.execute(
+        "UPDATE pressure_sessions SET status = ?1 WHERE session_id = ?2",
+        params!["graded", &session_id],
+    )
+    .map_err(|e| e.to_string())?;
+
+    Ok(())
+}
+
+#[tauri::command]
+fn get_pressure_session(
+    session_id: String,
+    state: State<AppState>,
+) -> Result<Option<Value>, String> {
+    let conn = state.supplemental_db.lock().map_err(|e| e.to_string())?;
+
+    let mut result = conn
+        .query_row(
+            "SELECT session_id, question_ids, start_time, end_time, status, task_id, created_at FROM pressure_sessions WHERE session_id = ?1",
+            [&session_id],
+            |row| {
+                Ok(json!({
+                    "sessionId": row.get::<_, String>(0)?,
+                    "mode": "pressure",
+                    "questionIds": serde_json::from_str::<Vec<i64>>(&row.get::<_, String>(1)?).unwrap_or_default(),
+                    "startTime": row.get::<_, i64>(2)?,
+                    "endTime": row.get::<_, Option<i64>>(3)?,
+                    "status": row.get::<_, String>(4)?,
+                    "taskId": row.get::<_, Option<String>>(5)?,
+                    "createdAt": row.get::<_, i64>(6)?,
+                }))
+            },
+        )
+        .optional()
+        .map_err(|e| e.to_string())?;
+
+    if let Some(ref mut session) = result {
+        let start_time = session["startTime"].as_i64().unwrap_or_default();
+        let end_time = session["endTime"]
+            .as_i64()
+            .unwrap_or_else(|| Local::now().timestamp_millis());
+        session["totalDuration"] = json!((end_time - start_time) / 1000);
+        session["questions"] = json!(pressure_answers_for_session(&conn, session_id.as_str())?);
+    }
+    Ok(result)
+}
+
+#[tauri::command]
+fn get_pressure_grading_report(
+    session_id: String,
+    state: State<AppState>,
+) -> Result<Option<Value>, String> {
+    let conn = state.supplemental_db.lock().map_err(|e| e.to_string())?;
+
+    let result = conn
+        .query_row(
+            "SELECT report_json FROM pressure_reports WHERE session_id = ?1",
+            [&session_id],
+            |row| {
+                let json_str: String = row.get(0)?;
+                Ok(serde_json::from_str::<Value>(&json_str).unwrap_or(json!(null)))
+            },
+        )
+        .optional()
+        .map_err(|e| e.to_string())?;
+
+    Ok(result)
+}
+
+#[tauri::command]
+fn list_pressure_sessions(state: State<AppState>) -> Result<Vec<Value>, String> {
+    let conn = state.supplemental_db.lock().map_err(|e| e.to_string())?;
+
+    let mut stmt = conn
+        .prepare("SELECT session_id, question_ids, start_time, end_time, status, task_id, created_at FROM pressure_sessions ORDER BY created_at DESC LIMIT 50")
+        .map_err(|e| e.to_string())?;
+
+    let sessions = stmt
+        .query_map([], |row| {
+            let start_time = row.get::<_, i64>(2)?;
+            let end_time = row.get::<_, Option<i64>>(3)?;
+            Ok(json!({
+                "sessionId": row.get::<_, String>(0)?,
+                "mode": "pressure",
+                "questionIds": serde_json::from_str::<Vec<i64>>(&row.get::<_, String>(1)?).unwrap_or_default(),
+                "startTime": start_time,
+                "endTime": end_time,
+                "totalDuration": (end_time.unwrap_or_else(|| Local::now().timestamp_millis()) - start_time) / 1000,
+                "status": row.get::<_, String>(4)?,
+                "taskId": row.get::<_, Option<String>>(5)?,
+                "createdAt": row.get::<_, i64>(6)?,
+            }))
+        })
+        .map_err(|e| e.to_string())?
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|e| e.to_string())?;
+    drop(stmt);
+
+    let sessions = sessions
+        .into_iter()
+        .map(|mut session| {
+            let session_id = session
+                .get("sessionId")
+                .and_then(Value::as_str)
+                .unwrap_or_default();
+            session["questions"] = json!(pressure_answers_for_session(&conn, session_id)?);
+            Ok::<Value, String>(session)
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+
+    Ok(sessions)
+}
+
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
@@ -4366,6 +6193,11 @@ pub fn run() {
             search_question_page,
             get_mastery_map,
             get_mastery_nodes,
+            get_elo_status,
+            get_session_scoreboard,
+            get_season_status,
+            advance_season,
+            get_rating_distribution,
             get_chapter_queue,
             get_focus_queue,
             get_variant_queue,
@@ -4407,7 +6239,15 @@ pub fn run() {
             get_insights,
             get_weakness_radar,
             get_daily_trend,
-            get_streak
+            get_streak,
+            create_pressure_session,
+            submit_pressure_answer,
+            complete_pressure_session,
+            abandon_pressure_session,
+            save_pressure_grading_report,
+            get_pressure_session,
+            get_pressure_grading_report,
+            list_pressure_sessions
         ])
         .run(tauri::generate_context!())
         .expect("error while running 刷吧");
@@ -4432,6 +6272,49 @@ mod tests {
         assert_eq!(options[0].content_md, "$x=1$");
         let serialized = serde_json::to_value(&options).unwrap();
         assert_eq!(serialized[0]["contentMd"], "$x=1$");
+    }
+
+    #[test]
+    fn pressure_session_keeps_durations_without_screen_answers() {
+        let conn = Connection::open_in_memory().unwrap();
+        init_supplemental_schema(&conn).unwrap();
+        conn.execute(
+            "INSERT INTO pressure_sessions(session_id,question_ids,start_time,status,task_id,created_at) VALUES('p-1','[155,160]',1,'awaiting_codex','SB-BATCH-1',1)",
+            [],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO pressure_answers(session_id,question_id,user_answer,duration,submit_time) VALUES('p-1',155,'',42,2)",
+            [],
+        )
+        .unwrap();
+
+        let answers = pressure_answers_for_session(&conn, "p-1").unwrap();
+        assert_eq!(answers.len(), 1);
+        assert_eq!(answers[0]["questionId"], 155);
+        assert_eq!(answers[0]["duration"], 42);
+        assert_eq!(answers[0]["userAnswer"], "");
+    }
+
+    #[test]
+    fn batch_attempt_duration_is_serialized_for_codex_round_trip() {
+        let attempt = BatchAttempt {
+            question_id: 155,
+            result: "correct".into(),
+            self_rating: 3,
+            duration_seconds: 87,
+            summary: "完成".into(),
+            verdict: Some("correct".into()),
+            earliest_error: None,
+            error_tags: vec![],
+            weakness_tags: vec![],
+            advice: None,
+            better_solution: None,
+            confidence: 0.9,
+            ..Default::default()
+        };
+        let value = serde_json::to_value(attempt).unwrap();
+        assert_eq!(value["durationSeconds"], 87);
     }
 
     #[test]
@@ -4635,12 +6518,14 @@ mod tests {
             error_tags: vec![],
             weakness_tags: vec![],
             advice: None,
+            better_solution: None,
             confidence: 0.9,
             recommended_question_ids: ids,
             recommendation_reason: Some("测试推荐理由".into()),
             paper_title: None,
             paper_attempts: vec![],
             batch_attempts: vec![],
+            ..Default::default()
         }
     }
 
@@ -4810,6 +6695,157 @@ mod tests {
     }
 
     #[test]
+    fn elo_settles_per_attempt_like_a_cs_match() {
+        let conn = Connection::open_in_memory().unwrap();
+        init_schema(&conn).unwrap();
+        conn.execute(
+            "INSERT INTO questions(id,stem,options_json,correct_answer,explanation,source,question_type,category_path,image_paths_json,is_core,difficulty,content_hash) VALUES(1,'题','[]','A','解析','测试','single_choice','路径','[]',0,2,'')",
+            [],
+        )
+        .unwrap();
+        let (settlements, current) = current_elo(&conn).unwrap();
+        assert_eq!((settlements, current), (0, ELO_START));
+
+        record_attempt_row(
+            &conn,
+            &AttemptInput {
+                question_id: 1,
+                duration_seconds: 120,
+                result: "correct".into(),
+                self_rating: 4,
+                mode: Some("paper".into()),
+                ai_rating: Some(1.6),
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        // calibration K=60，无进度记录按掌握度 2 → 期望 0.60 → +60*(1.6/2-0.60) = +12
+        let (settlements, current) = current_elo(&conn).unwrap();
+        assert_eq!(settlements, 1);
+        assert_eq!(current, ELO_START + 12.0);
+
+        record_attempt_row(
+            &conn,
+            &AttemptInput {
+                question_id: 1,
+                duration_seconds: 300,
+                result: "wrong".into(),
+                self_rating: 2,
+                mode: Some("paper".into()),
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        let (settlements, after_wrong) = current_elo(&conn).unwrap();
+        assert_eq!(settlements, 2);
+        // 首次 +12 跨越 1401（C→C+）触发晋级保护，随后的失误不掉分
+        assert_eq!(after_wrong, current, "晋级保护期内不掉分：{after_wrong}");
+
+        // uncertain 作答不参与结算，正如中途退出不计成绩
+        record_attempt_row(
+            &conn,
+            &AttemptInput {
+                question_id: 1,
+                duration_seconds: 60,
+                result: "uncertain".into(),
+                self_rating: 1,
+                mode: Some("paper".into()),
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        let (settlements, _) = current_elo(&conn).unwrap();
+        assert_eq!(settlements, 2);
+    }
+
+    #[test]
+    fn elo_expectations_scale_with_difficulty_and_mastery() {
+        let settle_once = |mastery: Option<i64>, dm: Option<f64>| -> f64 {
+            let conn = Connection::open_in_memory().unwrap();
+            init_schema(&conn).unwrap();
+            conn.execute(
+                "INSERT INTO questions(id,stem,options_json,correct_answer,explanation,source,question_type,category_path,image_paths_json,is_core,difficulty,content_hash) VALUES(1,'题','[]','A','解析','测试','single_choice','路径','[]',0,2,'')",
+                [],
+            )
+            .unwrap();
+            if let Some(m) = mastery {
+                conn.execute("INSERT INTO progress(question_id,mastery) VALUES(1,?1)", [m]).unwrap();
+            }
+            record_attempt_row(
+                &conn,
+                &AttemptInput {
+                    question_id: 1,
+                    duration_seconds: 120,
+                    result: "correct".into(),
+                    self_rating: 4,
+                    mode: Some("paper".into()),
+                    difficulty_multiplier: dm,
+                    ..Default::default()
+                },
+            )
+            .unwrap();
+            current_elo(&conn).unwrap().1
+        };
+        // 薄弱章节(掌握度1) + 难题(难度1.10)：期望 0.45，收益最大
+        let weak_hard = settle_once(Some(1), Some(1.10));
+        // 已掌握章节(掌握度4) + 简单题(难度0.94)：期望 0.55，收益缩水
+        let strong_easy = settle_once(Some(4), Some(0.94));
+        assert!(
+            weak_hard > strong_easy,
+            "薄弱章节难题应比碾压简单题加分多：{weak_hard} vs {strong_easy}"
+        );
+    }
+
+    #[test]
+    fn elo_promotion_protection_blocks_first_losses() {
+        let conn = Connection::open_in_memory().unwrap();
+        init_schema(&conn).unwrap();
+        conn.execute(
+            "INSERT INTO questions(id,stem,options_json,correct_answer,explanation,source,question_type,category_path,image_paths_json,is_core,difficulty,content_hash) VALUES(1,'题','[]','A','解析','测试','single_choice','路径','[]',0,2,'')",
+            [],
+        )
+        .unwrap();
+        // 预置 11 次结算（脱离定级期，K=25），分数贴着 1601 晋级线
+        for _ in 0..11 {
+            conn.execute(
+                "INSERT INTO elo_events(question_id,delta,rating_after,performance,expected,created_at) VALUES(1,1,1595,1.0,0.6,'2026-08-20T10:00:00+08:00')",
+                [],
+            )
+            .unwrap();
+        }
+        // 做对 → 跨越 10500 晋级，保护计数置 3
+        record_attempt_row(
+            &conn,
+            &AttemptInput {
+                question_id: 1,
+                duration_seconds: 120,
+                result: "correct".into(),
+                self_rating: 4,
+                mode: Some("paper".into()),
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        let promoted = current_elo(&conn).unwrap().1;
+        assert!(promoted >= 1601.0, "应跨越晋级线：{promoted}");
+        // 随后做错 → 晋级保护生效，不掉分
+        record_attempt_row(
+            &conn,
+            &AttemptInput {
+                question_id: 1,
+                duration_seconds: 300,
+                result: "wrong".into(),
+                self_rating: 2,
+                mode: Some("paper".into()),
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        let after_loss = current_elo(&conn).unwrap().1;
+        assert_eq!(after_loss, promoted, "晋级保护期内不应掉分");
+    }
+
+    #[test]
     fn undo_last_attempt_restores_progress() {
         let conn = Connection::open_in_memory().unwrap();
         init_schema(&conn).unwrap();
@@ -4870,6 +6906,7 @@ mod tests {
             error_tags: vec![],
             weakness_tags: vec![],
             advice: None,
+            better_solution: None,
             confidence: 0.9,
             recommended_question_ids: vec![],
             recommendation_reason: None,
@@ -4878,6 +6915,7 @@ mod tests {
             batch_attempts: vec![
                 BatchAttempt {
                     question_id: 155,
+                    duration_seconds: 45,
                     result: "wrong".into(),
                     self_rating: 2,
                     summary: "逆矩阵恒等式用反了".into(),
@@ -4886,10 +6924,13 @@ mod tests {
                     error_tags: vec!["符号计算".into()],
                     weakness_tags: vec!["幂零矩阵".into()],
                     advice: Some("重做一遍 E-A 可逆性的证明".into()),
+                    better_solution: None,
                     confidence: 0.88,
+                    ..Default::default()
                 },
                 BatchAttempt {
                     question_id: 160,
+                    duration_seconds: 30,
                     result: "uncertain".into(),
                     self_rating: 2,
                     summary: "草稿未上传，无法批改".into(),
@@ -4898,12 +6939,15 @@ mod tests {
                     error_tags: vec![],
                     weakness_tags: vec![],
                     advice: None,
+                    better_solution: None,
                     confidence: 0.0,
+                    ..Default::default()
                 },
             ],
+            ..Default::default()
         };
         insert_codex_payload(&conn, &payload).unwrap();
-        apply_batch_payload(&conn, &payload).unwrap();
+        apply_batch_payload(&conn, &payload, None).unwrap();
         let attempts: Vec<(i64, String, String)> = conn
             .prepare("SELECT question_id,result,mode FROM attempts")
             .unwrap()
@@ -4922,8 +6966,345 @@ mod tests {
             .unwrap()
             .collect::<Result<_, _>>()
             .unwrap();
-        assert_eq!(signals.len(), 1);
-        assert_eq!(signals[0], ("SB-BATCH-TEST-155".into(), 155));
+        assert_eq!(signals.len(), 2);
+        assert!(signals.contains(&("SB-BATCH-TEST-155".into(), 155)));
+        assert!(signals.contains(&("SB-BATCH-TEST-160".into(), 160)));
+        let uncertain_progress: i64 = conn
+            .query_row("SELECT COUNT(*) FROM progress WHERE question_id=160", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(uncertain_progress, 0);
+    }
+
+    #[test]
+    fn batch_payload_persists_real_durations_and_is_idempotent() {
+        let conn = Connection::open_in_memory().unwrap();
+        init_schema(&conn).unwrap();
+        insert_test_question(&conn, 1, "高等数学");
+        insert_test_question(&conn, 2, "线性代数");
+        let payload = CodexPayload {
+            schema_version: 1,
+            kind: "batch".into(),
+            task_id: "SB-BATCH-DURATION".into(),
+            question_id: None,
+            summary: "耗时测试".into(),
+            verdict: None,
+            earliest_error: None,
+            error_tags: vec![],
+            weakness_tags: vec![],
+            advice: None,
+            better_solution: None,
+            confidence: 0.9,
+            recommended_question_ids: vec![],
+            recommendation_reason: None,
+            paper_title: None,
+            paper_attempts: vec![],
+            batch_attempts: vec![
+                BatchAttempt {
+                    question_id: 1,
+                    result: "correct".into(),
+                    self_rating: 3,
+                    duration_seconds: 87,
+                    summary: "正确".into(),
+                    verdict: Some("correct".into()),
+                    earliest_error: None,
+                    error_tags: vec![],
+                    weakness_tags: vec![],
+                    advice: None,
+                    better_solution: Some("利用行列式展开的更简洁路线".into()),
+                    confidence: 0.95,
+                    ..Default::default()
+                },
+                BatchAttempt {
+                    question_id: 2,
+                    result: "wrong".into(),
+                    self_rating: 2,
+                    duration_seconds: 0,
+                    summary: "计算错误".into(),
+                    verdict: Some("incorrect".into()),
+                    earliest_error: Some("第二步".into()),
+                    error_tags: vec!["计算".into()],
+                    weakness_tags: vec!["行列式".into()],
+                    advice: Some("重算".into()),
+                    better_solution: None,
+                    confidence: 0.8,
+                    ..Default::default()
+                },
+            ],
+            ..Default::default()
+        };
+        let pressure_durations = HashMap::from([(2_i64, 54_i64)]);
+
+        apply_batch_payload(&conn, &payload, Some(&pressure_durations)).unwrap();
+        apply_batch_payload(&conn, &payload, Some(&pressure_durations)).unwrap();
+
+        let attempts: Vec<(i64, i64)> = conn
+            .prepare("SELECT question_id,duration_seconds FROM attempts ORDER BY question_id")
+            .unwrap()
+            .query_map([], |row| Ok((row.get(0)?, row.get(1)?)))
+            .unwrap()
+            .collect::<Result<_, _>>()
+            .unwrap();
+        assert_eq!(attempts, vec![(1, 87), (2, 54)]);
+        let markers: i64 = conn
+            .query_row("SELECT COUNT(*) FROM codex_batch_applications", [], |row| row.get(0))
+            .unwrap();
+        assert_eq!(markers, 2);
+        let signals: i64 = conn
+            .query_row("SELECT COUNT(*) FROM codex_analysis_signals", [], |row| row.get(0))
+            .unwrap();
+        assert_eq!(signals, 2);
+        let review_counts: i64 = conn
+            .query_row("SELECT SUM(review_count) FROM progress", [], |row| row.get(0))
+            .unwrap();
+        assert_eq!(review_counts, 2);
+    }
+
+    #[test]
+    fn pressure_batch_report_is_partial_and_keeps_uncertain_diagnosis() {
+        let main = Connection::open_in_memory().unwrap();
+        init_schema(&main).unwrap();
+        insert_test_question(&main, 1, "高等数学");
+        insert_test_question(&main, 2, "高等数学");
+        insert_test_question(&main, 3, "高等数学");
+        let supplemental = Connection::open_in_memory().unwrap();
+        init_supplemental_schema(&supplemental).unwrap();
+        supplemental
+            .execute(
+                "INSERT INTO pressure_sessions(session_id,question_ids,start_time,status,task_id,created_at) VALUES('p-report','[1,2,3]',1,'awaiting_codex','SB-BATCH-REPORT',1)",
+                [],
+            )
+            .unwrap();
+        for (question_id, duration) in [(1, 40), (2, 50), (3, 60)] {
+            supplemental
+                .execute(
+                    "INSERT INTO pressure_answers(session_id,question_id,user_answer,duration,submit_time) VALUES('p-report',?1,'',?2,2)",
+                    params![question_id, duration],
+                )
+                .unwrap();
+        }
+        let payload = CodexPayload {
+            schema_version: 1,
+            kind: "batch".into(),
+            task_id: "SB-BATCH-REPORT".into(),
+            question_id: None,
+            summary: "部分批改".into(),
+            verdict: None,
+            earliest_error: None,
+            error_tags: vec![],
+            weakness_tags: vec![],
+            advice: None,
+            better_solution: None,
+            confidence: 0.9,
+            recommended_question_ids: vec![],
+            recommendation_reason: None,
+            paper_title: None,
+            paper_attempts: vec![],
+            batch_attempts: vec![
+                BatchAttempt {
+                    question_id: 1,
+                    result: "correct".into(),
+                    self_rating: 4,
+                    duration_seconds: 0,
+                    summary: "方法正确".into(),
+                    verdict: Some("correct".into()),
+                    earliest_error: None,
+                    error_tags: vec![],
+                    weakness_tags: vec![],
+                    advice: None,
+                    better_solution: Some("利用行列式展开的更简洁路线".into()),
+                    confidence: 0.96,
+                    ..Default::default()
+                },
+                BatchAttempt {
+                    question_id: 2,
+                    result: "uncertain".into(),
+                    self_rating: 2,
+                    duration_seconds: 0,
+                    summary: "草稿不完整".into(),
+                    verdict: Some("uncertain".into()),
+                    earliest_error: None,
+                    error_tags: vec!["信息不足".into()],
+                    weakness_tags: vec![],
+                    advice: Some("补拍完整草稿".into()),
+                    better_solution: None,
+                    confidence: 0.2,
+                    ..Default::default()
+                },
+            ],
+            ..Default::default()
+        };
+
+        let context = match pressure_task_match(&supplemental, &payload.task_id).unwrap() {
+            PressureTaskMatch::Current(context) => context,
+            _ => panic!("expected current pressure task"),
+        };
+        apply_batch_payload(&main, &payload, Some(&context.durations)).unwrap();
+        let status = save_pressure_batch_report(&supplemental, &context, &payload).unwrap();
+        assert_eq!(status, "graded_partial");
+        let report_json: String = supplemental
+            .query_row(
+                "SELECT report_json FROM pressure_reports WHERE session_id='p-report'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        let report: serde_json::Value = serde_json::from_str(&report_json).unwrap();
+        assert_eq!(
+            report["grades"][0]["betterSolution"],
+            "利用行列式展开的更简洁路线"
+        );
+
+        let stored_status: String = supplemental
+            .query_row(
+                "SELECT status FROM pressure_sessions WHERE session_id='p-report'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(stored_status, "graded_partial");
+        let report_raw: String = supplemental
+            .query_row(
+                "SELECT report_json FROM pressure_reports WHERE session_id='p-report'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        let report: Value = serde_json::from_str(&report_raw).unwrap();
+        assert_eq!(report["status"], "graded_partial");
+        assert_eq!(report["ungradedQuestionIds"], json!([3]));
+        assert_eq!(report["summary"]["uncertainCount"], 1);
+        assert_eq!(report["summary"]["totalDuration"], 150);
+        assert_eq!(report["grades"][0]["duration"], 40);
+        assert_eq!(report["grades"][1]["duration"], 50);
+
+        let attempts: i64 = main
+            .query_row("SELECT COUNT(*) FROM attempts", [], |row| row.get(0))
+            .unwrap();
+        assert_eq!(attempts, 1);
+        let uncertain_attempts: i64 = main
+            .query_row("SELECT COUNT(*) FROM attempts WHERE question_id=2", [], |row| row.get(0))
+            .unwrap();
+        assert_eq!(uncertain_attempts, 0);
+        let uncertain_signals: i64 = main
+            .query_row(
+                "SELECT COUNT(*) FROM codex_analysis_signals WHERE question_id=2",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(uncertain_signals, 1);
+    }
+
+    #[test]
+    fn latest_attempt_duration_fallback_uses_attempted_at() {
+        let conn = Connection::open_in_memory().unwrap();
+        init_schema(&conn).unwrap();
+        insert_test_question(&conn, 1, "高等数学");
+        conn.execute(
+            "INSERT INTO attempts(question_id,attempted_at,duration_seconds,result,self_rating,mode) VALUES(1,'2026-08-20T10:00:00+08:00',73,'correct',3,'paper')",
+            [],
+        )
+        .unwrap();
+        assert_eq!(latest_attempt_duration(&conn, 1).unwrap(), Some(73));
+        assert_eq!(latest_attempt_duration(&conn, 999).unwrap(), None);
+    }
+
+    #[test]
+    fn pressure_task_retry_rejects_old_task_and_accepts_latest() {
+        let supplemental = Connection::open_in_memory().unwrap();
+        init_supplemental_schema(&supplemental).unwrap();
+        supplemental
+            .execute(
+                "INSERT INTO pressure_sessions(session_id,question_ids,start_time,status,created_at) VALUES('p-retry','[1]',1,'awaiting_codex',1)",
+                [],
+            )
+            .unwrap();
+        attach_pressure_task_row(&supplemental, "p-retry", "SB-BATCH-OLD").unwrap();
+        attach_pressure_task_row(&supplemental, "p-retry", "SB-BATCH-NEW").unwrap();
+
+        match pressure_task_match(&supplemental, "SB-BATCH-OLD").unwrap() {
+            PressureTaskMatch::Stale {
+                session_id,
+                current_task_id,
+            } => {
+                assert_eq!(session_id, "p-retry");
+                assert_eq!(current_task_id.as_deref(), Some("SB-BATCH-NEW"));
+            }
+            _ => panic!("old task should be stale"),
+        }
+        assert!(matches!(
+            pressure_task_match(&supplemental, "SB-BATCH-NEW").unwrap(),
+            PressureTaskMatch::Current(_)
+        ));
+        assert!(attach_pressure_task_row(&supplemental, "missing", "SB-BATCH-X").is_err());
+    }
+
+    #[test]
+    fn complete_pressure_batch_report_marks_session_graded() {
+        let supplemental = Connection::open_in_memory().unwrap();
+        init_supplemental_schema(&supplemental).unwrap();
+        supplemental
+            .execute(
+                "INSERT INTO pressure_sessions(session_id,question_ids,start_time,status,task_id,created_at) VALUES('p-full','[1]',1,'awaiting_codex','SB-BATCH-FULL',1)",
+                [],
+            )
+            .unwrap();
+        supplemental
+            .execute(
+                "INSERT INTO pressure_answers(session_id,question_id,user_answer,duration,submit_time) VALUES('p-full',1,'',35,2)",
+                [],
+            )
+            .unwrap();
+        let payload = CodexPayload {
+            schema_version: 1,
+            kind: "batch".into(),
+            task_id: "SB-BATCH-FULL".into(),
+            question_id: None,
+            summary: "完整批改".into(),
+            verdict: None,
+            earliest_error: None,
+            error_tags: vec![],
+            weakness_tags: vec![],
+            advice: None,
+            better_solution: None,
+            confidence: 0.9,
+            recommended_question_ids: vec![],
+            recommendation_reason: None,
+            paper_title: None,
+            paper_attempts: vec![],
+            batch_attempts: vec![BatchAttempt {
+                question_id: 1,
+                result: "correct".into(),
+                self_rating: 3,
+                duration_seconds: 35,
+                summary: "正确".into(),
+                verdict: Some("correct".into()),
+                earliest_error: None,
+                error_tags: vec![],
+                weakness_tags: vec![],
+                advice: None,
+                better_solution: None,
+                confidence: 0.9,
+                ..Default::default()
+            }],
+            ..Default::default()
+        };
+        let context = match pressure_task_match(&supplemental, &payload.task_id).unwrap() {
+            PressureTaskMatch::Current(context) => context,
+            _ => panic!("expected current pressure task"),
+        };
+        assert_eq!(
+            save_pressure_batch_report(&supplemental, &context, &payload).unwrap(),
+            "graded"
+        );
+        let status: String = supplemental
+            .query_row(
+                "SELECT status FROM pressure_sessions WHERE session_id='p-full'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(status, "graded");
     }
 
     #[test]
@@ -5164,6 +7545,10 @@ mod tests {
                 confidence: Some(0.95),
                 session_id: Some("session-test-01".into()),
                 diagnosis_id: None,
+                ai_rating: None,
+                difficulty_multiplier: None,
+                technique_level: None,
+                dimensions: None,
             },
         )
         .unwrap();
@@ -5217,6 +7602,10 @@ mod tests {
                 confidence: None,
                 session_id: None,
                 diagnosis_id: None,
+                ai_rating: None,
+                difficulty_multiplier: None,
+                technique_level: None,
+                dimensions: None,
             },
         )
         .unwrap();
@@ -5366,5 +7755,42 @@ mod tests {
         assert!(error.contains("settings"));
 
         fs::remove_dir_all(&temp_dir).unwrap();
+    }
+
+    #[test]
+    fn batch_prompt_includes_timing_information_and_diagnosis_instructions() {
+        let question = Question {
+            id: 101,
+            stem: "测试题干1".to_string(),
+            options: vec![],
+            correct_answer: "A".to_string(),
+            explanation: "测试解析".to_string(),
+            source: "测试源".to_string(),
+            question_type: "single_choice".to_string(),
+            category_path: "测试分类".to_string(),
+            image_paths: vec![],
+            is_core: false,
+            difficulty: 1,
+            favorite: false,
+            attempts: 1,
+            accuracy: Some(1.0),
+            mastery: Some(100),
+            next_review: None,
+            note: None,
+        };
+
+        let mut durations = HashMap::new();
+        durations.insert(101, 90); // 1分30秒
+
+        let prompt = build_codex_batch_task_prompt(
+            "SB-BATCH-20260819-0001",
+            &[question],
+            Some(&durations),
+            "C:/dummy/output.json",
+        );
+
+        assert!(prompt.contains("1分30秒"));
+        assert!(prompt.contains("极速秒杀"));
+        assert!(prompt.contains("熟练度与节奏诊断"));
     }
 }

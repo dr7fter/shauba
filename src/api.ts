@@ -1,6 +1,6 @@
 import { invoke } from '@tauri-apps/api/core'
 import { mockBootstrap, mockCategories, mockInbox, mockMastery, mockQuestions, mockRecommendations } from './mock'
-import type { BootstrapData, CategoryNode, CodexTask, DailyLog, DailyTrendPoint, EloStatus, TagClosure, ExportResult, FailedInboxItem, InboxItem, InboxSummary, InsightPoint, MasteryChapter, MasteryNode, PracticeSessionState, Question, QuestionPage, RatingDistribution, RecommendationBatch, RecommendedQuestion, ReviewHistory, ReviewPlan, SeasonStatus, SessionScoreboard, UserStreak, WeaknessRadar, PressureSession, GradingReport, MistakeFilters, MistakeItem, ReportCard } from './types'
+import type { BootstrapData, CategoryNode, CodexTask, DailyLog, DailyTrendPoint, EloStatus, TagClosure, ExportResult, FailedInboxItem, InboxItem, InboxSummary, InsightPoint, MasteryChapter, MasteryNode, PracticeSessionState, Question, QuestionPage, RatingDistribution, RecommendationBatch, RecommendedQuestion, ReviewHistory, ReviewPlan, SeasonStatus, SessionScoreboard, UserStreak, WeaknessRadar, PressureSession, GradingReport } from './types'
 import { createPracticeSessionPayload } from './domain/evidence'
 
 const isTauri = () => '__TAURI_INTERNALS__' in window
@@ -254,18 +254,6 @@ export async function startRecommendationBatch(taskId: string): Promise<Recommen
 
 export async function dismissRecommendationBatch(taskId: string): Promise<void> {
   if (isTauri()) await invoke('dismiss_recommendation_batch', { taskId })
-}
-
-export async function getMistakeList(filters: MistakeFilters): Promise<MistakeItem[]> {
-  return isTauri() ? invoke('get_mistake_list', { filters }) : []
-}
-
-export async function getReportWall(limit?: number): Promise<ReportCard[]> {
-  return isTauri() ? invoke('get_report_wall', { limit }) : []
-}
-
-export async function markMistakeRedone(questionId: number): Promise<void> {
-  if (isTauri()) await invoke('mark_mistake_redone', { questionId })
 }
 
 export async function createCodexTask(questionId: number): Promise<CodexTask> {

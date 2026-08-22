@@ -7,6 +7,7 @@ import {
   ChevronDown,
   Clock3,
   Command,
+  Compass,
   HelpCircle,
   LibraryBig,
   ListPlus,
@@ -18,6 +19,7 @@ import {
   RotateCcw,
   Settings,
   Target,
+  TimerReset,
   Trash2,
   X,
   Zap,
@@ -31,12 +33,15 @@ import {
   getMasteryMap,
   getPressureGradingReport,
   getQuestion,
+  getRecommendations,
   getReviewQueue,
   getStreak,
   getVariantQueue,
   listPressureSessions,
   loadPracticeSession,
   refreshInbox,
+  searchQuestionPage,
+  startRecommendationBatch,
 } from './api'
 import { BlitzExamModal } from './components/BlitzExamModal'
 import { FormulaDrawer } from './components/FormulaDrawer'
@@ -55,19 +60,19 @@ import type {
   RecommendedQuestion,
   View,
 } from './types'
-import { InsightsView as DataView } from './views/DataView'
+import { InsightsView } from './views/InsightsView'
 import { LibraryView } from './views/LibraryView'
-import { TodayView as TrainingView } from './views/TrainingView'
-import { ReviewCenterView } from './views/ReviewCenterView'
-import { ReviewMapView as IntervalReviewView } from './views/IntervalReviewView'
-import { MoreMenuView } from './views/MoreMenuView'
+import { MasteryMapView } from './views/MasteryMapView'
+import { ReviewMapView } from './views/ReviewView'
 import { SettingsView } from './views/SettingsView'
+import { TodayView } from './views/TodayView'
 
 const navItems: Array<{ id: View; label: string; icon: typeof BookOpen }> = [
-  { id: 'train', label: '训练', icon: Zap },
-  { id: 'review', label: '复盘', icon: BookOpen },
-  { id: 'data', label: '数据', icon: BarChart3 },
-  { id: 'more', label: '更多', icon: Settings },
+  { id: 'today', label: '今日', icon: Zap },
+  { id: 'insights', label: '数据', icon: BarChart3 },
+  { id: 'review', label: '复盘', icon: TimerReset },
+  { id: 'mastery', label: '地图', icon: Compass },
+  { id: 'library', label: '题库', icon: LibraryBig },
 ]
 
 function LoadingScreen() {
@@ -391,7 +396,7 @@ export default function App() {
   const [streak, setStreak] = useState<{ currentStreak: number; bestStreak: number } | null>(
     null
   )
-  const [view, setView] = useState<View>('train')
+  const [view, setView] = useState<View>('today')
   const [loading, setLoading] = useState(true)
   const [notice, setNotice] = useState('')
   const [practiceQueue, setPracticeQueue] = useState<RecommendedQuestion[] | null>(null)
@@ -430,6 +435,9 @@ export default function App() {
   })
   const [masteryChapters, setMasteryChapters] = useState<MasteryChapter[]>([])
   const [activeQuestion, setActiveQuestion] = useState<Question | null>(null)
+  const [insightsInitialTab, setInsightsInitialTab] = useState<'overview' | 'inbox'>(
+    'overview'
+  )
   const [pressureReport, setPressureReport] = useState<GradingReport | null>(null)
   const [pressureReportSession, setPressureReportSession] =
     useState<PressureSession | null>(null)
@@ -463,7 +471,7 @@ export default function App() {
   }, [reducedMotion])
 
   useEffect(() => {
-    if (view !== 'train') setPracticeStartIndex(0)
+    if (view !== 'today') setPracticeStartIndex(0)
   }, [view])
 
   const refresh = useCallback(async () => {
@@ -550,7 +558,6 @@ export default function App() {
       .catch(() => {})
   }, [])
 
-  /* Unused for now - may be needed when DataView is fully implemented
   const startRecommendedBatch = useCallback(async (taskId: string) => {
     try {
       await startRecommendationBatch(taskId)
@@ -558,14 +565,13 @@ export default function App() {
       setPracticeQueue(queue)
       setAttemptMode('paper')
       setData(nextData)
-      setView('train')
+      setView('today')
       setNotice('已开始 AI 题组，已进入今日训练')
     } catch (error) {
       setNotice(`无法开始 AI 题组：${String(error)}`)
       throw error
     }
   }, [])
-  */
 
   const startReview = useCallback(async () => {
     try {
@@ -576,7 +582,7 @@ export default function App() {
       }
       setPracticeQueue(queue)
       setAttemptMode('review')
-      setView('train')
+      setView('today')
       setNotice(`已进入错题复习，共 ${queue.length} 道`)
     } catch (error) {
       setNotice(`无法加载复习队列：${String(error)}`)
@@ -592,14 +598,13 @@ export default function App() {
       }
       setPracticeQueue(queue)
       setAttemptMode('paper')
-      setView('train')
+      setView('today')
       setNotice(`已调出该考点 3 道同类变式题，开始攻坚训练`)
     } catch (error) {
       setNotice(`加载变式题失败：${String(error)}`)
     }
   }, [])
 
-  /* Unused for now - may be needed when DataView is fully implemented
   const startTagPractice = useCallback(async (tagName: string) => {
     try {
       const page = await searchQuestionPage({
@@ -620,7 +625,7 @@ export default function App() {
           }))
         )
         setAttemptMode('paper')
-        setView('train')
+        setView('today')
         setNotice(`已调出「${tagName}」3 道针对性攻坚题，进入今日训练`)
       } else {
         setNotice(
@@ -631,7 +636,6 @@ export default function App() {
       setNotice(`发起针对性练习失败：${String(error)}`)
     }
   }, [])
-  */
 
   // Global shortcuts: Ctrl+K (command), Alt+F (formula), Alt+Z (zen), ?/F1 (help), Esc (close)
   useEffect(() => {
@@ -710,7 +714,7 @@ export default function App() {
       }))
     )
     setAttemptMode('paper')
-    setView('train')
+    setView('today')
     setNotice('⚡ 15 分钟真题闪击战已开始！计时进行中...')
   }, [data])
 
@@ -722,11 +726,11 @@ export default function App() {
   const commandActions = useMemo<CommandAction[]>(
     () => [
       {
-        id: 'view-train',
-        label: '跳转到训练',
+        id: 'view-today',
+        label: '跳转到今日训练',
         hint: '视图',
         icon: Zap,
-        run: () => setView('train'),
+        run: () => setView('today'),
       },
       {
         id: 'view-library',
@@ -739,22 +743,22 @@ export default function App() {
         id: 'view-review',
         label: '跳转到复盘',
         hint: '视图',
-        icon: BookOpen,
+        icon: TimerReset,
         run: () => setView('review'),
       },
       {
-        id: 'view-data',
+        id: 'view-mastery',
+        label: '跳转到掌握度地图',
+        hint: '视图',
+        icon: Compass,
+        run: () => setView('mastery'),
+      },
+      {
+        id: 'view-insights',
         label: '跳转到数据',
         hint: '视图',
         icon: BarChart3,
-        run: () => setView('data'),
-      },
-      {
-        id: 'view-more',
-        label: '跳转到更多',
-        hint: '视图',
-        icon: Settings,
-        run: () => setView('more'),
+        run: () => setView('insights'),
       },
       {
         id: 'view-settings',
@@ -850,8 +854,8 @@ export default function App() {
             exit={{ opacity: 0, y: -5 }}
             transition={{ duration: 0.18 }}
           >
-            {data && view === 'train' && (
-              <TrainingView
+            {data && view === 'today' && (
+              <TodayView
                 key={practiceSessionRevision}
                 data={data}
                 initialQueue={practiceQueue}
@@ -872,45 +876,6 @@ export default function App() {
                 pressureReportLoading={pressureReportLoading}
               />
             )}
-            {view === 'review' && (
-              <ReviewCenterView
-                key="review"
-                notify={setNotice}
-                onStartTraining={async (questionIds: number[]) => {
-                  try {
-                    for (const id of questionIds) {
-                      await addToCustomQueue(id)
-                    }
-                    await refresh()
-                    setView('train')
-                    setNotice(`已加载 ${questionIds.length} 道题到训练队列`)
-                  } catch (error) {
-                    setNotice(`加载失败：${String(error)}`)
-                  }
-                }}
-                onOpenPressureReport={(id: string) =>
-                  openPressureReport(id.startsWith('SB-') ? { taskId: id } : { sessionId: id })
-                }
-              />
-            )}
-            {view === 'data' && data && (
-              <DataView
-                key="data"
-                data={data}
-                refresh={refresh}
-                notify={setNotice}
-                onOpenPressureReport={(id: string) =>
-                  openPressureReport(id.startsWith('SB-') ? { taskId: id } : { sessionId: id })
-                }
-                onStartVariant={startVariantPractice}
-              />
-            )}
-            {view === 'more' && (
-              <MoreMenuView
-                key="more"
-                onNavigate={(targetView) => setView(targetView as View)}
-              />
-            )}
             {view === 'library' && data && (
               <LibraryView
                 data={data}
@@ -928,17 +893,17 @@ export default function App() {
                     }))
                   )
                   setAttemptMode('paper')
-                  setView('train')
+                  setView('today')
                 }}
                 onPracticeFocus={(queue) => {
                   setPracticeQueue(queue ?? null)
                   setAttemptMode('paper')
-                  setView('train')
+                  setView('today')
                 }}
               />
             )}
-            {data && view === 'interval-review' && (
-              <IntervalReviewView
+            {data && view === 'review' && (
+              <ReviewMapView
                 due={data.dueCount}
                 inboxCount={data.inboxCount}
                 intervals={data.reviewIntervals}
@@ -949,7 +914,7 @@ export default function App() {
                   setLibraryStatus('wrong')
                   setView('library')
                 }}
-                onPractice={(question: Question) => {
+                onPractice={(question) => {
                   setPracticeQueue([
                     {
                       question,
@@ -959,12 +924,12 @@ export default function App() {
                     },
                   ])
                   setAttemptMode('review')
-                  setView('train')
+                  setView('today')
                   setNotice(`已打开题目 #${question.id}`)
                 }}
-                onPracticeBatch={(questions: Question[], reason: string) => {
+                onPracticeBatch={(questions, reason) => {
                   setPracticeQueue(
-                    questions.map((q: Question) => ({
+                    questions.map((q) => ({
                       question: q,
                       score: 100,
                       reason,
@@ -972,13 +937,69 @@ export default function App() {
                     }))
                   )
                   setAttemptMode('review')
-                  setView('train')
+                  setView('today')
                   setNotice(`已调出 ${questions.length} 道错题开始专项攻坚`)
                 }}
                 onStartVariant={startVariantPractice}
                 onOpenInbox={() => {
-                  setView('data')
+                  setInsightsInitialTab('inbox')
+                  setView('insights')
                 }}
+              />
+            )}
+            {data && view === 'mastery' && (
+              <MasteryMapView
+                notify={setNotice}
+                onPractice={(question) => {
+                  setPracticeQueue([
+                    {
+                      question,
+                      score: 100,
+                      reason: '从掌握度地图调出练习',
+                      reasonCode: 'custom',
+                    },
+                  ])
+                  setAttemptMode('paper')
+                  setView('today')
+                  setNotice(`已调出题目 #${question.id}`)
+                }}
+                onPracticeBatch={(questions, reason) => {
+                  setPracticeQueue(
+                    questions.map((q) => ({
+                      question: q,
+                      score: 100,
+                      reason,
+                      reasonCode: 'custom',
+                    }))
+                  )
+                  setAttemptMode('paper')
+                  setView('today')
+                  setNotice(`已调出 ${questions.length} 道题目开始专项攻坚`)
+                }}
+                onStartVariant={startVariantPractice}
+                onAddToQueue={async (questionId) => {
+                  try {
+                    await addToCustomQueue(questionId)
+                    await refresh()
+                    setNotice(`已加入训练队列 #${questionId}`)
+                  } catch (e) {
+                    setNotice(`加入队列失败: ${String(e)}`)
+                  }
+                }}
+              />
+            )}
+            {data && view === 'insights' && (
+              <InsightsView
+                data={data}
+                refresh={refresh}
+                onStartTagPractice={startTagPractice}
+                onStartRecommendation={startRecommendedBatch}
+                onStartVariant={startVariantPractice}
+                initialTab={insightsInitialTab}
+                notify={setNotice}
+                onOpenPressureReport={(id) =>
+                  openPressureReport(id.startsWith('SB-') ? { taskId: id } : { sessionId: id })
+                }
               />
             )}
             {data && view === 'settings' && (
@@ -993,12 +1014,6 @@ export default function App() {
                 onReducedMotionChange={setReducedMotion}
                 notify={setNotice}
                 onOpenHelp={() => setKeyboardHelpOpen(true)}
-              />
-            )}
-            {view === 'help' && (
-              <KeyboardHelpModal
-                open={true}
-                onClose={() => setView('train')}
               />
             )}
           </motion.div>
@@ -1093,7 +1108,7 @@ export default function App() {
                   setPracticeSessionRevision((revision) => revision + 1)
                   setAttemptMode(sessionToRestore.attemptMode)
                   setSessionToRestore(null)
-                  setView('train')
+                  setView('today')
                   setNotice(
                     `已为你恢复未完成练习（剩余 ${sessionToRestore.queue.length} 题）`
                   )

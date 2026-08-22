@@ -49,11 +49,11 @@ export function SettingsView({
   const [restoringPath, setRestoringPath] = useState<string | null>(null)
   const [audioMuted, setAudioMutedState] = useState(() => isAudioMuted())
   const [season, setSeason] = useState<SeasonStatus | null>(null)
-  const [libraryPath, setLibraryPath] = useState('')
+  const [libraryPathInput, setLibraryPathInput] = useState('')
 
   useEffect(() => {
     void getSeasonStatus().then(setSeason).catch(() => undefined)
-    void getLibraryPath().then(setLibraryPath).catch(() => undefined)
+    void getLibraryPath().then(setLibraryPathInput).catch(() => undefined)
   }, [])
 
   const loadBackups = useCallback(async () => {
@@ -131,8 +131,8 @@ export function SettingsView({
         <div className="setting-control">
           <input
             type="text"
-            value={libraryPath}
-            onChange={(e) => setLibraryPath(e.target.value)}
+            value={libraryPathInput}
+            onChange={(e) => setLibraryPathInput(e.target.value)}
             placeholder="E:\考研资料\题库-大观园"
             style={{ flex: 1, minWidth: 220, padding: '6px 10px', borderRadius: 8, border: '1px solid var(--line)', background: 'var(--surface)' }}
           />
@@ -140,7 +140,7 @@ export function SettingsView({
             type="button"
             className="secondary-button"
             onClick={() => {
-              void setLibraryPath(libraryPath.trim())
+              void setLibraryPath(libraryPathInput.trim())
                 .then(() => notify('题库目录已更新，将按哈希增量同步'))
                 .catch((e) => notify(`更新失败：${String(e)}`))
             }}

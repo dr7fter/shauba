@@ -1636,6 +1636,20 @@ fn apply_analysis_rating_to_latest_attempt(
     let Some(target_id) = target_id else {
         return Ok(());
     };
+    // 幂等保护：确认与启动回放都会走到这里，评分未变化时直接跳过，
+    // 避免 backfill_confirmed_analysis_signals 每次启动重复回补 ELO。
+    let applied = clamp_ai_rating(rating);
+    let existing_rating: Option<Option<f64>> = conn
+        .query_row(
+            "SELECT ai_rating FROM attempts WHERE id=?1",
+            [target_id],
+            |r| r.get(0),
+        )
+        .optional()
+        .map_err(|e| e.to_string())?;
+    if existing_rating == Some(Some(applied)) {
+        return Ok(());
+    }
     conn.execute(
         "UPDATE attempts
          SET ai_rating=?1,
@@ -1643,13 +1657,51 @@ fn apply_analysis_rating_to_latest_attempt(
              diagnosis_id=COALESCE(diagnosis_id, ?3)
          WHERE id=?4",
         params![
-            clamp_ai_rating(rating),
+            applied,
             Some(payload.confidence.clamp(0.0, 1.0)),
             payload.task_id,
             target_id,
         ],
     )
     .map_err(|e| e.to_string())?;
+    // 裁判复核：Codex 评分与原结算分不一致时，按差额回补一条复核事件
+    let settled: Option<(f64, f64)> = conn
+        .query_row(
+            "SELECT performance, expected FROM elo_events
+             WHERE attempt_id=?1 AND reason='match' ORDER BY id DESC LIMIT 1",
+            [target_id],
+            |r| Ok((r.get(0)?, r.get(1)?)),
+        )
+        .optional()
+        .map_err(|e| e.to_string())?;
+    if let Some((old_performance, expected)) = settled {
+        let correction = applied - old_performance;
+        if correction.abs() >= 0.02 {
+            let (settlements, current) = current_elo(conn)?;
+            let k = if settlements < ELO_CALIBRATION_SETTLEMENTS {
+                ELO_K_CALIBRATION
+            } else {
+                ELO_K
+            };
+            let delta = (k * correction / services::rating::RATING_MAX).round();
+            if delta != 0.0 {
+                conn.execute(
+                    "INSERT INTO elo_events(attempt_id,question_id,delta,rating_after,performance,expected,created_at,session_id,reason)
+                     VALUES(?1,?2,?3,?4,?5,?6,?7,NULL,'codex_review')",
+                    params![
+                        target_id,
+                        question_id,
+                        delta,
+                        (current + delta).max(0.0),
+                        applied,
+                        expected,
+                        Local::now().to_rfc3339(),
+                    ],
+                )
+                .map_err(|e| e.to_string())?;
+            }
+        }
+    }
     Ok(())
 }
 
@@ -4293,6 +4345,9 @@ struct EloStatus {
     settlements: i64,
     calibrated: bool,
     last_delta: Option<f64>,
+    /// 连续同向结算数：正为连胜，负为连败，0 为无
+    streak: i64,
+    protection_left: i64,
     history: Vec<EloHistoryPoint>,
 }
 
@@ -4302,20 +4357,24 @@ fn get_elo_status(state: State<AppState>) -> Result<EloStatus, String> {
     let (settlements, current) = current_elo(&conn)?;
     let last_delta: Option<f64> = conn
         .query_row(
-            "SELECT delta FROM elo_events ORDER BY id DESC LIMIT 1",
+            "SELECT delta FROM elo_events WHERE reason='match' ORDER BY id DESC LIMIT 1",
             [],
             |r| r.get(0),
         )
         .optional()
         .map_err(|e| e.to_string())?;
     let mut stmt = conn
-        .prepare("SELECT substr(created_at,1,10), rating_after FROM elo_events ORDER BY id ASC")
+        .prepare(
+            "SELECT substr(created_at,1,10), rating_after FROM elo_events
+             WHERE reason<>'season_reset' ORDER BY id ASC",
+        )
         .map_err(|e| e.to_string())?;
     let rows = stmt
         .query_map([], |r| Ok((r.get::<_, String>(0)?, r.get::<_, f64>(1)?)))
         .map_err(|e| e.to_string())?
         .collect::<Result<Vec<_>, _>>()
         .map_err(|e| e.to_string())?;
+    drop(stmt);
     let mut history: Vec<EloHistoryPoint> = Vec::new();
     for (date, rating) in rows {
         match history.last_mut() {
@@ -4323,11 +4382,38 @@ fn get_elo_status(state: State<AppState>) -> Result<EloStatus, String> {
             _ => history.push(EloHistoryPoint { date, rating }),
         }
     }
+    // 连胜/连败计数（只看正常结算事件）
+    let mut streak_stmt = conn
+        .prepare("SELECT delta FROM elo_events WHERE reason='match' ORDER BY id DESC LIMIT 6")
+        .map_err(|e| e.to_string())?;
+    let recent: Vec<f64> = streak_stmt
+        .query_map([], |r| r.get(0))
+        .map_err(|e| e.to_string())?
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|e| e.to_string())?;
+    drop(streak_stmt);
+    let mut streak = 0i64;
+    if let Some(&head) = recent.first() {
+        if head != 0.0 {
+            for value in &recent {
+                if value.signum() == head.signum() {
+                    streak += i64::from(head > 0.0) - i64::from(head < 0.0);
+                } else {
+                    break;
+                }
+            }
+        }
+    }
+    let protection_left: i64 = setting(&conn, "elo_protection_left", "0")
+        .parse()
+        .unwrap_or(0);
     Ok(EloStatus {
         current,
         settlements,
         calibrated: settlements >= ELO_CALIBRATION_SETTLEMENTS,
         last_delta,
+        streak,
+        protection_left,
         history,
     })
 }

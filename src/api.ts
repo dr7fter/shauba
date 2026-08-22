@@ -19,7 +19,7 @@ export async function getRecommendations(limit = 12): Promise<RecommendedQuestio
 
 export async function getEloStatus(): Promise<EloStatus> {
   if (isTauri()) return invoke('get_elo_status')
-  return { current: 10000, settlements: 0, calibrated: false, lastDelta: null, history: [] }
+  return { current: 1400, settlements: 0, calibrated: false, lastDelta: null, streak: 0, protectionLeft: 0, history: [] }
 }
 
 export async function getSessionScoreboard(sessionId: string | null): Promise<SessionScoreboard> {

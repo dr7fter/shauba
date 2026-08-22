@@ -10,6 +10,7 @@ import {
   ClipboardCheck,
   Clock3,
   FolderSearch,
+  Flame,
   Heart,
   HelpCircle,
   History,
@@ -175,6 +176,10 @@ export function TodayView({
     current: number
     rankName: string
     rankColor: string
+    streak: number
+    protectionLeft: number
+    calibrated: boolean
+    settlements: number
   } | null>(null)
   const [scoreboard, setScoreboard] = useState<SessionScoreboard | null>(null)
   const [achievementData, setAchievementData] = useState<{
@@ -486,6 +491,10 @@ export function TodayView({
               current: status.current,
               rankName: rank.name,
               rankColor: rank.color,
+              streak: status.streak,
+              protectionLeft: status.protectionLeft,
+              calibrated: status.calibrated,
+              settlements: status.settlements,
             })
             window.setTimeout(() => setEloFlash(null), 4000)
           })
@@ -1752,6 +1761,24 @@ export function TodayView({
               >
                 {eloFlash.delta >= 0 ? `+${Math.round(eloFlash.delta)}` : Math.round(eloFlash.delta)}
               </span>
+              {eloFlash.streak >= 3 && (
+                <span style={{ display: 'inline-flex', alignItems: 'center', gap: 2, fontSize: 12, color: '#E87722', fontWeight: 700 }} title={`连胜 ${eloFlash.streak} 场`}>
+                  <Flame size={13} />{eloFlash.streak}
+                </span>
+              )}
+              {eloFlash.streak <= -3 && (
+                <span style={{ display: 'inline-flex', alignItems: 'center', gap: 2, fontSize: 12, color: '#6B7280', fontWeight: 700 }} title={`连败 ${-eloFlash.streak} 场`}>
+                  ❄{-eloFlash.streak}
+                </span>
+              )}
+              {eloFlash.protectionLeft > 0 && (
+                <span style={{ display: 'inline-flex', alignItems: 'center', gap: 2, fontSize: 12, color: '#4CC38A' }} title={`晋级保护剩余 ${eloFlash.protectionLeft} 场`}>
+                  <ShieldCheck size={13} />
+                </span>
+              )}
+              {!eloFlash.calibrated && (
+                <span style={{ fontSize: 11, color: '#9CA3AF' }}>定级 {Math.min(eloFlash.settlements, 10)}/10</span>
+              )}
             </motion.div>
           )}
         </AnimatePresence>

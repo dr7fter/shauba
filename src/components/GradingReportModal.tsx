@@ -73,13 +73,14 @@ export function PressureLearningReportView({
       ? Math.round(observed.reduce((sum, score) => sum + score, 0) / observed.length)
       : grades.length ? Math.round(grades.reduce((sum, grade) => sum + fallback(grade), 0) / grades.length) : 0
   }
+  // fallback 与后端 HLTV 内核的维度回退口径一致（rigor 75/60/55、impact 类 60/50/40）
   const ratingDimensions = [
-    { label: '严谨性', value: dimensionAverage('rigor', (grade) => gradeTone(grade).key === 'correct' ? 100 : gradeTone(grade).key === 'partial' ? 65 : 30) },
+    { label: '严谨性', value: dimensionAverage('rigor', (grade) => (gradeTone(grade).key === 'correct' ? 75 : gradeTone(grade).key === 'partial' ? 60 : 55)) },
     { label: '计算力', value: dimensionAverage('computation', (grade) => Math.max(1, Math.min(4, grade.selfRating ?? 2)) / 4 * 100) },
     { label: '速度', value: dimensionAverage('speed', (grade) => Math.max(45, Math.min(115, (averageDuration / Math.max(1, grade.duration || averageDuration)) * 100))) },
-    { label: '审题建模', value: dimensionAverage('modeling', (grade) => grade.betterSolution ? 62 : gradeTone(grade).key === 'correct' ? 92 : 72) },
-    { label: '方法使用', value: dimensionAverage('methodUse', (grade) => grade.verdict !== 'uncertain' && grade.result !== 'uncertain' ? 78 : 30) },
-    { label: '策略洞察力', value: dimensionAverage('strategyInsight', (grade) => grade.betterSolution ? 88 : gradeTone(grade).key === 'correct' ? 72 : 50) },
+    { label: '审题建模', value: dimensionAverage('modeling', (grade) => (gradeTone(grade).key === 'correct' ? 60 : gradeTone(grade).key === 'partial' ? 50 : 40)) },
+    { label: '方法使用', value: dimensionAverage('methodUse', (grade) => (gradeTone(grade).key === 'correct' ? 60 : gradeTone(grade).key === 'partial' ? 50 : 40)) },
+    { label: '策略洞察力', value: dimensionAverage('strategyInsight', (grade) => (grade.betterSolution ? 72 : gradeTone(grade).key === 'correct' ? 60 : 50)) },
   ]
   const radarPoint = (index: number, value: number, radius = 78) => {
     const angle = -Math.PI / 2 + (Math.PI * 2 * index) / ratingDimensions.length

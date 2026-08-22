@@ -211,6 +211,9 @@ export type EloStatus = {
   settlements: number
   calibrated: boolean
   lastDelta: number | null
+  /** 正数=连胜次数，负数=连败次数 */
+  streak: number
+  protectionLeft: number
   history: EloHistoryPoint[]
 }
 

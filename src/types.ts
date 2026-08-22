@@ -226,6 +226,41 @@ export type ScoreboardQuestion = {
   impact: number | null
 }
 
+export type MistakeFilters = {
+  chapter?: string
+  tags?: string[]
+  timeRangeDays?: number
+}
+
+export type MistakeItem = {
+  questionId: number
+  stem: string
+  correctAnswer: string
+  categoryPath: string
+  draftBase64: string | null
+  attemptedAt: string
+  durationSeconds: number | null
+  aiRating: number | null
+  earliestError: string | null
+  advice: string | null
+  betterSolution: string | null
+  errorTags: string[]
+  weaknessTags: string[]
+  hasRedone: boolean
+  redoneAt: string | null
+}
+
+export type ReportCard = {
+  sessionId: string
+  createdAt: string
+  questionCount: number
+  accuracy: number
+  avgRating: number | null
+  avgDuration: number | null
+  status: string
+  reportJson: string | null
+}
+
 export type SessionScoreboard = {
   weScore: number | null
   questions: ScoreboardQuestion[]
@@ -518,5 +553,5 @@ export type GradingReport = {
   createdAt: number
 }
 export type FontScaleMode = 'standard' | 'medium' | 'large'
-export type View = 'today' | 'library' | 'review' | 'mastery' | 'insights' | 'settings'
+export type View = 'train' | 'review' | 'data' | 'more' | 'library' | 'interval-review' | 'settings' | 'help'
 export type AttemptMode = 'paper' | 'review'

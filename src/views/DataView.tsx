@@ -1,22 +1,20 @@
-import { AnimatePresence, motion } from 'framer-motion'
+import { motion } from 'framer-motion'
 import {
   ArrowUpRight,
   BarChart3,
   CheckCircle2,
   Clock3,
   FileText,
+  Inbox,
   LoaderCircle,
   RefreshCw,
-  Sparkles,
   XCircle,
 } from 'lucide-react'
 import { useEffect, useMemo, useState } from 'react'
-import { getDailyTrend, getEloStatus, getPressureGradingReport, getRatingDistribution, getTagClosure, getWeaknessRadar, listPressureSessions } from '../api'
+import { getDailyTrend, getEloStatus, getPressureGradingReport, getRatingDistribution, listPressureSessions } from '../api'
 import { CS_RATING_MAX, CS_RATING_MIN, averageCsRating, csRankForElo, csRatingTone, deriveGradeCsRating, formatElapsed } from '../utils'
+import type { BootstrapData, DailyTrendPoint, EloStatus, GradingReport, PressureSession, RatingDistribution } from '../types'
 import { InboxView } from './InboxView'
-import type { BootstrapData, DailyTrendPoint, EloStatus, GradingReport, PressureSession, RatingDistribution, TagClosure, WeaknessRadar } from '../types'
-
-type DataTab = 'overview' | 'matches' | 'mistakes' | 'inbox'
 
 /** 职业选手风格的单维评级：与报告页 S/A/B/C/D 一致 */
 function dimensionGrade(value: number | null): string {
@@ -67,38 +65,28 @@ function resultFor(report: GradingReport | null, session: PressureSession): 'win
 }
 
 export function InsightsView({
-  data,
-  refresh,
-  onStartTagPractice,
-  onStartRecommendation,
-  onStartVariant,
-  initialTab,
+  data: _data,
+  refresh: _refresh,
   notify,
   onOpenPressureReport,
+  onStartVariant,
+  onJumpToReview,
 }: {
   data: BootstrapData
   refresh: () => void
-  onStartTagPractice: (tagName: string) => void
-  onStartRecommendation?: (taskId: string) => Promise<void>
-  onStartVariant?: (questionId: number) => void
-  initialTab: 'overview' | 'inbox' | 'pressure'
   notify: (text: string) => void
   onOpenPressureReport: (taskId: string) => Promise<boolean>
+  onStartVariant?: (questionId: number) => void
+  onJumpToReview?: () => void
 }) {
-  const [tab, setTab] = useState<DataTab>(initialTab === 'inbox' ? 'inbox' : 'overview')
+  const [activeTab, setActiveTab] = useState<'insights' | 'inbox'>('insights')
   const [distribution, setDistribution] = useState<RatingDistribution | null>(null)
   const [elo, setElo] = useState<EloStatus | null>(null)
-  const [weakness, setWeakness] = useState<WeaknessRadar | null>(null)
-  const [tagClosure, setTagClosure] = useState<TagClosure[]>([])
 
   useEffect(() => {
     void getRatingDistribution().then(setDistribution).catch(() => undefined)
     void getEloStatus().then(setElo).catch(() => undefined)
-    void getTagClosure().then(setTagClosure).catch(() => undefined)
   }, [])
-  useEffect(() => {
-    if (tab === 'mistakes' && !weakness) void getWeaknessRadar().then(setWeakness).catch(() => undefined)
-  }, [tab, weakness])
   const [trend, setTrend] = useState<DailyTrendPoint[]>([])
   const [sessions, setSessions] = useState<PressureSession[]>([])
   const [reports, setReports] = useState<Record<string, GradingReport | null>>({})
@@ -129,12 +117,8 @@ export function InsightsView({
   }
 
   useEffect(() => {
-    setTab(initialTab === 'inbox' ? 'inbox' : 'overview')
-  }, [initialTab])
-
-  useEffect(() => {
-    if (tab === 'matches') void loadData()
-  }, [tab])
+    void loadData()
+  }, [])
 
   const ratedSessions = useMemo(
     () => sessions.map((session) => averageReportRating(reports[session.sessionId])).filter((rating): rating is number => rating !== null),
@@ -153,37 +137,48 @@ export function InsightsView({
 
   return (
     <div className="insights-view data-view">
-      <div className="insights-tabs data-tabs">
-        <div className="segmented">
-          <button className={tab === 'overview' ? 'active' : ''} onClick={() => setTab('overview')}>
-            <BarChart3 size={16} /> 个人数据
-          </button>
-          <button className={tab === 'matches' ? 'active' : ''} onClick={() => setTab('matches')}>
-            <Clock3 size={16} /> 比赛记录
-          </button>
-          <button className={tab === 'mistakes' ? 'active' : ''} onClick={() => setTab('mistakes')}>
-            <XCircle size={16} /> 错题复盘
-          </button>
-          <button className={tab === 'inbox' ? 'active' : ''} onClick={() => setTab('inbox')}>
-            <Sparkles size={16} /> Codex 诊断
-            {data.inboxCount > 0 && <span className="nav-badge">{data.inboxCount}</span>}
-          </button>
-        </div>
+      <div className="data-view-tabs">
+        <button
+          className={activeTab === 'insights' ? 'tab-button active' : 'tab-button'}
+          onClick={() => setActiveTab('insights')}
+        >
+          <BarChart3 size={16} />
+          <span>数据分析</span>
+        </button>
+        <button
+          className={activeTab === 'inbox' ? 'tab-button active' : 'tab-button'}
+          onClick={() => setActiveTab('inbox')}
+        >
+          <Inbox size={16} />
+          <span>Codex 收件箱</span>
+          {_data.inboxCount > 0 && <span className="badge">{_data.inboxCount}</span>}
+        </button>
       </div>
 
-      <AnimatePresence mode="wait">
-        {tab === 'inbox' && onStartRecommendation && onStartVariant ? (
-          <motion.div key="inbox" initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -10 }}>
-            <InboxView
-              notify={notify}
-              refresh={refresh}
-              onStartRecommendation={onStartRecommendation}
-              onStartVariant={onStartVariant}
-              onOpenPressureReport={onOpenPressureReport}
-            />
-          </motion.div>
-        ) : tab === 'overview' ? (
-          <motion.div key="overview" className="matches-view" initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -10 }}>
+      {activeTab === 'inbox' ? (
+        <InboxView
+          notify={notify}
+          refresh={_refresh}
+          onStartRecommendation={async () => {
+            notify('推荐功能暂未实现')
+          }}
+          onStartVariant={(questionId) => {
+            if (onStartVariant) {
+              onStartVariant(questionId)
+            } else {
+              notify(`变式题功能：题目 #${questionId}`)
+            }
+          }}
+          onOpenPressureReport={async (taskId: string) => {
+            const success = await onOpenPressureReport(taskId)
+            if (success && onJumpToReview) {
+              onJumpToReview()
+            }
+            return success
+          }}
+        />
+      ) : (
+        <motion.div className="data-view-scroll" initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }}>
             <section className="data-hero-strip">
               <div>
                 <span className="eyebrow">PLAYER CARD · 学习赛季</span>
@@ -353,51 +348,7 @@ export function InsightsView({
               )}
               {distribution?.drift && <p className="dw-drift">⚠ 均值偏离 1.00 超过 ±0.08，评分体系可能漂移，考虑校准提示词锚点或 ELO 期望。</p>}
             </section>
-          </motion.div>
-        ) : tab === 'mistakes' ? (
-          <motion.div key="mistakes" className="matches-view" initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -10 }}>
-            <section className="data-hero-strip">
-              <div>
-                <span className="eyebrow">MISTAKES · 错题复盘</span>
-                <h2>薄弱点档案</h2>
-                <p>来自批改诊断的错误类型与薄弱知识聚合，点击标签直接开始专项训练。</p>
-              </div>
-            </section>
-            {(['errorTags', 'weaknessTags'] as const).map((group) => (
-              <section key={group} className="rating-heatmap-panel">
-                <div className="rating-heatmap-label">
-                  <span>{group === 'errorTags' ? '错误类型' : '薄弱知识'}</span>
-                  <em>{(weakness?.[group] ?? []).length} 项</em>
-                </div>
-                <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, marginTop: 8 }}>
-                  {(weakness?.[group] ?? []).map((item) => {
-                    const closure = group === 'weaknessTags' ? tagClosure.find((c) => c.tag === item.tag) : undefined
-                    const arrow = !closure?.delta ? '' : closure.delta >= 10 ? ' ↑' : closure.delta <= -10 ? ' ↓' : ' →'
-                    const arrowColor = !closure?.delta ? 'var(--muted)' : closure.delta >= 10 ? '#258a55' : closure.delta <= -10 ? '#c24135' : 'var(--muted)'
-                    return (
-                      <button
-                        key={item.tag}
-                        type="button"
-                        className="qtimer-btn"
-                        onClick={() => onStartTagPractice(item.tag)}
-                        title={
-                          closure
-                            ? `开始该标签专项训练 · 关联 ${closure.questionCount} 题 · 近7天 ${closure.recentCorrect}/${closure.recentTotal} vs 之前 ${closure.beforeCorrect}/${closure.beforeTotal}`
-                            : '开始该标签专项训练'
-                        }
-                      >
-                        {item.tag} × {item.count}
-                        {arrow && <span style={{ color: arrowColor, fontWeight: 800 }}>{arrow}</span>}
-                      </button>
-                    )
-                  })}
-                  {!(weakness?.[group] ?? []).length && <span style={{ color: 'var(--muted)', fontSize: 13 }}>暂无诊断数据，跑一场批量批改后会在这里聚合。</span>}
-                </div>
-              </section>
-            ))}
-          </motion.div>
-        ) : (
-          <motion.div key="matches" className="matches-view" initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -10 }}>
+
             <section className="data-hero-strip">
               <div>
                 <span className="eyebrow">RECENT MATCHES · 学习赛季</span>
@@ -430,7 +381,6 @@ export function InsightsView({
               <div className="rating-heatmap-legend"><span><i className="low" />低于 0.98</span><span><i className="average" />0.98–1.07</span><span><i className="high" />高于 1.07</span></div>
             </section>
 
-            
             <section className="match-history-panel">
               <header className="match-history-header">
                 <div>
@@ -480,9 +430,8 @@ export function InsightsView({
                 </div>
               )}
             </section>
-          </motion.div>
-        )}
-      </AnimatePresence>
+      </motion.div>
+      )}
     </div>
   )
 }

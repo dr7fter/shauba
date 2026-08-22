@@ -795,7 +795,7 @@ export function TodayView({
                 onClick={() => {
                   onQueueChange(data.recommendations)
                   setIndex(0)
-                  setView('today')
+                  setView('train')
                 }}
               >
                 <Zap size={16} /> 开始今日智能练习
@@ -850,6 +850,30 @@ export function TodayView({
   return (
     <div className="today-layout">
       <section className="queue-panel">
+        {/* Codex 收件箱通知卡片 */}
+        {data.inboxCount > 0 && (
+          <motion.div
+            className="inbox-notification-card"
+            initial={{ opacity: 0, y: -10 }}
+            animate={{ opacity: 1, y: 0 }}
+            exit={{ opacity: 0, y: -10 }}
+          >
+            <Sparkles size={20} className="inbox-icon" />
+            <div className="inbox-notification-content">
+              <strong>有 {data.inboxCount} 份 Codex 批改待确认</strong>
+              <p>AI 已完成批改分析，点击查看并确认结果</p>
+            </div>
+            <button 
+              className="btn-primary btn-sm"
+              onClick={() => {
+                setView('review')
+                notify('请在复盘页面查看 Codex 收件箱')
+              }}
+            >
+              立即查看
+            </button>
+          </motion.div>
+        )}
         <div className="progress-head">
           <span>
             <b>今日进度</b>

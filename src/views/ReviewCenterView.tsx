@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useState, useCallback } from 'react'
 import { motion } from 'framer-motion'
 import { getReportWall, getMistakeList, getTagClosure } from '../api'
 import type { ReportCard, MistakeItem, TagClosure } from '../types'
@@ -7,7 +7,7 @@ import { TrendingUp, TrendingDown, Minus, CheckCircle2, XCircle, AlertCircle } f
 type ReviewCenterViewProps = {
   notify: (msg: string) => void
   onStartTraining: (questionIds: number[]) => void  // 跳转到训练视图并加载题目
-  onOpenPressureReport: (sessionId: string) => void  // 打开学习报告弹窗
+  onOpenPressureReport: (sessionId: string) => Promise<boolean>  // 打开学习报告弹窗
 }
 
 export function ReviewCenterView({ notify, onStartTraining, onOpenPressureReport }: ReviewCenterViewProps) {
@@ -21,11 +21,7 @@ export function ReviewCenterView({ notify, onStartTraining, onOpenPressureReport
   const [tagFilter, setTagFilter] = useState<string[]>([])
   const [timeRangeFilter, setTimeRangeFilter] = useState<number | undefined>(undefined)
 
-  useEffect(() => {
-    loadData()
-  }, [chapterFilter, tagFilter, timeRangeFilter])
-
-  const loadData = async () => {
+  const loadData = useCallback(async () => {
     setLoading(true)
     try {
       const [reports, mistakeList, closure] = await Promise.all([
@@ -45,7 +41,11 @@ export function ReviewCenterView({ notify, onStartTraining, onOpenPressureReport
     } finally {
       setLoading(false)
     }
-  }
+  }, [chapterFilter, tagFilter, timeRangeFilter, notify])
+
+  useEffect(() => {
+    void loadData()
+  }, [loadData])
 
   if (loading) {
     return (
@@ -78,9 +78,8 @@ export function ReviewCenterView({ notify, onStartTraining, onOpenPressureReport
               <div
                 key={card.sessionId}
                 className="report-card"
-                onClick={() => {
-                  onOpenPressureReport(card.sessionId)
-                  notify('正在加载报告详情')
+                onClick={async () => {
+                  await onOpenPressureReport(card.sessionId)
                 }}
               >
                 <div className="report-card-header">

@@ -876,16 +876,17 @@ export default function App() {
               <ReviewCenterView
                 key="review"
                 notify={setNotice}
-                onStartTraining={(questionIds: number[]) => {
-                  addToCustomQueue(questionIds[0])
-                    .then(() => refresh())
-                    .then(() => {
-                      setView('train')
-                      setNotice(`已加载 ${questionIds.length} 道题到训练队列`)
-                    })
-                    .catch((error) => {
-                      setNotice(`加载失败：${String(error)}`)
-                    })
+                onStartTraining={async (questionIds: number[]) => {
+                  try {
+                    for (const id of questionIds) {
+                      await addToCustomQueue(id)
+                    }
+                    await refresh()
+                    setView('train')
+                    setNotice(`已加载 ${questionIds.length} 道题到训练队列`)
+                  } catch (error) {
+                    setNotice(`加载失败：${String(error)}`)
+                  }
                 }}
                 onOpenPressureReport={(id: string) =>
                   openPressureReport(id.startsWith('SB-') ? { taskId: id } : { sessionId: id })
@@ -902,7 +903,6 @@ export default function App() {
                   openPressureReport(id.startsWith('SB-') ? { taskId: id } : { sessionId: id })
                 }
                 onStartVariant={startVariantPractice}
-                onJumpToReview={() => setView('review')}
               />
             )}
             {view === 'more' && (

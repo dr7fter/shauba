@@ -70,14 +70,12 @@ export function InsightsView({
   notify,
   onOpenPressureReport,
   onStartVariant,
-  onJumpToReview,
 }: {
   data: BootstrapData
   refresh: () => void
   notify: (text: string) => void
   onOpenPressureReport: (taskId: string) => Promise<boolean>
   onStartVariant?: (questionId: number) => void
-  onJumpToReview?: () => void
 }) {
   const [activeTab, setActiveTab] = useState<'insights' | 'inbox'>('insights')
   const [distribution, setDistribution] = useState<RatingDistribution | null>(null)
@@ -169,13 +167,7 @@ export function InsightsView({
               notify(`变式题功能：题目 #${questionId}`)
             }
           }}
-          onOpenPressureReport={async (taskId: string) => {
-            const success = await onOpenPressureReport(taskId)
-            if (success && onJumpToReview) {
-              onJumpToReview()
-            }
-            return success
-          }}
+          onOpenPressureReport={onOpenPressureReport}
         />
       ) : (
         <motion.div className="data-view-scroll" initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }}>

@@ -6398,14 +6398,13 @@ fn get_mistake_list(
             a.attempted_at,
             a.duration_seconds,
             a.ai_rating,
-            s.earliest_error,
-            s.advice,
-            s.better_solution,
+            i.payload_json,
             s.error_tags_json,
             s.weakness_tags_json
         FROM attempts a
         JOIN questions q ON q.id = a.question_id
         LEFT JOIN codex_analysis_signals s ON s.question_id = a.question_id
+        LEFT JOIN codex_inbox i ON i.question_id = a.question_id AND i.status = 'confirmed'
         WHERE {}
         ORDER BY a.attempted_at DESC",
         where_clause
@@ -6418,8 +6417,24 @@ fn get_mistake_list(
     let rows = stmt
         .query_map(param_refs.as_slice(), |row| {
             let question_id: i64 = row.get(0)?;
-            let error_tags_json: String = row.get(10).unwrap_or_else(|_| "[]".to_string());
-            let weakness_tags_json: String = row.get(11).unwrap_or_else(|_| "[]".to_string());
+            let payload_json: Option<String> = row.get(7)?;
+            let error_tags_json: String = row.get(8).unwrap_or_else(|_| "[]".to_string());
+            let weakness_tags_json: String = row.get(9).unwrap_or_else(|_| "[]".to_string());
+
+            // Parse payload_json to extract earliest_error, advice, better_solution
+            let (earliest_error, advice, better_solution) = if let Some(json_str) = payload_json {
+                if let Ok(payload) = serde_json::from_str::<Value>(&json_str) {
+                    (
+                        payload["earliestError"].as_str().map(|s| s.to_string()),
+                        payload["advice"].as_str().map(|s| s.to_string()),
+                        payload["betterSolution"].as_str().map(|s| s.to_string()),
+                    )
+                } else {
+                    (None, None, None)
+                }
+            } else {
+                (None, None, None)
+            };
 
             Ok((
                 question_id,
@@ -6429,9 +6444,9 @@ fn get_mistake_list(
                 row.get::<_, String>(4)?,
                 row.get::<_, Option<i64>>(5)?,
                 row.get::<_, Option<f64>>(6)?,
-                row.get::<_, Option<String>>(7)?,
-                row.get::<_, Option<String>>(8)?,
-                row.get::<_, Option<String>>(9)?,
+                earliest_error,
+                advice,
+                better_solution,
                 error_tags_json,
                 weakness_tags_json,
             ))
@@ -6560,7 +6575,9 @@ fn get_report_wall(
                 if let Ok(report) = serde_json::from_str::<Value>(json_str) {
                     let summary = &report["summary"];
                     (
-                        summary["questionCount"].as_i64().unwrap_or(0),
+                        summary["totalCount"].as_i64()
+                            .or_else(|| summary["questionCount"].as_i64())
+                            .unwrap_or(0),
                         summary["accuracy"].as_f64().unwrap_or(0.0),
                         summary["averageRating"].as_f64(),
                         summary["averageDuration"].as_i64(),

@@ -866,8 +866,8 @@ export function TodayView({
             <button 
               className="btn-primary btn-sm"
               onClick={() => {
-                setView('review')
-                notify('请在复盘页面查看 Codex 收件箱')
+                setView('data')
+                notify('已打开 Codex 收件箱')
               }}
             >
               立即查看

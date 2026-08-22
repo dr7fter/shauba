@@ -1,7 +1,7 @@
 {
   "name": "shuaba",
   "private": true,
-  "version": "0.7.0",
+  "version": "1.1.0",
   "type": "module",
   "scripts": {
     "dev": "vite",
@@ -10,7 +10,9 @@
     "test": "node --test tests/evidence_model.test.js && cargo test --locked --manifest-path src-tauri/Cargo.toml",
     "preview": "vite preview",
     "app": "tauri dev",
-    "app:build": "tauri build"
+    "app:build": "tauri build",
+    "screenshots": "node scripts/visual_regression.cjs",
+    "check:ui": "node scripts/check-design-system.cjs"
   },
   "dependencies": {
     "@tauri-apps/api": "^2.11.1",
@@ -28,6 +30,7 @@
     "@types/react-dom": "^19.2.3",
     "@vitejs/plugin-react": "^6.0.4",
     "oxlint": "^1.75.0",
+    "puppeteer-core": "^25.8.0",
     "typescript": "~6.0.2",
     "vite": "^8.2.0"
   }

@@ -27,3 +27,8 @@ src-tauri/gen/schemas
 *.njsproj
 *.sln
 *.sw?
+
+# Local session/config/artifacts
+.zcode/
+.claude/
+photo/

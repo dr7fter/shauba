@@ -5881,6 +5881,16 @@
   line-height: 1.5;
 }
 
+/* 应用内更新：下载进度与就绪提示 */
+.update-progress-panel { display: flex; flex-direction: column; gap: 8px; }
+.update-progress-head { display: flex; align-items: center; gap: 7px; font-size: var(--fs-xs); color: var(--muted); }
+.update-progress-head em { font-style: normal; margin-left: auto; color: var(--quiet); font-variant-numeric: tabular-nums; }
+.update-progress-track { height: 6px; border-radius: var(--r-full); background: var(--sunken); overflow: hidden; }
+.update-progress-fill { height: 100%; border-radius: var(--r-full); background: linear-gradient(90deg, var(--green), var(--success)); transition: width 180ms ease; }
+.update-progress-fill:only-child { animation: update-indeterminate 1.2s ease-in-out infinite; }
+@keyframes update-indeterminate { 0% { transform: translateX(-100%);} 100% { transform: translateX(350%);} }
+.update-ready-banner { display: flex; align-items: center; gap: 8px; padding: 10px 14px; border-radius: var(--r-sm); background: var(--green-soft); color: var(--green-dark); font-size: var(--fs-xs); font-weight: 600; }
+
 .update-modal-footer {
   display: flex;
   align-items: center;

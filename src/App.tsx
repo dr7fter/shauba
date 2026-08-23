@@ -24,11 +24,12 @@ import {
   X,
   Zap,
 } from 'lucide-react'
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import './App.css'
 import {
   addToCustomQueue,
   bootstrap,
+  checkAppUpdate,
   clearPracticeSession,
   getMasteryMap,
   getPressureGradingReport,
@@ -496,6 +497,20 @@ export default function App() {
     } finally {
       setLoading(false)
     }
+  }, [])
+
+  // 启动静默检查一次更新，有新版只做轻提示不打扰
+  const updateCheckedRef = useRef(false)
+  useEffect(() => {
+    if (updateCheckedRef.current) return
+    updateCheckedRef.current = true
+    void checkAppUpdate()
+      .then((update) => {
+        if (update) {
+          setNotice(`发现新版本 v${update.version}，到 设置 → 版本与在线更新 一键升级`)
+        }
+      })
+      .catch(() => undefined)
   }, [])
 
   const openPressureReport = useCallback(

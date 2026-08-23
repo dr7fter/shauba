@@ -1,21 +1,35 @@
 import { AnimatePresence, motion } from 'framer-motion'
-import { Download, ExternalLink, Sparkles, X, Check, Copy } from 'lucide-react'
+import { Download, ExternalLink, Sparkles, X, Check, Copy, LoaderCircle, RotateCw } from 'lucide-react'
 import { useState } from 'react'
+import type { UpdateProgress } from '../api'
 import type { AppUpdateInfo } from '../types'
+
+type InstallPhase = 'idle' | 'downloading' | 'installing' | 'ready'
+
+function formatMb(bytes: number): string {
+  return `${(bytes / 1024 / 1024).toFixed(1)} MB`
+}
 
 export function UpdateModal({
   updateInfo,
   onClose,
   notify,
+  onInstall,
+  onRestart,
 }: {
   updateInfo: AppUpdateInfo
   onClose: () => void
   notify: (msg: string) => void
+  /** 存在时显示「立即更新」走应用内下载安装；缺失时回退浏览器下载（演示模式） */
+  onInstall?: (onProgress: (progress: UpdateProgress) => void) => Promise<void>
+  onRestart?: () => void
 }) {
   const [copied, setCopied] = useState(false)
+  const [phase, setPhase] = useState<InstallPhase>('idle')
+  const [progress, setProgress] = useState<UpdateProgress | null>(null)
 
   const handleCopyLink = () => {
-    const url = updateInfo.htmlUrl || updateInfo.zipDownloadUrl || 'https://github.com/shuaba-app/shuaba/releases'
+    const url = updateInfo.htmlUrl || updateInfo.zipDownloadUrl || 'https://github.com/dr7fter/shauba/releases'
     void navigator.clipboard.writeText(url)
     setCopied(true)
     notify('更新地址已复制到剪贴板')
@@ -27,9 +41,29 @@ export function UpdateModal({
     window.open(url, '_blank')
   }
 
+  const handleInstall = async () => {
+    if (!onInstall) return
+    setPhase('downloading')
+    setProgress({ downloaded: 0, total: null })
+    try {
+      await onInstall(setProgress)
+      setPhase('ready')
+      notify('新版本已下载完成，重启后生效')
+    } catch (error) {
+      setPhase('idle')
+      setProgress(null)
+      notify(`更新失败：${String(error)}`)
+    }
+  }
+
+  const percent =
+    progress && progress.total && progress.total > 0
+      ? Math.min(100, Math.round((progress.downloaded / progress.total) * 100))
+      : null
+
   return (
     <AnimatePresence>
-      <div className="modal-backdrop" onClick={onClose}>
+      <div className="modal-backdrop" onClick={phase === 'idle' ? onClose : undefined}>
         <motion.div
           className="modal update-modal"
           initial={{ opacity: 0, scale: 0.95, y: 15 }}
@@ -50,9 +84,11 @@ export function UpdateModal({
                 </p>
               </div>
             </div>
-            <button className="icon-button" onClick={onClose} title="关闭 (Esc)">
-              <X size={18} />
-            </button>
+            {phase === 'idle' && (
+              <button className="icon-button" onClick={onClose} title="关闭 (Esc)">
+                <X size={18} />
+              </button>
+            )}
           </div>
 
           <div className="update-modal-body">
@@ -79,34 +115,88 @@ export function UpdateModal({
               </div>
             </div>
 
+            {phase !== 'idle' && (
+              <div className="update-progress-panel">
+                {phase === 'downloading' && (
+                  <>
+                    <div className="update-progress-head">
+                      <LoaderCircle size={14} className="spin" />
+                      <span>正在下载更新{percent !== null ? ` · ${percent}%` : ''}</span>
+                      <em>
+                        {progress ? formatMb(progress.downloaded) : '0 MB'}
+                        {progress?.total ? ` / ${formatMb(progress.total)}` : ''}
+                      </em>
+                    </div>
+                    <div className="update-progress-track">
+                      <div
+                        className="update-progress-fill"
+                        style={{ width: percent !== null ? `${percent}%` : '100%' }}
+                      />
+                    </div>
+                  </>
+                )}
+                {phase === 'ready' && (
+                  <div className="update-ready-banner">
+                    <Check size={16} />
+                    更新包已就绪，重启刷吧后即可使用 v{updateInfo.latestVersion}。
+                  </div>
+                )}
+              </div>
+            )}
+
             <div className="update-safety-banner">
               🛡️ <strong>升级提示：</strong> 本地刷题记录、天梯 Elo 分与复习计划均安全保存在系统数据库，更新软件不会造成任何数据丢失。
             </div>
           </div>
 
           <div className="modal-footer update-modal-footer">
-            <button className="secondary-button compact" onClick={handleCopyLink}>
-              {copied ? <Check size={14} /> : <Copy size={14} />}
-              {copied ? '已复制' : '复制下载链接'}
-            </button>
+            {phase === 'idle' && (
+              <>
+                <button className="secondary-button compact" onClick={handleCopyLink}>
+                  {copied ? <Check size={14} /> : <Copy size={14} />}
+                  {copied ? '已复制' : '复制下载链接'}
+                </button>
 
-            {updateInfo.htmlUrl && (
-              <button
-                className="secondary-button compact"
-                onClick={() => openUrl(updateInfo.htmlUrl)}
-              >
-                <ExternalLink size={14} />
-                前往 Release 页面
+                {updateInfo.htmlUrl && (
+                  <button
+                    className="secondary-button compact"
+                    onClick={() => openUrl(updateInfo.htmlUrl)}
+                  >
+                    <ExternalLink size={14} />
+                    前往 Release 页面
+                  </button>
+                )}
+
+                {onInstall ? (
+                  <button className="primary-button compact" onClick={() => void handleInstall()}>
+                    <Download size={14} />
+                    立即更新
+                  </button>
+                ) : (
+                  updateInfo.zipDownloadUrl && (
+                    <button
+                      className="primary-button compact"
+                      onClick={() => openUrl(updateInfo.zipDownloadUrl)}
+                    >
+                      <Download size={14} />
+                      下载免安装绿色版
+                    </button>
+                  )
+                )}
+              </>
+            )}
+
+            {phase === 'downloading' && (
+              <button className="secondary-button compact" disabled>
+                <LoaderCircle size={14} className="spin" />
+                正在下载…
               </button>
             )}
 
-            {updateInfo.zipDownloadUrl && (
-              <button
-                className="primary-button compact"
-                onClick={() => openUrl(updateInfo.zipDownloadUrl)}
-              >
-                <Download size={14} />
-                下载免安装绿色版
+            {phase === 'ready' && onRestart && (
+              <button className="primary-button compact" onClick={onRestart}>
+                <RotateCw size={14} />
+                立即重启
               </button>
             )}
           </div>

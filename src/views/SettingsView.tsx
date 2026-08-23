@@ -11,12 +11,15 @@ import {
   saveReviewIntervals,
   setLibraryPath,
   checkAppUpdate,
+  installUpdate,
+  restartApp,
   getAppVersion,
   getUserProfile,
   setUserProfile,
 } from '../api'
 import { isAudioMuted, setAudioMuted } from '../data/audio'
 import { UpdateModal } from '../components/UpdateModal'
+import type { Update } from '@tauri-apps/plugin-updater'
 import type { BackupInfo, BootstrapData, SeasonStatus, AppUpdateInfo, UserProfileSettings } from '../types'
 
 export function SettingsView({
@@ -58,6 +61,7 @@ export function SettingsView({
   const [currentVersion, setCurrentVersion] = useState('1.3.1')
   const [checkingUpdate, setCheckingUpdate] = useState(false)
   const [updateResult, setUpdateResult] = useState<AppUpdateInfo | null>(null)
+  const [pendingUpdate, setPendingUpdate] = useState<Update | null>(null)
   const [showUpdateModal, setShowUpdateModal] = useState(false)
 
   const [userNickname, setUserNickname] = useState('dr7fter')
@@ -97,13 +101,31 @@ export function SettingsView({
   const handleCheckUpdate = async (silent = false) => {
     setCheckingUpdate(true)
     try {
-      const info = await checkAppUpdate()
-      setUpdateResult(info)
-      if (info.hasUpdate) {
+      const update = await checkAppUpdate()
+      if (update) {
+        const info: AppUpdateInfo = {
+          currentVersion: update.currentVersion,
+          latestVersion: update.version,
+          hasUpdate: true,
+          releaseName: `刷吧 v${update.version}`,
+          releaseNotes: update.body ?? null,
+          publishedAt: update.date ?? null,
+          htmlUrl: 'https://github.com/dr7fter/shauba/releases/latest',
+        }
+        setPendingUpdate(update)
+        setUpdateResult(info)
         setShowUpdateModal(true)
-        notify(`🎉 发现新版本 v${info.latestVersion}`)
-      } else if (!silent) {
-        notify(`当前已是最新版本 v${info.currentVersion}`)
+        notify(`🎉 发现新版本 v${update.version}`)
+      } else {
+        setPendingUpdate(null)
+        const info: AppUpdateInfo = {
+          currentVersion: currentVersion,
+          latestVersion: currentVersion,
+          hasUpdate: false,
+          releaseNotes: '当前运行版本稳定可用，已是最新版。',
+        }
+        setUpdateResult(info)
+        if (!silent) notify(`当前已是最新版本 v${currentVersion}`)
       }
     } catch {
       if (!silent) notify('检测更新失败，请检查网络连接')
@@ -700,6 +722,12 @@ export function SettingsView({
           updateInfo={updateResult}
           onClose={() => setShowUpdateModal(false)}
           notify={notify}
+          onInstall={
+            pendingUpdate
+              ? (onProgress) => installUpdate(pendingUpdate, onProgress)
+              : undefined
+          }
+          onRestart={() => void restartApp()}
         />
       )}
     </div>

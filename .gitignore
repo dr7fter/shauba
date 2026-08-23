@@ -33,3 +33,4 @@ src-tauri/gen/schemas
 .claude/
 photo/
 releases/
+*.exe

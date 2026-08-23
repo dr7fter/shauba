@@ -1,121 +1,209 @@
-# 刷吧 Codex 协作约定
+# 刷吧 · AI Agent 通用工作契约
 
-刷吧是独立的数一桌面刷题 App。题库源目录 `E:\考研资料\题库-大观园` 只读，禁止修改其中的 JSON 与图片。刷吧不连接 Obsidian 或拾遗录。
+> 任何 AI Agent（Codex / Claude Code / Cursor / ZCode 等）在本仓库工作时，以本文件为唯一权威入口。
+> 版本：v1.4.0 · 更新：2026-08-23
 
-## 🎯 批改与诊断核心原则（单题与整组通用）
+## 一、项目是什么
 
-无论在**高压演练（模考）**还是**日常正常刷题**，当用户要求“批改草稿并发送给刷吧”时，均遵循以下最高标准：
+刷吧是**独立、数一专用、纸笔优先**的本地刷题桌面 App（Tauri v2 + React + TypeScript + rusqlite）。
 
-1. **LaTeX 数学公式规范（极其重要）**：
-   - 摘要 (`summary`)、最早错误步骤 (`earliestError`)、修复动作 (`advice`)、更优解法 (`betterSolution`) 以及分析文本中的**所有数学符号、变量名、公式、计算式、递推式、极限与矩阵**，必须严格使用标准 LaTeX 格式包裹（行内公式使用 `$...$`，独立块级公式使用 `$$...$$`）。
-   - 严禁在数学式中使用未经 LaTeX 包裹的裸文本（例如禁止写 `x^2`, `int 0 to pi`, `1/(x+2)`，必须写 `$x^2$`, `$\int_0^\pi$`, `$\frac{1}{x+2}$`）。
-   - JSON 字符串中反斜杠使用合法单个 LaTeX 反斜杠（如 `\frac`, `\sin`, `\int`）。
-2. **深度步骤与断点定位**：
-   - 结合草稿图片逐行精细核对推理逻辑，定位**最早出现的错误断点**（精确到行号与具体数学公式），而非仅判断最终答案。
-   - 精准分类并在 `errorTags` 标注以下三类战术标签之一：
-     - 🔴 **瞄准失误 (计算笔误/符号写反)**：思路完全正确，在通分/变上限求导/矩阵变换处算错 $\to$ 判定为 `partial`，保留步骤分；
-     - 🟡 **概念盲区 (定理前提遗漏/混淆边界)**：未验证极限存在拆分/连续可导混淆 $\to$ 判定为 `incorrect`；
-     - 🔵 **战术绕路 (方法机械蛮干/超时严重)**：硬算超时，指出计算黑洞 $\to$ 判定为 `speed <= 60`。
-   - 无法确定时明确使用 `uncertain`，不要猜测步骤或知识点。
-3. **HLTV Rating 3.0 与熟练度诊断**：
-   - 综合题目实际作答耗时与题目基准时间（单选3分、多选4分、填空5分、解答10分）评估流畅度与经济效率。
-   - Rating 输出范围 0.00-2.50（0.50=核心断裂; 0.80=笨拙硬算且有笔误; 1.00=常规达标; 1.15-1.25=规范严密; 1.30-1.45=巧解秒杀; 1.50-1.65=压轴题突破; 2.00-2.45=Donk-tier 超神秒杀，极罕见）。严禁打中庸安全分，整组题必须拉开区分度。
-   - 做错题目 rating 严禁超过 0.65 (有大量正确步骤的笔误最高 0.80)；超时严重且做错触发经济拖累惩罚。
-4. **考场极速秒杀思路 (`betterSolution`)**：
-   - 严禁搬运教科书式的繁琐长证明！必须提供考场极速秒杀思路、待定系数法、二重积分交换次序、King 变换、特征多项式秒杀等极简技巧。若当前解法已足够精炼则填写 `null`。
-5. **可执行修复动作 (`advice`)**：
-   - 提供一条精准、直接、明天即可落地刻意练习的专项修复动作。
+**红线（违反即事故）：**
+1. 题库源目录 `E:\考研资料\题库-大观园` **只读**，禁止修改其中任何 JSON 与图片
+2. 刷吧**不连接** Obsidian 或拾遗录
+3. 签名私钥 `%USERPROFILE%\.tauri\shuaba_updater.key` **永不出仓库、不进 git、不展示内容**——丢了它所有旧版本收不到更新
+4. `tauri.conf.json` 的 `createUpdaterArtifacts: true` **必须保持开启**（v1.4.0 曾被误关导致无签名产物）
+5. `releases/` 已 gitignore（发布产物只存 GitHub Releases，历史教训：260MB 便携版进 git 导致 push 被拒）
+6. 改段位表需**两处同步**：`src-tauri/src/services/rating.rs rank_band_index` + `src/utils.ts WANMEI_RANKS`
 
----
+## 二、环境与命令
 
-## 📥 向刷吧回传数据格式
+```bash
+# 环境：Node 18+ / Rust 1.77.2+ / npm
+npm install          # 装依赖
+npm run app          # 桌面端开发（热重载）
+npm run dev          # 仅浏览器预览（用 mock 数据）
+npm run build        # 前端构建门禁（tsc + vite）
+npm run app:build    # 桌面打包（注意：不带签名环境变量，发布必须用下面的 release.mjs）
+cd src-tauri && cargo test --locked   # Rust 测试门禁（当前 45 个）
+```
 
-- 只写一个 UTF-8 JSON 文件到任务指定路径。若未提供路径，写入 `%APPDATA%\com.shuaba.math\codex-inbox\{taskId}.json`。
-- 不修改题库源文件或刷吧数据库。
+**提交前门禁：`cargo test --locked` 全绿 + `npm run build` 成功。**
 
-### 1. 单题批改结果格式（`kind: "analysis"`）
+## 三、代码架构速览
+
+```
+src-tauri/src/lib.rs        # 后端单文件（~7000行）：所有 Tauri command、ELO 结算、收件箱、备份恢复
+src-tauri/src/services/rating.rs  # 评分内核：HLTV 合成、特征曲线、段位表（纯函数+测试）
+src/views/                  # TodayView(训练) InsightsView(数据) ReviewView(复盘地图) LibraryView(题库) SettingsView(设置)
+src/components/             # GradingReportModal(模考报告) UpdateModal(应用内更新) MathText(KaTeX) 等
+src/api.ts / types.ts       # 前端 API 封装与类型（与 lib.rs serde camelCase 对应）
+src/data/friendsService.ts  # 好友战绩卡（坚果云同步，v1.4.0+）
+scripts/release.mjs         # 发版脚本（构建+签名+latest.json，见第六节）
+src-tauri/capabilities/default.json  # Tauri 权限（加插件必须在此注册）
+```
+
+数据库：`%APPDATA%\com.shuaba.math\shuaba.db`（SQLite，含 questions / attempts / progress / elo_events / codex_inbox / codex_analysis_signals / pressure_* 等表）。收件箱：`%APPDATA%\com.shuaba.math\codex-inbox\`。
+
+## 四、评分与天梯体系（权威参数）
+
+**分工原则：AI 打证据分，内核当裁判。** Codex 通过提示词锚点给六维分与 rating；跨时间记账（聚合、ELO、段位）全部由确定性内核处理。
+
+**评分回退链**（前后端一致）：`六维 HLTV 合成 > Codex rating > 特征曲线`。
+
+**HLTV 六维合成**（`rating.rs`）：
+```
+P = 0.42×解决 + 0.18×严谨 + 0.18×影响力 − 0.22×错误代价
+rating = clamp(0.30 + 0.016×P, 0, 2) × 难度系数(0.94–1.10)
+```
+
+**ELO 天梯**（`lib.rs` 常量区 + `settle_elo`）：
+
+| 参数 | 值 |
+|---|---|
+| 起点 ELO_START | 1400（C 段） |
+| K 值 | 定级期 30（前 10 次结算）→ 常态 10（每题 ±1-3 分） |
+| 期望公式 | `0.70 − 0.10×(mastery−1) − 2.5×(难度系数−1)`，clamp [0.30, 0.78]，review 模式 +0.06 |
+| 连胜动量 | 连续≥3 同向 → K×1.15（`ELO_MOMENTUM_*`） |
+| 晋级保护 | 升段后 3 次结算免负分 |
+| 段位 | D<1000 … C+1401 … S≥2401 九段（完美平台刻度） |
+| 赛季软重置 | 向 1400 收敛 25% |
+
+**已知结构问题（改造方案已讨论未实施）**：期望基线 0.70 与 rating 锚点 1.00 错位（中规中矩表现会掉分）、mastery 方向反了（熟题门槛更低）、难度被双计。改造时先写回放验证（`elo_events` 已存每次 performance/expected 可重放）。
+
+**提示词锚点**在 `lib.rs` 搜 `批改失效`（约 6183/6278 行两处）：rating 锚 0.80/1.00/1.15/1.30/1.45/1.55/2.00，六维锚 90+/75/60/45，批内无区分度视为批改失效。
+
+## 五、批改与诊断核心原则（单题与整组通用）
+
+无论高压演练还是日常刷题，用户要求"批改草稿并发送给刷吧"时：
+
+1. **LaTeX 数学公式规范（极其重要）**：summary / earliestError / advice / betterSolution 及所有分析文本中的数学符号、变量、公式、计算式、递推式、极限与矩阵必须用 `$...$`（行内）或 `$$...$$`（块级）包裹。禁止裸文本数学式（禁 `x^2`、`int 0 to pi`，必须 `$x^2$`、`$\int_0^\pi$`）。JSON 字符串中反斜杠为合法单个 LaTeX 反斜杠（`\frac`、`\sin`、`\int`）。
+2. **深度步骤与断点定位**：结合草稿图逐行核对推理逻辑，定位**最早错误断点**（精确到行号与具体公式），而非只判最终答案。errorTags 三类战术标签：
+   - 🔴 **瞄准失误**（计算笔误/符号写反）：思路完全正确，在通分/变上限求导/矩阵变换处算错 → verdict `partial`，保留步骤分
+   - 🟡 **概念盲区**（定理前提遗漏/混淆边界）：未验证极限存在拆分/连续可导混淆 → verdict `incorrect`
+   - 🔵 **战术绕路**（方法机械蛮干/超时严重）：硬算超时，指出计算黑洞 → speed ≤ 60
+   - 无法确定时明确用 `uncertain`，不要猜测步骤或知识点
+3. **HLTV Rating（0.00-2.50）**：综合实际耗时与基准时间（单选3分/多选4分/填空5分/解答10分）评估流畅度与经济效率。0.50=核心断裂；0.80=笨拙硬算且有笔误；1.00=常规达标；1.15-1.25=规范严密；1.30-1.45=巧解秒杀；1.50-1.65=压轴题突破；2.00-2.45=Donk-tier 超神秒杀（极罕见）。**严禁打中庸安全分，整组题必须拉开区分度**。做错题 rating 严禁超过 0.65（有大量正确步骤的笔误最高 0.80）；超时严重且做错触发经济拖累惩罚。
+4. **考场极速秒杀思路（betterSolution）**：严禁搬教科书式繁琐长证明！必须提供待定系数法、二重积分交换次序、King 变换、特征多项式秒杀等极简技巧。当前解法已足够精炼则填 `null`。
+5. **可执行修复动作（advice）**：一条精准、直接、明天即可落地刻意练习的专项修复动作。
+
+## 六、版本发布与 GitHub 上传（完整流程）
+
+仓库：`https://github.com/dr7fter/shauba`（公开），分支 `master`。
+
+### 6.1 发版三步
+
+```bash
+# ① 升版本号（三处必须一致）：package.json / src-tauri/tauri.conf.json / src-tauri/Cargo.toml
+#    同时更新 RELEASE_NOTES.md（它的内容会成为 latest.json 的 notes 和 Release 正文）
+
+# ② 构建（自动带签名、生成三件套并归档 releases/vX.Y.Z/）
+node scripts/release.mjs
+#    产出：src-tauri/target/release/bundle/nsis/ 下的
+#    刷吧_X.Y.Z_x64-setup.exe + .sig + latest.json + SHA256SUMS.txt
+
+# ③ 推送代码与 tag，然后创建 Release 并上传资产（见 6.2/6.3）
+```
+
+### 6.2 git 推送
+
+```bash
+git push origin master
+git tag -a vX.Y.Z -m "刷吧 vX.Y.Z" && git push origin vX.Y.Z   # 新 tag 时
+```
+
+### 6.3 创建 Release + 上传资产（本机没装 gh CLI，用 API）
+
+```bash
+# 取 token（凭据管理器里已有，GCM 授权过一次就持久保存）
+export GCM_INTERACTIVE=never
+TOKEN=$(printf "protocol=https\nhost=github.com\n\n" | git credential fill | grep '^password=' | cut -d= -f2-)
+
+# 建 Release（body 建议 JSON 写文件再 -d @file，避免 shell 弄坏中文；make_latest 确保端点指向它）
+curl -s -X POST -H "Authorization: Bearer $TOKEN" https://api.github.com/repos/dr7fter/shauba/releases -d @payload.json
+# payload.json: {"tag_name":"vX.Y.Z","name":"刷吧 vX.Y.Z","make_latest":"true","body":"更新说明"}
+
+# 上传资产（关键：exe 必须用 ASCII 名，GitHub 会剥掉中文字符导致 latest.json URL 404）
+NSIS=src-tauri/target/release/bundle/nsis
+curl -s -X POST -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/octet-stream" \
+  --data-binary "@$NSIS/刷吧_X.Y.Z_x64-setup.exe" \
+  "https://uploads.github.com/repos/dr7fter/shauba/releases/{RELEASE_ID}/assets?name=shuaba_X.Y.Z_x64-setup.exe"
+curl -s -X POST -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" \
+  --data-binary "@$NSIS/latest.json" \
+  "https://uploads.github.com/repos/dr7fter/shauba/releases/{RELEASE_ID}/assets?name=latest.json"
+```
+
+latest.json 由脚本自动生成（内含 ASCII 下载 URL 和 minisign 签名），**文件名不能改**——updater 端点固定读 `releases/latest/download/latest.json`。
+
+### 6.4 网络坑（本机环境）
+
+本机 `github.com` 直连受 DNS 污染/Fake-IP 劫持影响，已做三层保障：
+- hosts 已固定 `140.82.112.3 github.com`（失效时换 20.205.243.166 / 140.82.113.4 实测可用 IP）
+- app 内 updater 自动跟随系统代理、失败降级直连（勿删此逻辑）
+- api.github.com / uploads.github.com / objects.githubusercontent.com 通常直连可用，API 发布流程不依赖 github.com 主域
+
+### 6.5 发布后验证
+
+```bash
+curl -sL https://github.com/dr7fter/shauba/releases/latest/download/latest.json   # 应返回新版本号
+```
+然后在旧版本 app 里实测：设置 → 检查新版本 → 下载 → 重启。
+
+## 七、向刷吧回传数据格式
+
+只写一个 UTF-8 JSON 文件。未指定路径时写入 `%APPDATA%\com.shuaba.math\codex-inbox\{taskId}.json`。**不修改题库源文件或刷吧数据库。**
+
+### 1. 单题批改（`kind: "analysis"`）
 
 ```json
 {
-  "schemaVersion": 1,
-  "kind": "analysis",
-  "taskId": "SB-YYYYMMDD-questionId-random",
+  "schemaVersion": 1, "kind": "analysis", "taskId": "SB-YYYYMMDD-questionId-random",
   "questionId": 155,
-  "summary": "简要诊断（含 $LaTeX$ 公式）",
-  "verdict": "correct|partial|incorrect|uncertain",
-  "earliestError": "最早错误步骤（含 $LaTeX$ 公式）或 null",
-  "errorTags": ["概念边界"],
-  "weaknessTags": ["幂零矩阵"],
-  "advice": "一条可执行的修复动作（含 $LaTeX$ 公式）",
-  "betterSolution": "更优解法或更简洁秒杀思路（含 $LaTeX$ 公式）或 null",
-  "confidence": 0.95,
-  "recommendedQuestionIds": [],
-  "recommendationReason": null
+  "summary": "简要诊断（含 $LaTeX$）", "verdict": "correct|partial|incorrect|uncertain",
+  "earliestError": "最早错误步骤（含 $LaTeX$）或 null",
+  "errorTags": ["概念边界"], "weaknessTags": ["幂零矩阵"],
+  "advice": "一条可执行修复动作（含 $LaTeX$）", "betterSolution": "秒杀思路或 null",
+  "confidence": 0.95, "recommendedQuestionIds": [], "recommendationReason": null
 }
 ```
 
-### 2. 整组批改回传格式（`kind: "batch"`）
+### 2. 整组批改（`kind: "batch"`，taskId 形如 `SB-BATCH-YYYYMMDD-random`）
 
-批量任务编号形如 `SB-BATCH-YYYYMMDD-random`。草稿张数少于题目数时只批改上传了草稿的题，未收到草稿的题不要出现在 `batchAttempts` 中：
+草稿张数少于题目数时只批改上传了草稿的题，未收到草稿的题不出现在 batchAttempts 中：
 
 ```json
 {
-  "schemaVersion": 1,
-  "kind": "batch",
-  "taskId": "SB-BATCH-YYYYMMDD-random",
-  "summary": "整组批改摘要（含 $LaTeX$ 公式）",
-  "errorTags": ["方法未掌握"],
-  "weaknessTags": ["定积分对称性与King变换"],
-  "confidence": 0.95,
+  "schemaVersion": 1, "kind": "batch", "taskId": "SB-BATCH-YYYYMMDD-random",
+  "summary": "整组摘要（含 $LaTeX$）", "errorTags": ["方法未掌握"],
+  "weaknessTags": ["定积分对称性与King变换"], "confidence": 0.95,
   "recommendedQuestionIds": [],
   "batchAttempts": [
-    {
-      "questionId": 155,
-      "result": "correct|wrong|uncertain",
-      "selfRating": 2,
-      "durationSeconds": 120,
-      "summary": "简要诊断（含 $LaTeX$ 公式）",
-      "verdict": "correct|partial|incorrect|uncertain",
-      "earliestError": "最早错误步骤（含 $LaTeX$ 公式）或 null",
-      "errorTags": ["方法绕路"],
-      "weaknessTags": ["待定系数法"],
-      "advice": "一条可执行的修复动作（含 $LaTeX$ 公式）",
-      "betterSolution": "更优解法或更简洁秒杀思路（含 $LaTeX$ 公式）或 null",
-      "confidence": 0.95
-    }
+    { "questionId": 155, "result": "correct|wrong|uncertain", "selfRating": 2,
+      "durationSeconds": 120, "summary": "（含 $LaTeX$）",
+      "verdict": "correct|partial|incorrect|uncertain", "earliestError": "…或 null",
+      "errorTags": ["方法绕路"], "weaknessTags": ["待定系数法"],
+      "advice": "（含 $LaTeX$）", "betterSolution": "…或 null", "confidence": 0.95 }
   ]
 }
 ```
 
-`result` 只能取 `correct`、`wrong` 或 `uncertain`；`selfRating` 为 1-4。`uncertain` 的题不会写入作答记录，仅保留诊断信息。
+`result` 只能 `correct/wrong/uncertain`；`selfRating` 1-4；`uncertain` 不写作答记录仅留诊断。
 
-### 3. 推荐结果格式（`kind: "recommendation"`）
+### 3. 推荐题目（`kind: "recommendation"`，taskId 形如 `SB-REC-YYYYMMDD-random`）
 
 ```json
 {
-  "schemaVersion": 1,
-  "kind": "recommendation",
-  "taskId": "SB-REC-YYYYMMDD-random",
-  "questionId": null,
-  "summary": "本次荐题策略",
-  "verdict": null,
-  "earliestError": null,
-  "errorTags": [],
-  "weaknessTags": ["薄弱知识"],
-  "advice": null,
-  "betterSolution": null,
-  "confidence": 0.9,
-  "recommendedQuestionIds": [155, 156],
-  "recommendationReason": "推荐理由"
+  "schemaVersion": 1, "kind": "recommendation", "taskId": "SB-REC-YYYYMMDD-random",
+  "questionId": null, "summary": "本次荐题策略", "verdict": null, "earliestError": null,
+  "errorTags": [], "weaknessTags": ["薄弱知识"], "advice": null, "betterSolution": null,
+  "confidence": 0.9, "recommendedQuestionIds": [155, 156], "recommendationReason": "推荐理由"
 }
 ```
 
-`recommendedQuestionIds` 必须来自刷吧题库中的真实 ID。若无法验证 ID，不要生成推荐回传。
+`recommendedQuestionIds` **必须先在 app 库验证存在**（`sqlite3 "$APPDATA/com.shuaba.math/shuaba.db" "SELECT id FROM questions WHERE id IN (...)"`），无法验证就不要回传。荐题后用户在 app：Codex 收件箱 → 确认 → 题组进入今日训练。
 
----
+## 八、工作方式约定
 
-## 🛠️ 工程验证与构建
-
-- 前端：`npm run build`
-- 桌面打包：`npm run app:build`
-- Rust 测试：在 `src-tauri` 中运行 `cargo test --locked`
+- **改 UI 前先看现状**：大改先出方案确认再动手；改完必须 `npm run build` + `cargo test` 验证，视觉改动要看截图/实测
+- **DB 探索只读**：`sqlite3` 只跑 SELECT；所有对 DB 的写操作只通过 app 自身命令
+- 大文件（安装包/便携版）永不进 git；构建产物放 `releases/`（已忽略）
+- 敏捷交付：每个功能独立 commit（中文 conventional 风格），随时可回滚

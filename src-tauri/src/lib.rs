@@ -11,6 +11,7 @@ use std::{
     collections::{HashMap, HashSet},
     fs,
     path::{Path, PathBuf},
+    process::Command,
     sync::Mutex,
 };
 use tauri::{Manager, State};
@@ -7180,6 +7181,53 @@ fn get_app_version() -> String {
     env!("CARGO_PKG_VERSION").to_string()
 }
 
+/// 读取 Windows 系统代理（与浏览器同源），供 updater 直连被墙环境使用。
+/// 返回形如 "http://127.0.0.1:17891"；未启用系统代理时返回 null。
+#[tauri::command]
+fn get_system_proxy() -> Option<String> {
+    let reg_query = |value: &str| -> Option<String> {
+        let output = Command::new("reg")
+            .args([
+                "query",
+                r"HKCU\Software\Microsoft\Windows\CurrentVersion\Internet Settings",
+                "/v",
+                value,
+            ])
+            .output()
+            .ok()?;
+        if !output.status.success() {
+            return None;
+        }
+        let text = String::from_utf8_lossy(&output.stdout).into_owned();
+        let line = text.lines().find(|l| l.contains(value) && l.contains("REG_"))?;
+        line.split_whitespace().last().map(str::to_string)
+    };
+    if reg_query("ProxyEnable")?.as_str() != "0x1" {
+        return None;
+    }
+    let server = reg_query("ProxyServer")?;
+    if server.is_empty() {
+        return None;
+    }
+    // ProxyServer 可能是 "127.0.0.1:17891" 或按协议 "http=...;https=..." 两种格式
+    let target = if server.contains('=') {
+        let https = server.split(';').find(|p| p.starts_with("https="));
+        let http = server.split(';').find(|p| p.starts_with("http="));
+        let part = https.or(http)?;
+        part.split('=').nth(1)?
+    } else {
+        &server
+    };
+    if target.is_empty() {
+        return None;
+    }
+    if target.contains("://") {
+        Some(target.to_string())
+    } else {
+        Some(format!("http://{target}"))
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct UserProfileSettings {
@@ -7383,6 +7431,7 @@ pub fn run() {
             list_pressure_sessions,
             get_today_attempted_questions,
             get_app_version,
+            get_system_proxy,
             get_user_profile,
             set_user_profile
         ])

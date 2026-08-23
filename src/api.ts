@@ -466,10 +466,21 @@ export async function getAppVersion(): Promise<string> {
 
 export type UpdateProgress = { downloaded: number; total: number | null }
 
-/** 用官方 updater 插件检查更新：走 Rust 侧网络，不受 webview CSP 限制 */
+/** 读取 Windows 系统代理（与浏览器同源），直连环境返回 null */
+export async function getSystemProxy(): Promise<string | null> {
+  if (!isTauri()) return null
+  try {
+    return await invoke<string | null>('get_system_proxy')
+  } catch {
+    return null
+  }
+}
+
+/** 用官方 updater 插件检查更新：优先走系统代理，下载复用同一代理客户端 */
 export async function checkAppUpdate(): Promise<Update | null> {
   if (!isTauri()) return null
-  return check()
+  const proxy = await getSystemProxy()
+  return check(proxy ? { proxy } : undefined)
 }
 
 /** 应用内下载并安装更新，进度透传给回调 */

@@ -2,7 +2,7 @@
 mod services;    // Business Logic Layer（评分内核等）
 
 use base64::{engine::general_purpose::STANDARD, Engine};
-use chrono::{Datelike, Duration, Local};
+use chrono::{Datelike, Duration, Local, TimeZone};
 use rand::Rng;
 use rusqlite::{params, Connection, OptionalExtension};
 use serde::{Deserialize, Serialize};
@@ -3377,6 +3377,67 @@ fn review_history(conn: &Connection) -> Result<ReviewHistory, String> {
     })
 }
 
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct TodayAttemptItem {
+    pub(crate) attempt_id: i64,
+    pub(crate) question_id: i64,
+    pub(crate) outcome: String,
+    pub(crate) self_rating: i64,
+    pub(crate) duration_seconds: i64,
+    pub(crate) attempted_at: String,
+    pub(crate) session_id: Option<String>,
+    pub(crate) question: Question,
+}
+
+#[tauri::command]
+fn get_today_attempted_questions(state: State<AppState>) -> Result<Vec<TodayAttemptItem>, String> {
+    let conn = state.db.lock().map_err(|e| e.to_string())?;
+    let today = Local::now().date_naive().to_string();
+    let mut stmt = conn
+        .prepare(
+            "SELECT a.id, a.question_id, COALESCE(a.outcome, a.result, 'wrong'), COALESCE(a.self_rating, 2), COALESCE(a.duration_seconds, 30), a.attempted_at, a.session_id
+             FROM attempts a
+             WHERE substr(a.attempted_at, 1, 10) = ?1
+             ORDER BY a.id DESC"
+        )
+        .map_err(|e| e.to_string())?;
+
+    let rows = stmt
+        .query_map([&today], |r| {
+            Ok((
+                r.get::<_, i64>(0)?,
+                r.get::<_, i64>(1)?,
+                r.get::<_, String>(2)?,
+                r.get::<_, i64>(3)?,
+                r.get::<_, i64>(4)?,
+                r.get::<_, String>(5)?,
+                r.get::<_, Option<String>>(6)?,
+            ))
+        })
+        .map_err(|e| e.to_string())?
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|e| e.to_string())?;
+
+    let mut result = Vec::new();
+    for (attempt_id, q_id, outcome, self_rating, duration, attempted_at, session_id) in rows {
+        if let Ok(q) = question_by_id(&conn, q_id) {
+            result.push(TodayAttemptItem {
+                attempt_id,
+                question_id: q_id,
+                outcome,
+                self_rating,
+                duration_seconds: duration,
+                attempted_at,
+                session_id,
+                question: q,
+            });
+        }
+    }
+
+    Ok(result)
+}
+
 #[derive(Default)]
 struct AiSignal {
     verdict: Option<String>,
@@ -4640,8 +4701,7 @@ fn get_session_scoreboard(
     })
 }
 
-// ============ 模块 D：赛季制（备考三阶段） ============
-const SEASON_NAMES: [&str; 3] = ["基础期", "强化期", "冲刺期"];
+// ============ 模块 D：周赛季制（每周一 00:00 开启，周日 24:00 结算） ============
 const SEASON_RESET_PULL: f64 = 0.75;
 
 #[derive(Serialize)]
@@ -4666,13 +4726,85 @@ struct SeasonStatus {
 }
 
 fn season_status(conn: &Connection) -> Result<SeasonStatus, String> {
-    let index: i64 = setting(conn, "season_index", "0").parse().unwrap_or(0);
-    let started_at = setting(
-        conn,
-        "season_start",
-        &Local::now().to_rfc3339(),
-    );
-    let (_, current) = current_elo(conn)?;
+    let now = Local::now();
+    let days_from_mon = now.weekday().num_days_from_monday() as i64;
+    let this_monday_naive = (now.date_naive() - chrono::Duration::days(days_from_mon))
+        .and_hms_opt(0, 0, 0)
+        .unwrap();
+    let this_monday = match now.timezone().from_local_datetime(&this_monday_naive) {
+        chrono::LocalResult::Single(dt) => dt,
+        _ => now,
+    };
+    let this_monday_rfc = this_monday.to_rfc3339();
+
+    let mut index: i64 = setting(conn, "season_index", "1").parse().unwrap_or(1);
+    if index < 1 {
+        index = 1;
+    }
+    let saved_start_rfc = setting(conn, "season_start", &this_monday_rfc);
+
+    let (_, mut current) = current_elo(conn)?;
+
+    // 检查是否跨周结算：若 saved_start 所在时间小于当前这周一 00:00，则自动结算并进入新赛季
+    if let Ok(saved_dt) = chrono::DateTime::parse_from_rfc3339(&saved_start_rfc) {
+        let saved_local = saved_dt.with_timezone(&Local);
+        if saved_local < this_monday {
+            let days_diff = (this_monday.date_naive() - saved_local.date_naive()).num_days();
+            let weeks_elapsed = (days_diff / 7).max(1);
+
+            let old_end_naive = (saved_local.date_naive() + chrono::Duration::days(6))
+                .and_hms_opt(23, 59, 59)
+                .unwrap();
+            let old_end = match now.timezone().from_local_datetime(&old_end_naive) {
+                chrono::LocalResult::Single(dt) => dt.to_rfc3339(),
+                _ => this_monday_rfc.clone(),
+            };
+
+            let peak: f64 = conn
+                .query_row(
+                    "SELECT COALESCE(MAX(rating_after), ?1) FROM elo_events WHERE created_at >= ?2 AND created_at <= ?3",
+                    params![current, saved_start_rfc, old_end],
+                    |r| r.get(0),
+                )
+                .unwrap_or(current);
+
+            let _ = conn.execute(
+                "INSERT INTO season_history(season_name, started_at, ended_at, peak_rating, final_rating, rank_index)
+                 VALUES(?1, ?2, ?3, ?4, ?5, ?6)",
+                params![
+                    format!("S{}", index),
+                    saved_start_rfc,
+                    old_end,
+                    peak,
+                    current,
+                    services::rating::rank_band_index(current) as i64,
+                ],
+            );
+
+            // 软重置：向 1000 ELO 基准收敛 25%
+            let new_current = ELO_START + (current - ELO_START) * SEASON_RESET_PULL;
+            let _ = conn.execute(
+                "INSERT INTO elo_events(question_id, delta, rating_after, performance, expected, created_at, session_id, reason)
+                 VALUES(0, ?1, ?2, 0, 0, ?3, NULL, 'season_reset')",
+                params![new_current - current, new_current, this_monday_rfc],
+            );
+            current = new_current;
+
+            index += weeks_elapsed;
+            let _ = conn.execute(
+                "INSERT INTO settings(key, value) VALUES('season_index', ?1), ('season_start', ?2)
+                 ON CONFLICT(key) DO UPDATE SET value=excluded.value",
+                params![index.to_string(), this_monday_rfc],
+            );
+        }
+    } else {
+        let _ = conn.execute(
+            "INSERT INTO settings(key, value) VALUES('season_index', '1'), ('season_start', ?1)
+             ON CONFLICT(key) DO UPDATE SET value=excluded.value",
+            params![this_monday_rfc],
+        );
+    }
+
     let mut stmt = conn
         .prepare("SELECT season_name,started_at,ended_at,peak_rating,final_rating,rank_index FROM season_history ORDER BY id")
         .map_err(|e| e.to_string())?;
@@ -4690,10 +4822,11 @@ fn season_status(conn: &Connection) -> Result<SeasonStatus, String> {
         .map_err(|e| e.to_string())?
         .collect::<Result<Vec<_>, _>>()
         .map_err(|e| e.to_string())?;
+
     Ok(SeasonStatus {
-        name: SEASON_NAMES[index.clamp(0, 2) as usize].into(),
+        name: format!("S{}", index),
         index,
-        started_at,
+        started_at: this_monday_rfc,
         current_elo: current,
         history,
     })
@@ -4708,10 +4841,7 @@ fn get_season_status(state: State<AppState>) -> Result<SeasonStatus, String> {
 #[tauri::command]
 fn advance_season(state: State<AppState>) -> Result<SeasonStatus, String> {
     let conn = state.db.lock().map_err(|e| e.to_string())?;
-    let index: i64 = setting(&conn, "season_index", "0").parse().unwrap_or(0);
-    if index >= 2 {
-        return Err("已在最终赛季（冲刺期），无法再切换".into());
-    }
+    let index: i64 = setting(&conn, "season_index", "1").parse().unwrap_or(1);
     let (settlements, current) = current_elo(&conn)?;
     let now = Local::now().to_rfc3339();
     let started_at = setting(&conn, "season_start", &now);
@@ -4727,7 +4857,7 @@ fn advance_season(state: State<AppState>) -> Result<SeasonStatus, String> {
             "INSERT INTO season_history(season_name,started_at,ended_at,peak_rating,final_rating,rank_index)
              VALUES(?1,?2,?3,?4,?5,?6)",
             params![
-                SEASON_NAMES[index as usize],
+                format!("S{}", index),
                 started_at,
                 now,
                 peak,
@@ -4736,7 +4866,6 @@ fn advance_season(state: State<AppState>) -> Result<SeasonStatus, String> {
             ],
         )
         .map_err(|e| e.to_string())?;
-        // 软重置：向 10000 收敛 25%，写一条赛季重置事件
         let new_current = ELO_START + (current - ELO_START) * SEASON_RESET_PULL;
         conn.execute(
             "INSERT INTO elo_events(question_id,delta,rating_after,performance,expected,created_at,session_id,reason)
@@ -5023,6 +5152,683 @@ fn record_attempt_row(conn: &Connection, input: &AttemptInput) -> Result<(), Str
     .map_err(|e| e.to_string())?;
     complete_active_recommendation_item(conn, input.question_id)?;
     Ok(())
+}
+
+#[derive(Serialize, Deserialize, Clone, Debug)]
+#[serde(rename_all = "camelCase")]
+pub struct TacticalProfile {
+    pub nickname: String,
+    pub title: String,
+    pub combat_power: i64,
+    pub current_elo: f64,
+    pub peak_elo: f64,
+    pub current_rank_letter: String,
+    pub peak_rank_letter: String,
+    pub we_score: f64,
+    pub rating_pro: f64,
+    pub matches: i64,
+    pub win_rate: f64,
+    pub headshot_rate: f64,
+    pub adr: i64,
+    pub kd_ratio: f64,
+    pub rws: f64,
+    pub firepower: i64,
+}
+
+#[derive(Serialize, Deserialize, Clone, Debug)]
+#[serde(rename_all = "camelCase")]
+pub struct TacticalMapSubject {
+    pub id: String,
+    pub name: String,
+    pub map_alias: String,
+    pub total_questions: i64,
+    pub attempted_count: i64,
+    pub correct_count: i64,
+    pub win_rate: f64,
+    pub rating_pro: f64,
+    pub adr: i64,
+    pub avg_kills: f64,
+    pub firepower: i64,
+    pub ct_win_rate: f64,
+    pub t_win_rate: f64,
+    pub mastery_grade: String,
+}
+
+#[derive(Serialize, Deserialize, Clone, Debug)]
+#[serde(rename_all = "camelCase")]
+pub struct TacticalAbilitySkill {
+    pub id: String,
+    pub label: String,
+    pub icon: String,
+    pub grade: String,
+    pub score: f64,
+    pub desc: String,
+}
+
+#[derive(Serialize, Deserialize, Clone, Debug)]
+#[serde(rename_all = "camelCase")]
+pub struct TacticalDimension {
+    pub key: String,
+    pub label: String,
+    pub value: f64,
+}
+
+#[derive(Serialize, Deserialize, Clone, Debug)]
+#[serde(rename_all = "camelCase")]
+pub struct TacticalWeapon {
+    pub id: String,
+    pub name: String,
+    pub alias: String,
+    pub method_name: String,
+    pub kill_time: i64,
+    pub kill_time_grade: String,
+    pub kills: i64,
+    pub total_attempts: i64,
+    pub spray_accuracy: f64,
+    pub spray_grade: String,
+    pub headshot_rate: f64,
+    pub headshot_grade: String,
+    pub quick_stop_rate: f64,
+    pub quick_stop_grade: String,
+    pub avg_kills: f64,
+    pub avg_kills_grade: String,
+}
+
+#[derive(Serialize, Deserialize, Clone, Debug)]
+#[serde(rename_all = "camelCase")]
+pub struct TacticalDashboardData {
+    pub profile: TacticalProfile,
+    pub map_subjects: Vec<TacticalMapSubject>,
+    pub dimensions: Vec<TacticalDimension>,
+    pub specialty_skills: Vec<TacticalAbilitySkill>,
+    pub weapons: Vec<TacticalWeapon>,
+    pub current_season: String,
+}
+
+fn score_to_grade(score: f64) -> &'static str {
+    if score >= 88.0 {
+        "S"
+    } else if score >= 75.0 {
+        "A"
+    } else if score >= 60.0 {
+        "B"
+    } else if score >= 45.0 {
+        "C"
+    } else {
+        "D"
+    }
+}
+
+fn time_to_grade(ms: i64) -> &'static str {
+    if ms <= 360 {
+        "S"
+    } else if ms <= 480 {
+        "A"
+    } else if ms <= 650 {
+        "B"
+    } else if ms <= 850 {
+        "C"
+    } else {
+        "D"
+    }
+}
+
+fn rank_letter_for_elo(elo: f64) -> &'static str {
+    match services::rating::rank_band_index(elo) {
+        0 => "D",
+        1 => "D+",
+        2 => "C",
+        3 => "C+",
+        4 => "B",
+        5 => "B+",
+        6 => "A",
+        7 => "A+",
+        _ => "S",
+    }
+}
+
+struct TacticalAttemptRow {
+    category_path: String,
+    question_type: String,
+    difficulty: i64,
+    stem: String,
+    outcome: String,
+    fluency: i32,
+    duration: i64,
+    bench: i64,
+    ai_rating: Option<f64>,
+    rigor: Option<f64>,
+    computation: Option<f64>,
+    modeling: Option<f64>,
+    method_use: Option<f64>,
+    speed: Option<f64>,
+    strategy_insight: Option<f64>,
+}
+
+#[tauri::command]
+fn get_tactical_dashboard_stats(
+    scope: String,
+    state: State<AppState>,
+) -> Result<TacticalDashboardData, String> {
+    let conn = state.db.lock().map_err(|e| e.to_string())?;
+    let mode_filter = match scope.as_str() {
+        "ranked" => "a.mode IN ('paper', 'paper-codex', 'pressure')",
+        "solo" => "a.mode IN ('practice', 'recommendation')",
+        _ => "1=1",
+    };
+
+    let (_, current_elo) = current_elo(&conn)?;
+    let peak_elo: f64 = conn
+        .query_row(
+            "SELECT COALESCE(MAX(rating_after), ?1) FROM elo_events",
+            [current_elo],
+            |r| r.get(0),
+        )
+        .unwrap_or(current_elo);
+
+    let season_status_obj = season_status(&conn).unwrap_or(SeasonStatus {
+        name: "2026S2·热浪争锋".into(),
+        index: 0,
+        started_at: Local::now().to_rfc3339(),
+        current_elo,
+        history: Vec::new(),
+    });
+
+    let sql = format!(
+        "SELECT q.category_path, q.question_type, q.difficulty, q.stem,
+                COALESCE(a.outcome, a.result) AS outcome,
+                COALESCE(a.fluency_rating, a.self_rating) AS fluency,
+                a.duration_seconds, a.ai_rating,
+                a.dim_rigor, a.dim_computation, a.dim_modeling, a.dim_method_use, a.dim_speed,
+                a.dim_strategy_insight
+         FROM attempts a
+         JOIN questions q ON q.id = a.question_id
+         WHERE {mode_filter} AND COALESCE(a.outcome, a.result) <> 'uncertain'
+         ORDER BY a.id ASC"
+    );
+    let mut stmt = conn.prepare(&sql).map_err(|e| e.to_string())?;
+    let rows = stmt
+        .query_map([], |r| {
+            let qtype: String = r.get(1)?;
+            let bench = services::rating::benchmark_seconds(&qtype);
+            Ok(TacticalAttemptRow {
+                category_path: r.get(0)?,
+                question_type: qtype,
+                difficulty: r.get(2)?,
+                stem: r.get(3)?,
+                outcome: r.get(4)?,
+                fluency: r.get(5)?,
+                duration: r.get(6)?,
+                bench,
+                ai_rating: r.get(7)?,
+                rigor: r.get(8)?,
+                computation: r.get(9)?,
+                modeling: r.get(10)?,
+                method_use: r.get(11)?,
+                speed: r.get(12)?,
+                strategy_insight: r.get(13)?,
+            })
+        })
+        .map_err(|e| e.to_string())?
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|e| e.to_string())?;
+    drop(stmt);
+
+    let matches = rows.len() as i64;
+    let correct_count = rows.iter().filter(|r| r.outcome == "correct").count() as i64;
+    let wrong_count = rows.iter().filter(|r| r.outcome == "incorrect" || r.outcome == "wrong").count() as i64;
+    let win_rate = if matches > 0 {
+        ((correct_count as f64 / matches as f64) * 1000.0).round() / 10.0
+    } else {
+        0.0
+    };
+    let kd_ratio = if wrong_count > 0 {
+        ((correct_count as f64 / wrong_count as f64) * 100.0).round() / 100.0
+    } else {
+        correct_count as f64
+    };
+
+    let headshot_count = rows
+        .iter()
+        .filter(|r| r.outcome == "correct" && r.duration <= (r.bench / 2).max(10))
+        .count() as i64;
+    let headshot_rate = if correct_count > 0 {
+        ((headshot_count as f64 / correct_count as f64) * 1000.0).round() / 10.0
+    } else {
+        0.0
+    };
+
+    let raw_points: f64 = rows
+        .iter()
+        .map(|r| {
+            if r.outcome == "correct" {
+                if r.question_type == "solution" {
+                    10.0
+                } else {
+                    5.0
+                }
+            } else {
+                0.0
+            }
+        })
+        .sum();
+    let adr = if matches > 0 {
+        ((raw_points / matches as f64) * 20.0).round() as i64
+    } else {
+        0
+    };
+
+    let rws = if matches > 0 {
+        let win_ratio = correct_count as f64 / matches as f64;
+        let avg_fluency: f64 = rows
+            .iter()
+            .filter(|r| r.outcome == "correct")
+            .map(|r| r.fluency as f64)
+            .sum::<f64>()
+            / correct_count.max(1) as f64;
+        ((win_ratio * 12.0 + avg_fluency * 2.0) * 100.0).round() / 100.0
+    } else {
+        0.0
+    };
+
+    let ratings: Vec<f64> = rows
+        .iter()
+        .map(|r| {
+            if let Some(ai) = r.ai_rating {
+                ai
+            } else {
+                services::rating::attempt_rating(&r.outcome, r.fluency, r.duration, r.bench)
+            }
+        })
+        .collect();
+    let rating_pro = if !ratings.is_empty() {
+        ((ratings.iter().sum::<f64>() / ratings.len() as f64) * 100.0).round() / 100.0
+    } else {
+        1.0
+    };
+
+    // --- 六维能力精准聚合 ---
+    let mut sum_rigor = 0.0;
+    let mut sum_comp = 0.0;
+    let mut sum_speed = 0.0;
+    let mut sum_mod = 0.0;
+    let mut sum_meth = 0.0;
+    let mut sum_strat = 0.0;
+
+    for (i, r) in rows.iter().enumerate() {
+        let r_rating = ratings[i];
+        let r_speed = r.speed.unwrap_or_else(|| {
+            let pace = (r.duration as f64 / r.bench.max(1) as f64).clamp(0.2, 1.8);
+            ((1.0 - pace) * 28.0 + 78.0).clamp(45.0, 98.0)
+        });
+        let r_comp = r.computation.unwrap_or_else(|| {
+            if r.outcome == "correct" {
+                86.0 + (r.fluency as f64 * 3.0)
+            } else {
+                58.0
+            }
+        });
+        let r_rig = r.rigor.unwrap_or_else(|| {
+            if r.outcome == "correct" {
+                if r.fluency >= 4 { 94.0 } else { 84.0 }
+            } else {
+                54.0
+            }
+        });
+        let r_mod = r.modeling.unwrap_or(85.0);
+        let r_meth = r.method_use.unwrap_or_else(|| (r.fluency as f64 * 12.0 + 44.0).clamp(50.0, 96.0));
+        let r_strat = r.strategy_insight.unwrap_or_else(|| (r_rating * 40.0 + 36.0).clamp(45.0, 98.0));
+
+        sum_rigor += r_rig;
+        sum_comp += r_comp;
+        sum_speed += r_speed;
+        sum_mod += r_mod;
+        sum_meth += r_meth;
+        sum_strat += r_strat;
+    }
+
+    let n = matches.max(1) as f64;
+    let dim_rigor = if matches > 0 { (sum_rigor / n * 10.0).round() / 10.0 } else { 84.0 };
+    let dim_comp = if matches > 0 { (sum_comp / n * 10.0).round() / 10.0 } else { 86.0 };
+    let dim_speed = if matches > 0 { (sum_speed / n * 10.0).round() / 10.0 } else { 86.0 };
+    let dim_mod = if matches > 0 { (sum_mod / n * 10.0).round() / 10.0 } else { 87.0 };
+    let dim_meth = if matches > 0 { (sum_meth / n * 10.0).round() / 10.0 } else { 84.0 };
+    let dim_strat = if matches > 0 { (sum_strat / n * 10.0).round() / 10.0 } else { 84.0 };
+
+    let dimensions = vec![
+        TacticalDimension { key: "rigor".into(), label: "严谨性".into(), value: dim_rigor },
+        TacticalDimension { key: "computation".into(), label: "计算力".into(), value: dim_comp },
+        TacticalDimension { key: "speed".into(), label: "速度".into(), value: dim_speed },
+        TacticalDimension { key: "modeling".into(), label: "审题建模".into(), value: dim_mod },
+        TacticalDimension { key: "methodUse".into(), label: "方法使用".into(), value: dim_meth },
+        TacticalDimension { key: "strategyInsight".into(), label: "策略洞察力".into(), value: dim_strat },
+    ];
+
+    let we_score = ((dim_rigor + dim_comp + dim_speed + dim_mod + dim_meth + dim_strat) / 6.0 * 10.0).round() / 10.0;
+    let firepower = ((rating_pro * 45.0 + win_rate * 0.35 + (matches.min(50) as f64 * 0.4)).clamp(10.0, 100.0)).round() as i64;
+    let combat_power = ((current_elo * 1.2 + matches as f64 * 8.0 + correct_count as f64 * 10.0 + rating_pro * 200.0).clamp(100.0, 9999.0)).round() as i64;
+
+    // 动态战术代号
+    let max_dim = [
+        (dim_rigor, "滴水不漏的逻辑防线"),
+        (dim_comp, "精准制导的重炮轰炸机"),
+        (dim_speed, "极速突破的先锋猎手"),
+        (dim_mod, "洞若观火的战场指挥官"),
+        (dim_meth, "深谙兵法的战术大师"),
+        (dim_strat, "一锤定音的战场收割者"),
+    ]
+    .into_iter()
+    .max_by(|a, b| a.0.total_cmp(&b.0))
+    .map(|(_, title)| title)
+    .unwrap_or("一锤定音的战场收割者");
+
+    let profile = TacticalProfile {
+        nickname: "dr7fter".into(),
+        title: max_dim.into(),
+        combat_power,
+        current_elo,
+        peak_elo,
+        current_rank_letter: rank_letter_for_elo(current_elo).into(),
+        peak_rank_letter: rank_letter_for_elo(peak_elo).into(),
+        we_score,
+        rating_pro,
+        matches,
+        win_rate,
+        headshot_rate,
+        adr,
+        kd_ratio,
+        rws,
+        firepower,
+    };
+
+    // --- 5 大学科地图表现 ---
+    let map_configs = [
+        ("single_calculus", "一元微积分与极限", "荒漠迷城 (Mirage)", "category_path LIKE '高等数学 / 一元%'"),
+        ("multi_integral", "多元函数微积分", "炼狱小镇 (Inferno)", "category_path LIKE '高等数学 / 多元%'"),
+        ("diff_eq", "微分方程与无穷级数", "核子危机 (Nuke)", "category_path LIKE '高等数学 / 微分方程%' OR category_path LIKE '高等数学 / 无穷级数%'"),
+        ("linear_algebra", "线性代数与二次型", "炙热沙城 (Dust II)", "category_path LIKE '线性代数%'"),
+        ("probability", "概率论与数理统计", "远古遗迹 (Ancient)", "category_path LIKE '概率统计%'"),
+    ];
+
+    let mut map_subjects = Vec::new();
+    for (id, name, alias, sql_cond) in map_configs {
+        let total_qs: i64 = conn
+            .query_row(
+                &format!("SELECT COUNT(id) FROM questions WHERE {sql_cond}"),
+                [],
+                |r| r.get(0),
+            )
+            .unwrap_or(0);
+
+        let subj_rows: Vec<&TacticalAttemptRow> = rows
+            .iter()
+            .filter(|r| {
+                if id == "single_calculus" {
+                    r.category_path.starts_with("高等数学 / 一元")
+                } else if id == "multi_integral" {
+                    r.category_path.starts_with("高等数学 / 多元")
+                } else if id == "diff_eq" {
+                    r.category_path.starts_with("高等数学 / 微分方程") || r.category_path.starts_with("高等数学 / 无穷级数")
+                } else if id == "linear_algebra" {
+                    r.category_path.starts_with("线性代数")
+                } else {
+                    r.category_path.starts_with("概率统计")
+                }
+            })
+            .collect();
+
+        let s_attempted = subj_rows.len() as i64;
+        let s_correct = subj_rows.iter().filter(|r| r.outcome == "correct").count() as i64;
+        let s_win_rate = if s_attempted > 0 {
+            ((s_correct as f64 / s_attempted as f64) * 1000.0).round() / 10.0
+        } else {
+            0.0
+        };
+
+        let s_ratings: Vec<f64> = subj_rows
+            .iter()
+            .map(|r| {
+                if let Some(ai) = r.ai_rating {
+                    ai
+                } else {
+                    services::rating::attempt_rating(&r.outcome, r.fluency, r.duration, r.bench)
+                }
+            })
+            .collect();
+        let s_rating_pro = if !s_ratings.is_empty() {
+            ((s_ratings.iter().sum::<f64>() / s_ratings.len() as f64) * 100.0).round() / 100.0
+        } else {
+            0.0
+        };
+
+        let ct_rows: Vec<&&TacticalAttemptRow> = subj_rows
+            .iter()
+            .filter(|r| r.question_type == "single_choice" || r.question_type == "multiple_choice")
+            .collect();
+        let ct_correct = ct_rows.iter().filter(|r| r.outcome == "correct").count() as i64;
+        let ct_win_rate = if !ct_rows.is_empty() {
+            ((ct_correct as f64 / ct_rows.len() as f64) * 100.0).round()
+        } else {
+            s_win_rate
+        };
+
+        let t_rows: Vec<&&TacticalAttemptRow> = subj_rows
+            .iter()
+            .filter(|r| r.question_type == "fill_blank" || r.question_type == "solution")
+            .collect();
+        let t_correct = t_rows.iter().filter(|r| r.outcome == "correct").count() as i64;
+        let t_win_rate = if !t_rows.is_empty() {
+            ((t_correct as f64 / t_rows.len() as f64) * 100.0).round()
+        } else {
+            s_win_rate
+        };
+
+        let s_adr = if s_attempted > 0 {
+            let pts: f64 = subj_rows
+                .iter()
+                .map(|r| if r.outcome == "correct" { if r.question_type == "solution" { 10.0 } else { 5.0 } } else { 0.0 })
+                .sum();
+            ((pts / s_attempted as f64) * 20.0).round() as i64
+        } else {
+            0
+        };
+
+        let s_firepower = if s_attempted > 0 {
+            ((s_rating_pro * 48.0 + s_win_rate * 0.4 + (s_attempted.min(30) as f64 * 0.5)).clamp(10.0, 120.0)).round() as i64
+        } else {
+            0
+        };
+
+        let s_avg_kills = if s_attempted > 0 {
+            ((s_correct as f64 / (s_attempted as f64 / 5.0).max(1.0)) * 10.0).round() / 10.0
+        } else {
+            0.0
+        };
+
+        let mastery_grade = if s_attempted >= 5 {
+            score_to_grade(s_win_rate).to_string()
+        } else {
+            "C".into()
+        };
+
+        map_subjects.push(TacticalMapSubject {
+            id: id.into(),
+            name: name.into(),
+            map_alias: alias.into(),
+            total_questions: total_qs,
+            attempted_count: s_attempted,
+            correct_count: s_correct,
+            win_rate: s_win_rate,
+            rating_pro: s_rating_pro,
+            adr: s_adr,
+            avg_kills: s_avg_kills,
+            firepower: s_firepower,
+            ct_win_rate,
+            t_win_rate,
+            mastery_grade,
+        });
+    }
+
+    // --- 6 项特化技能评级 ---
+    let solution_rows: Vec<&TacticalAttemptRow> = rows.iter().filter(|r| r.question_type == "solution").collect();
+    let solution_score = if !solution_rows.is_empty() {
+        let sol_c = solution_rows.iter().filter(|r| r.outcome == "correct").count() as f64;
+        (sol_c / solution_rows.len() as f64) * 100.0
+    } else {
+        dim_comp
+    };
+
+    let hard_rows: Vec<&TacticalAttemptRow> = rows.iter().filter(|r| r.difficulty >= 3).collect();
+    let hard_score = if !hard_rows.is_empty() {
+        let h_c = hard_rows.iter().filter(|r| r.outcome == "correct").count() as f64;
+        (h_c / hard_rows.len() as f64) * 100.0
+    } else {
+        dim_strat
+    };
+
+    let specialty_skills = vec![
+        TacticalAbilitySkill {
+            id: "gunplay".into(),
+            label: "枪法".into(),
+            icon: "Crosshair".into(),
+            grade: score_to_grade(dim_comp).into(),
+            score: dim_comp,
+            desc: "基础计算与选填定性判断".into(),
+        },
+        TacticalAbilitySkill {
+            id: "trade".into(),
+            label: "补枪".into(),
+            icon: "Zap".into(),
+            grade: score_to_grade((dim_rigor * 0.7 + win_rate * 0.3).clamp(40.0, 98.0)).into(),
+            score: dim_rigor,
+            desc: "错题订正复盘与二刷闭环率".into(),
+        },
+        TacticalAbilitySkill {
+            id: "entry".into(),
+            label: "突破".into(),
+            icon: "TrendingUp".into(),
+            grade: score_to_grade(dim_speed).into(),
+            score: dim_speed,
+            desc: "新题快速破局与首刷秒杀率".into(),
+        },
+        TacticalAbilitySkill {
+            id: "utility".into(),
+            label: "道具".into(),
+            icon: "ShieldAlert".into(),
+            grade: score_to_grade(dim_meth).into(),
+            score: dim_meth,
+            desc: "公式定理熟练度与秒杀技巧".into(),
+        },
+        TacticalAbilitySkill {
+            id: "clutch".into(),
+            label: "残局".into(),
+            icon: "Target".into(),
+            grade: score_to_grade(solution_score).into(),
+            score: solution_score,
+            desc: "高分综合解答题攻坚抗压能力".into(),
+        },
+        TacticalAbilitySkill {
+            id: "sniper".into(),
+            label: "狙击".into(),
+            icon: "Crosshair".into(),
+            grade: score_to_grade(hard_score).into(),
+            score: hard_score,
+            desc: "三星核心难点考题精准突破".into(),
+        },
+    ];
+
+    fn match_ak47(r: &TacticalAttemptRow) -> bool {
+        r.category_path.contains("极限") || r.category_path.contains("导数") || r.stem.contains("泰勒") || r.stem.contains("等价无穷小") || r.stem.contains("麦克劳林")
+    }
+    fn match_awp(r: &TacticalAttemptRow) -> bool {
+        r.category_path.contains("积分") || r.category_path.contains("微积分") || r.stem.contains("对称") || r.stem.contains("Wallis") || r.stem.contains("点火")
+    }
+    fn match_usps(r: &TacticalAttemptRow) -> bool {
+        r.category_path.contains("线性代数") || r.category_path.contains("矩阵") || r.category_path.contains("行列式") || r.category_path.contains("特征值")
+    }
+    fn match_glock(r: &TacticalAttemptRow) -> bool {
+        r.category_path.contains("概率") || r.category_path.contains("随机变量") || r.category_path.contains("分布") || r.stem.contains("似然")
+    }
+
+    // --- 4 大核心考法武器分析 ---
+    let weapon_configs: [(&str, &str, &str, &str, fn(&TacticalAttemptRow) -> bool); 4] = [
+        ("ak47", "AK-47", "步枪之王", "泰勒展开与等价无穷小", match_ak47),
+        ("awp", "AWP", "一枪毙命", "二重积分与King对称变换", match_awp),
+        ("usps", "USP-S", "消音手枪", "分块矩阵与特征值对角化", match_usps),
+        ("glock", "Glock-18", "近程爆发", "连续型随机变量与极大似然", match_glock),
+    ];
+
+    let mut weapons = Vec::new();
+    for (wid, wname, walias, wmname, matcher) in weapon_configs {
+        let w_rows: Vec<&TacticalAttemptRow> = rows.iter().filter(|r| matcher(r)).collect();
+        let w_total = w_rows.len() as i64;
+        let w_kills = w_rows.iter().filter(|r| r.outcome == "correct").count() as i64;
+
+        let w_acc = if w_total > 0 {
+            ((w_kills as f64 / w_total as f64) * 1000.0).round() / 10.0
+        } else {
+            0.0
+        };
+
+        let w_durations: Vec<i64> = w_rows.iter().filter(|r| r.outcome == "correct").map(|r| r.duration).collect();
+        let avg_dur_sec = if !w_durations.is_empty() {
+            w_durations.iter().sum::<i64>() / w_durations.len() as i64
+        } else {
+            45
+        };
+        let kill_time_ms = (avg_dur_sec * 8).clamp(240, 950);
+
+        let w_hs_count = w_rows
+            .iter()
+            .filter(|r| r.outcome == "correct" && r.duration <= (r.bench / 2).max(10))
+            .count() as i64;
+        let w_hs_rate = if w_kills > 0 {
+            ((w_hs_count as f64 / w_kills as f64) * 1000.0).round() / 10.0
+        } else {
+            0.0
+        };
+
+        let w_quick_stop_count = w_rows.iter().filter(|r| r.fluency >= 3).count() as i64;
+        let w_quick_stop_rate = if w_total > 0 {
+            ((w_quick_stop_count as f64 / w_total as f64) * 1000.0).round() / 10.0
+        } else {
+            0.0
+        };
+
+        let avg_kills = if w_total > 0 {
+            ((w_kills as f64 / (w_total as f64 / 10.0).max(1.0)) * 10.0).round() / 10.0
+        } else {
+            0.0
+        };
+
+        weapons.push(TacticalWeapon {
+            id: wid.into(),
+            name: wname.into(),
+            alias: walias.into(),
+            method_name: wmname.into(),
+            kill_time: kill_time_ms,
+            kill_time_grade: time_to_grade(kill_time_ms).into(),
+            kills: w_kills,
+            total_attempts: w_total,
+            spray_accuracy: w_acc,
+            spray_grade: score_to_grade(w_acc).into(),
+            headshot_rate: w_hs_rate,
+            headshot_grade: score_to_grade(w_hs_rate).into(),
+            quick_stop_rate: w_quick_stop_rate,
+            quick_stop_grade: score_to_grade(w_quick_stop_rate).into(),
+            avg_kills,
+            avg_kills_grade: score_to_grade(avg_kills * 12.0).into(),
+        });
+    }
+
+    Ok(TacticalDashboardData {
+        profile,
+        map_subjects,
+        dimensions,
+        specialty_skills,
+        weapons,
+        current_season: season_status_obj.name,
+    })
 }
 
 #[tauri::command]
@@ -5493,25 +6299,33 @@ fn create_codex_task(question_id: i64, state: State<AppState>) -> Result<CodexTa
     };
 
     let prompt = format!(
-        r#"你正在为数学刷题 App「刷吧」深度批改数一草稿。
+        r#"你正在为数学刷题 App「刷吧」担任 CS 战术主考官，深度批改考研数一草稿。
 任务编号：{task_id}
 题目 ID：{question_id}（{type_label}）{timing_info}
 题目：{stem}
 参考答案：{answer}
 
-批改要求：
-1. 深度步骤诊断：结合草稿图片逐行定位最早出现的错误断点，而不只判断最终答案。深入分析题意理解、方法选择、条件遗漏、符号计算、循环论证和推理跳步。无法确定时必须明确将 verdict 记为 "uncertain"。
-2. 熟练度与节奏诊断：结合本题「实际作答耗时」与草稿推导步骤判断熟练度。若耗时明显偏长（超过基准时间），指出是否存在方法严重绕路、繁琐硬算或步骤冗余；若做错且耗时极短，指出是否属于粗心抢快。
-3. 六维能力评分：只根据草稿中可举证的行为评分，每项 score 为 0-100（建议 5 分步进），并给出 evidence 与 confidence。六维为：rigor（严谨性）、computation（计算力）、modeling（审题建模）、methodUse（方法使用）、speed（速度）、strategyInsight（策略洞察力）。无法从当前草稿判断时 score 设为 null、confidence 设为 0，并说明 uncertain。
-4. CS 风格 rating：综合六维、实际耗时与题目难度，输出 0.00-2.00 的 rating；总体人群平均值约 1.00。必须按锚点定位，禁止把表现一律打在 1.00-1.20 安全区：0.80=有明显漏洞的正确或方法笨重的部分正确；1.00=中规中矩、方法常规；1.15=常规题全对、方法标准；1.30=全对且方法优于标准解或速度显著占优；1.45=全对+方法精炼+步骤无可挑剔；1.55+=难题全对且接近最优解法（极少给）；2.00 近似“数学一满分级”，普通全对绝对不得给；低于 0.60 仅在证据充分时给出。同一次批改的多道题必须有区分度，全部挤在同一分数视为批改失效。difficultyMultiplier 只反映题目难度，不能直接抬高某个维度。strategyInsight 还要输出 techniqueLevel（1-5）；不要把技巧难度等同于作答能力。六维评分锚点（主观判断允许，但必须对号入座，禁止默认打 70-80 的安全分）：90+=接近完美；75=良好仅少量可优化；60=及格，存在明显但非致命欠缺；45=不合格拖累整题；45以下=严重失效。无证据的维度必须 score:null，严禁猜中间分；同一次批改各维度分数必须有梯度。
-5. 公式排版规范（极其重要）：诊断摘要 (summary)、最早错误 (earliestError)、修复动作 (advice)、更优解法 (betterSolution) 以及 dimensions 中的 evidence/advice，所有数学符号、变量名、公式、计算过程、递推式与结论必须严格使用标准 LaTeX 格式（行内使用 $...$，独立公式使用 $$...$$），严禁在数学式中使用未经 LaTeX 包裹的裸文本。
-6. 修复与秒杀建议：提供一条可落地执行的下一步修复动作（advice），并在 betterSolution 提供更优解法、更简洁思路或秒杀模板（若当前解法已最优可填 null）。
+【战术批改指令与评分量规】：
+1. 致命断点定位：逐行核对草稿推导，定位【最早错误断点】（earliestError）。精准归类为以下三类之一并在 errorTags 标注：
+   - 🔴 瞄准失误 (计算笔误/符号写反) -> verdict: "partial", 保留有效步骤分 (ADR 65-80);
+   - 🟡 概念盲区 (定理前提遗漏/混淆充分必要) -> verdict: "incorrect", 严查概念边界;
+   - 🔵 战术绕路 (方法机械蛮干/超时严重) -> speed <= 60, 指出计算黑洞与冗余步骤.
+2. HLTV Rating 3.0 定位 (0.00-2.00，严禁中庸打安全分)：
+   - 0.50: 核心断裂/盲区; 0.80: 笨拙硬算且有笔误; 1.00: 常规达标; 1.20: 规范严密; 1.35: 巧解秒杀; 1.50+: 压轴题突破/满分级直觉;
+   - 【硬约束规则】：若 verdict 为 incorrect，rating 严禁超过 0.65 (有大量正确步骤的笔误最高 0.80)；若超时 1.5 倍以上且做错，触发经济拖累惩罚。
+3. 六维能力打分准则 (0-100)：
+   - 每维评分必须在 evidence 中引用草稿具体推导行与公式证据，严禁无证据给分；
+   - 无法从草稿确认的维度，必须输出 score: null, confidence: 0, evidence: "uncertain", 严禁猜 75 分！
+4. 考场极速秒杀思路 (betterSolution)：
+   - 严禁搬运繁琐教材长证明！必须提供考场极速解题技巧（Taylor展开、King变换、特征多项式、待定系数、几何投影等 30 秒秒解）；若原解法已最优填 null。
+5. 可执行修复动作 (advice)：给出一条明天即可落地刻意练习的专项战术动作。
+6. 公式排版绝对要求：所有数学符号、变量、公式、计算式必须严格使用 $...$ 或 $$...$$ 包裹，严禁裸文本数学式。
 
 完成后请将结果写入这个绝对路径：
 {output}
 
 JSON 必须符合（UTF-8，公式用标准单个反斜杠 LaTeX）。结果必须包含 rating、ratingTier、difficultyMultiplier 和六维 dimensions；无法由草稿确认的维度使用 score:null、confidence:0，并明确写 uncertain：
-{{"schemaVersion":1,"kind":"analysis","taskId":"{task_id}","questionId":{question_id},"summary":"简要诊断（含 $LaTeX$ 公式）","verdict":"correct|partial|incorrect|uncertain","earliestError":"最早错误步骤（含 $LaTeX$ 公式）或 null","errorTags":["错误类型"],"weaknessTags":["薄弱知识"],"advice":"下一步修复动作（含 $LaTeX$ 公式）","betterSolution":"更优解法或更简洁思路（含 $LaTeX$ 公式）或 null","confidence":0.95,"rating":1.00,"ratingTier":"S|A|B|C|D","difficultyMultiplier":1.0,"dimensions":{{"rigor":{{"score":88,"confidence":0.9,"evidence":"依据草稿步骤（含 $LaTeX$）","advice":"改进动作（含 $LaTeX$）"}},"computation":{{"score":72,"confidence":0.9,"evidence":"依据草稿步骤（含 $LaTeX$）"}},"modeling":{{"score":65,"confidence":0.9,"evidence":"依据草稿步骤（含 $LaTeX$）"}},"methodUse":{{"score":80,"confidence":0.9,"evidence":"依据草稿步骤（含 $LaTeX$）"}},"speed":{{"score":90,"confidence":0.9,"evidence":"基于实际耗时"}},"strategyInsight":{{"score":58,"confidence":0.8,"evidence":"依据结构识别（含 $LaTeX$）","techniqueLevel":3,"independentDiscovery":"uncertain"}}}},"recommendedQuestionIds":[],"recommendationReason":null}}
+{{"schemaVersion":1,"kind":"analysis","taskId":"{task_id}","questionId":{question_id},"summary":"战术诊断摘要（含 $LaTeX$ 公式）","verdict":"correct|partial|incorrect|uncertain","earliestError":"最早断点行与数学式（含 $LaTeX$）或 null","errorTags":["计算笔误" | "概念边界" | "方法绕路"],"weaknessTags":["薄弱知识点"],"advice":"下一步修复动作（含 $LaTeX$ 公式）","betterSolution":"考场极速秒杀思路（含 $LaTeX$ 公式）或 null","confidence":0.95,"rating":1.00,"ratingTier":"S|A|B|C|D","difficultyMultiplier":1.0,"dimensions":{{"rigor":{{"score":88,"confidence":0.9,"evidence":"依据草稿步骤（含 $LaTeX$）","advice":"改进动作（含 $LaTeX$）"}},"computation":{{"score":72,"confidence":0.9,"evidence":"依据草稿步骤（含 $LaTeX$）"}},"modeling":{{"score":65,"confidence":0.9,"evidence":"依据草稿步骤（含 $LaTeX$）"}},"methodUse":{{"score":80,"confidence":0.9,"evidence":"依据草稿步骤（含 $LaTeX$）"}},"speed":{{"score":90,"confidence":0.9,"evidence":"基于实际耗时"}},"strategyInsight":{{"score":58,"confidence":0.8,"evidence":"依据结构识别（含 $LaTeX$）","techniqueLevel":3,"independentDiscovery":"uncertain"}}}},"recommendedQuestionIds":[],"recommendationReason":null}}
 strategyInsight 还必须包含 techniqueLevel（1–5）和 independentDiscovery（confirmed|uncertain|prompted）。不要输出 batchAttempts，单题只输出上面的 analysis 对象。
 不要修改题库源文件。"#,
         stem = q.stem,
@@ -5586,29 +6400,37 @@ fn build_codex_batch_task_prompt(
         .collect();
 
     format!(
-        r#"你正在为数学刷题 App「刷吧」批改数一草稿。
+        r#"你正在为数学刷题 App「刷吧」担任 CS 战术主考官，深度批改考研数一草稿。
 任务编号：{task_id}
 本任务包含 {count} 道题，按下面编号依次列出；你随后收到的每张草稿图片按发送顺序对应一道题：
 
 {numbered}
 
-批改要求：
-1. 一张草稿对应一道题：第 K 张图片对应第 K 题，请逐张核对题目编号后批改。
-2. 草稿张数少于题目数时：只批改实际收到草稿的题，未收到草稿的题不要猜测、不要编造、直接在 batchAttempts 中省略。
-3. 深度步骤诊断：每道题定位最早出现的错误断点，而不只判断最终答案。深入分析题意理解、方法选择、条件遗漏、符号计算、循环论证和推理跳步。无法确定时必须将该题的 result 记为 "uncertain" 并说明原因，不要猜。
-4. 熟练度与节奏诊断：综合题目的「实际作答耗时」与草稿步骤判断熟练度。若耗时明显偏长（超过基准时间），在 summary 和 advice 中分析是否存在方法严重绕路、繁琐硬算或步骤冗余；若做错且耗时极短，指出是否属于粗心抢快；并在 selfRating 给出 Codex 流畅度评估（1-4分）。durationSeconds 必须原样填写上方提供的实际作答耗时（秒）。
-5. 公式排版规范（极其重要）：整组摘要 (summary)、逐题诊断、最早断点 (earliestError)、修复动作 (advice) 及最优解法 (betterSolution) 中，所有的数学符号、变量名、公式、计算过程、递推式与结论，必须统一使用标准 LaTeX 格式（行内使用 $...$，独立公式使用 $$...$$），严禁使用未经 LaTeX 包裹的裸文本公式。
-6. 除 selfRating 外，为每道题输出 CS 风格最终 rating，范围 0.00–2.00，平均值约 1.00。必须按锚点定位，禁止把表现一律打在 1.00-1.20 安全区：0.80=有明显漏洞的正确或方法笨重的部分正确；1.00=中规中矩、方法常规；1.15=常规题全对、方法标准；1.30=全对且方法优于标准解或速度显著占优；1.45=全对+方法精炼+步骤无可挑剔；1.55+=难题全对且接近最优解法（极少给）；2.00 近似“数学一满分级”，普通全对绝对不得给。整组题目的 rating 必须拉开区分度：若全部挤在同一分数（如都是 1.10-1.20），视为批改失效，必须依据各题草稿质量差异重新拉开。rating 由正确性、草稿证据、相对耗时和题目难度综合得到；difficultyMultiplier 只表达题目难度，不直接抬高六维能力。
-7. 输出六维能力 dimensions：rigor（严谨性）、computation（计算力）、modeling（审题建模）、methodUse（方法使用）、speed（速度）、strategyInsight（策略洞察力）。每维包含 score（0–100 或无法判断时 null）、confidence（0–1）、evidence（必须引用草稿证据）和可选 advice。六维评分锚点（主观判断允许，但必须对号入座，禁止默认打 70-80 的安全分）：90+=该维度表现接近完美、几乎无可指摘；75=良好，仅少量可优化；60=及格，存在明显但非致命的欠缺；45=不合格，该维度拖累了整题；低于45=严重失效。各维度含义示例：rigor 90+=每步前提清晰零跳步、60=明显跳步但方向对、45以下=关键推理断裂；computation 90+=一次到位零回算、60=有错但影响局部、45以下=计算错误直接导致结论错；modeling 90+=一眼识别结构映射、60=建模绕路、45以下=建模错误；methodUse 90+=最优方法且知道为何最优、60=方法可行但绕、45以下=方法选择错误；strategyInsight 90+=洞察命题意图或有超越标准解的思路、60=按部就班、45以下=完全被动解题。speed 主要依据实际耗时与基准之比客观给出。同一维度在全组的分数必须有梯度——若同组全部落在 70-80，视为打分失效；无证据的维度必须 score:null，严禁猜一个中间分。 无法从草稿确认时必须 score:null、confidence:0，并在 evidence 中写明 uncertain，严禁猜分。strategyInsight 另给 techniqueLevel（1–5，表示本题技巧本身难度）和 independentDiscovery（confirmed|uncertain|prompted）；技巧难度不能直接当作能力分。
-8. 修复与秒杀建议：每道题给出一条可落地执行的修复动作（advice），并在 betterSolution 给出更优解法、更简洁思路或秒杀模板（若原解法已最优或无法确定可填 null）。
+【战术批改指令与评分量规】：
+1. 逐题核对草稿：第 K 张图片对应第 K 题，少于题目数时只批改收到草稿的题，未收到草稿的题在 batchAttempts 中省略，严禁猜测。
+2. 熟练度与节奏诊断及致命断点定位 (earliestError)：综合题目「实际作答耗时」与草稿步骤判断熟练度，逐行核对推导定位最早出现的错误断点行及公式。精准归类并在 errorTags 标注：
+   - 🔴 瞄准失误 (计算笔误/符号写反) -> verdict: "partial", 保留有效步骤分;
+   - 🟡 概念盲区 (定理前提遗漏/混淆充分必要) -> verdict: "incorrect", 严查概念边界;
+   - 🔵 战术绕路 (方法机械蛮干/超时严重) -> speed <= 60, 指出计算黑洞与冗余步骤.
+   无法确定时 result 设为 "uncertain"。durationSeconds 必须原样填写上方提供的实际作答耗时（秒）。
+3. HLTV Rating 3.0 定位 (0.00-2.00，严禁中庸打安全分)：
+   - 0.50: 核心断裂; 0.80: 笨拙硬算且有笔误; 1.00: 常规达标; 1.20: 规范严密; 1.35: 巧解秒杀; 1.50+: 压轴题突破/满分级直觉;
+   - 【整组区分度要求】：同组题目的 Rating 必须依据草稿实际优劣拉开梯度（严禁全部打在 1.10-1.20 区间）。若 verdict 为 incorrect，rating 严禁超过 0.65 (有大量正确步骤的笔误最高 0.80)。
+4. 六维能力打分准则 (0-100)：
+   - 每维评分必须在 evidence 中引用草稿具体推导证据，严禁无证据给分；
+   - 无法从草稿确认的维度，必须输出 score: null, confidence: 0, evidence: "uncertain"，严禁猜 75 分！
+   - strategyInsight 另给 techniqueLevel（1–5，表示本题技巧难度）和 independentDiscovery（confirmed|uncertain|prompted）。
+5. 考场极速秒杀思路 (betterSolution)：
+   - 严禁搬运繁琐教材长证明！必须提供考场极速解题技巧（Taylor展开、King变换、特征多项式、待定系数、几何投影等 30 秒秒解）；若原解法已最优填 null。
+6. 可执行修复动作 (advice)：每道题给出一条可落地执行的专项修复动作。
+7. 公式排版绝对要求：所有数学符号、变量、公式、计算式必须严格使用 $...$ 或 $$...$$ 包裹，严禁裸文本数学式。
 
 完成后请将结果写入这个绝对路径：
 {output}
 
 JSON 必须符合（UTF-8，公式用标准单个反斜杠 LaTeX）。每个 batchAttempt 还必须包含 rating、ratingTier、difficultyMultiplier 和六维 dimensions；无法由草稿确认的维度使用 score:null、confidence:0，并明确写 uncertain：
-{{"schemaVersion":1,"kind":"batch","taskId":"{task_id}","summary":"整组批改摘要（含 $LaTeX$ 公式）","errorTags":["错误类型"],"weaknessTags":["薄弱知识"],"confidence":0.9,"recommendedQuestionIds":[],"batchAttempts":[{{"questionId":155,"result":"correct|wrong|uncertain","selfRating":2,"durationSeconds":120,"summary":"简要诊断（含 $LaTeX$ 公式）","verdict":"correct|partial|incorrect|uncertain","earliestError":"最早错误步骤（含 $LaTeX$ 公式）或 null","errorTags":["错误类型"],"weaknessTags":["薄弱知识"],"advice":"下一步修复动作（含 $LaTeX$ 公式）","betterSolution":"更优解法或更简洁思路（含 $LaTeX$ 公式）或 null","confidence":0.95,"rating":1.00,"ratingTier":"S|A|B|C|D","difficultyMultiplier":1.0,"dimensions":{{"rigor":{{"score":88,"confidence":0.9,"evidence":"依据草稿步骤（含 $LaTeX$）","advice":"改进动作（含 $LaTeX$）"}},"computation":{{"score":72,"confidence":0.9,"evidence":"依据草稿步骤（含 $LaTeX$）"}},"modeling":{{"score":65,"confidence":0.9,"evidence":"依据草稿步骤（含 $LaTeX$）"}},"methodUse":{{"score":80,"confidence":0.9,"evidence":"依据草稿步骤（含 $LaTeX$）"}},"speed":{{"score":90,"confidence":0.9,"evidence":"基于实际耗时"}},"strategyInsight":{{"score":58,"confidence":0.8,"evidence":"依据结构识别（含 $LaTeX$）","techniqueLevel":3,"independentDiscovery":"uncertain"}}}}}}]}}
-示例中的分数仅用于展示字段类型，不要照抄。rating 是该题本次最终表现，不是六维能力分；difficultyMultiplier 只表达题目难度。若某维度无法从草稿确认，必须使用 score:null、confidence:0，并在 evidence 中明确写 uncertain，严禁猜分。
-不要修改题库源文件。"#,
+{{"schemaVersion":1,"kind":"batch","taskId":"{task_id}","summary":"整组批改摘要（含 $LaTeX$ 公式）","errorTags":["错误类型"],"weaknessTags":["薄弱知识"],"confidence":0.9,"recommendedQuestionIds":[],"batchAttempts":[{{"questionId":155,"result":"correct|wrong|uncertain","selfRating":2,"durationSeconds":120,"summary":"简要诊断（含 $LaTeX$ 公式）","verdict":"correct|partial|incorrect|uncertain","earliestError":"最早断点行与数学式（含 $LaTeX$）或 null","errorTags":["计算笔误" | "概念边界" | "方法绕路"],"weaknessTags":["薄弱知识"],"advice":"下一步修复动作（含 $LaTeX$ 公式）","betterSolution":"考场极速秒杀思路（含 $LaTeX$ 公式）或 null","confidence":0.95,"rating":1.00,"ratingTier":"S|A|B|C|D","difficultyMultiplier":1.0,"dimensions":{{"rigor":{{"score":88,"confidence":0.9,"evidence":"依据草稿步骤（含 $LaTeX$）","advice":"改进动作（含 $LaTeX$）"}},"computation":{{"score":72,"confidence":0.9,"evidence":"依据草稿步骤（含 $LaTeX$）"}},"modeling":{{"score":65,"confidence":0.9,"evidence":"依据草稿步骤（含 $LaTeX$）"}},"methodUse":{{"score":80,"confidence":0.9,"evidence":"依据草稿步骤（含 $LaTeX$）"}},"speed":{{"score":90,"confidence":0.9,"evidence":"基于实际耗时"}},"strategyInsight":{{"score":58,"confidence":0.8,"evidence":"依据结构识别（含 $LaTeX$）","techniqueLevel":3,"independentDiscovery":"uncertain"}}}}}}]}}
+示例中的分数仅用于展示字段类型，不要照抄。不要修改题库源文件。"#,
         count = questions.len(),
         numbered = numbered.join("\n\n"),
         output = output_path
@@ -6398,6 +7220,7 @@ pub fn run() {
             get_season_status,
             advance_season,
             get_rating_distribution,
+            get_tactical_dashboard_stats,
             get_tag_closure,
             get_chapter_queue,
             get_focus_queue,
@@ -6448,7 +7271,8 @@ pub fn run() {
             save_pressure_grading_report,
             get_pressure_session,
             get_pressure_grading_report,
-            list_pressure_sessions
+            list_pressure_sessions,
+            get_today_attempted_questions
         ])
         .run(tauri::generate_context!())
         .expect("error while running 刷吧");

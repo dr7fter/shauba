@@ -118,18 +118,22 @@ export function InboxView({
   }
 
   return (
-    <div className="inbox-view">
-      <div className="inbox-toolbar">
+    <div className="inbox-view tactical-inbox-container">
+      <div className="inbox-toolbar tactical-inbox-toolbar">
         <div>
-          <h2>Codex 回传</h2>
+          <span className="tactical-kicker-tag">
+            <Sparkles size={14} /> TACTICAL INTELLIGENCE · CODEX DIAGNOSIS
+          </span>
+          <h2>Codex 战术回传与诊断中心</h2>
           <p>
-            AI 推荐先在这里确认；开始后会作为一组题进入今日训练。收件箱每 20 秒自动扫描一次，无需手动刷新。
+            AI 步骤断点定位 · 考场秒杀更优解 · 专项变式题推荐 · 本地收件箱实时监测
           </p>
         </div>
-        <button className="secondary-button" onClick={load}>
-          <RefreshCw size={16} /> 扫描收件箱
+        <button className="secondary-button compact" onClick={load}>
+          <RefreshCw size={15} /> 扫描收件箱
         </button>
       </div>
+
       {failedItems.length > 0 && (
         <div className="failed-inbox-banner">
           <X size={15} />
@@ -152,43 +156,56 @@ export function InboxView({
           </details>
         </div>
       )}
+
       {loading ? (
         <div className="inbox-loading">
-          <LoaderCircle className="spin" size={20} /> 正在扫描本地收件箱
+          <LoaderCircle className="spin" size={22} /> 正在扫描本地 Codex 回传情报...
         </div>
       ) : items.length === 0 ? (
         <EmptyState
           icon={Inbox}
-          title="收件箱是空的"
-          text="从练习页生成批改任务，再把草稿发给 Codex。"
+          title="暂无待处理诊断回传"
+          text="在模考或练习中上传草稿，Codex 将为你提供深度步骤断点与秒杀解法。"
         />
       ) : (
-        <div className="inbox-list">
+        <div className="inbox-list tactical-inbox-list">
           {items.map((item) => {
             const isRecommendation = item.kind === 'recommendation'
+            const isBatch = item.kind === 'batch'
+            const isPaper = item.kind === 'paper'
             const recommendationStatus = recommendationStatusLabel(item)
             const canStart = isRecommendation && item.recommendationBatchStatus === 'pending'
             return (
-              <article className={`inbox-entry ${item.status}`} key={item.id}>
-                <div className="entry-rail">
-                  <BrainCircuit size={19} />
-                  <span />
-                </div>
-                <div className="entry-main">
-                  <div className="entry-meta">
-                    <span>{item.taskId}</span>
+              <article className={`inbox-entry tactical-inbox-entry ${item.status}`} key={item.id}>
+                <div className="tactical-entry-header">
+                  <div className="tactical-entry-type-pill">
+                    <BrainCircuit size={15} />
                     <span>
                       {isRecommendation
-                        ? `AI 题组 · ${item.recommendationQuestionCount ?? 0} 道`
-                        : item.kind === 'paper'
-                        ? '整卷回传'
-                        : item.kind === 'batch'
-                        ? `整组批改 · ${item.batchAttempts?.length ?? 0} 道`
-                        : `置信度 ${Math.round(item.confidence * 100)}%`}
+                        ? `AI 推荐题组 · ${item.recommendationQuestionCount ?? 0} 道`
+                        : isPaper
+                        ? '整卷识别回传'
+                        : isBatch
+                        ? `模考整组批改 · ${item.batchAttempts?.length ?? 0} 道`
+                        : '单题深度步骤诊断'}
                     </span>
-                    <time>{new Date(item.createdAt).toLocaleString('zh-CN')}</time>
                   </div>
-                  <h3>
+                  <span className="tactical-entry-taskid">{item.taskId}</span>
+                  <span className="tactical-entry-confidence">
+                    置信度 {Math.round(item.confidence * 100)}%
+                  </span>
+                  <time className="tactical-entry-time">
+                    {new Date(item.createdAt).toLocaleString('zh-CN', {
+                      month: '2-digit',
+                      day: '2-digit',
+                      hour: '2-digit',
+                      minute: '2-digit',
+                    })}
+                  </time>
+                </div>
+
+                <div className="tactical-entry-body">
+                  <h3 className="tactical-entry-title">
                     {item.paperTitle ? (
                       <>
                         <MathText value={item.paperTitle} /> · <MathText value={item.summary} />
@@ -197,164 +214,163 @@ export function InboxView({
                       <MathText value={item.summary} />
                     )}
                   </h3>
+
                   {isRecommendation && (
                     <div className="ai-plan-card">
-                      <Sparkles size={17} />
+                      <Sparkles size={18} />
                       <div>
                         <strong>{recommendationStatus}</strong>
-                        <span>{item.recommendationQuestionCount ?? 0} 道题将按 Codex 给出的顺序训练</span>
+                        <span>{item.recommendationQuestionCount ?? 0} 道题将按 Codex 给出的战术顺序训练</span>
                       </div>
                     </div>
                   )}
-                  {item.kind === 'paper' && (
+
+                  {isPaper && (
                     <div className="paper-import-summary">
                       <strong>{item.paperAttempts?.length ?? 0} 道题识别完成</strong>
                       <span>确认后会按每道题写入正确性、自评和复习日期</span>
                     </div>
                   )}
-                  {item.kind === 'batch' && (
-                    <div className="paper-import-summary">
-                      <strong>{item.batchAttempts?.length ?? 0} 道题批改完成</strong>
-                      <span>
-                        只包含上传了草稿的题；确认后按每道题写入正确性、自评和薄弱诊断
-                      </span>
-                      <ul className="batch-result-list">
+
+                  {isBatch && (
+                    <div className="batch-import-summary">
+                      <div className="batch-summary-meta">
+                        <strong>{item.batchAttempts?.length ?? 0} 道题批改完成</strong>
+                        <span>只包含上传了草稿的题；确认后按每道题写入正确性、自评与薄弱诊断</span>
+                      </div>
+                      <ul className="tactical-batch-list">
                         {(item.batchAttempts ?? []).map((attempt) => (
-                          <li key={attempt.questionId}>
-                            <b>#{attempt.questionId}</b>
-                            <i className={`batch-verdict ${attempt.result}`}>
+                          <li key={attempt.questionId} className="tactical-batch-item">
+                            <b className="batch-q-id">#{attempt.questionId}</b>
+                            <span className={`verdict-pill ${attempt.result}`}>
                               {attempt.result === 'correct'
                                 ? '正确'
                                 : attempt.result === 'wrong'
-                                ? '出错'
+                                ? '错误'
                                 : '不确定'}
-                            </i>
-                            <span>
+                            </span>
+                            <span className="batch-q-summary">
                               <MathText value={attempt.summary} />
                             </span>
                             <button
-                              className="variant-practice-btn"
+                              className="tactical-variant-btn"
                               onClick={() => onStartVariant(attempt.questionId)}
                               title="调出此题同考点的 3 道变式题"
                             >
-                              <Sparkles size={11} /> 练变式题
+                              <Sparkles size={12} /> 练变式题
                             </button>
                           </li>
                         ))}
                       </ul>
                     </div>
                   )}
+
                   {item.earliestError && (
                     <div className="earliest-error">
-                      <span>最早断点</span>
+                      <span>⚠️ 最早错误断点定位 (BREAKPOINT)</span>
                       <p>
                         <MathText value={item.earliestError} />
                       </p>
                     </div>
                   )}
-                  <div className="tag-line">
-                    {item.errorTags.map((t) => (
-                      <span className="error-tag" key={t}>
-                        {t}
-                      </span>
-                    ))}
-                    {item.weaknessTags.map((t) => (
-                      <span className="weakness-tag" key={t}>
-                        {t}
-                      </span>
-                    ))}
-                  </div>
+
                   {item.betterSolution && (
-                    <div
-                      style={{
-                        marginTop: 8,
-                        padding: 10,
-                        borderRadius: 8,
-                        background: '#F2F7FC',
-                      }}
-                    >
-                      <strong
-                        style={{
-                          display: 'block',
-                          marginBottom: 4,
-                          color: '#315E9E',
-                          fontSize: 12,
-                        }}
-                      >
-                        更好的解法
-                      </strong>
+                    <div className="better-solution-box">
+                      <strong>⚡ 考场更优秒杀解法 (SPEED-KILL SOLUTION)</strong>
                       <MathText value={item.betterSolution} />
                     </div>
                   )}
+
                   {item.advice && (
-                    <p className="advice">
-                      下一步：<MathText value={item.advice} />
-                    </p>
-                  )}
-                  {isRecommendation && canStart ? (
-                    <div className="entry-actions">
-                      <button onClick={() => start(item)}>
-                        <Play size={16} /> 开始这组题
-                      </button>
-                      <button onClick={() => dismiss(item)}>
-                        <ThumbsDown size={16} /> 暂不采用
-                      </button>
-                    </div>
-                  ) : !isRecommendation && item.status === 'pending' ? (
-                    <div className="entry-actions">
-                      <button onClick={() => decide(item, true)}>
-                        <ThumbsUp size={16} />{' '}
-                        {item.kind === 'paper'
-                          ? '确认并写入整卷'
-                          : item.kind === 'batch'
-                          ? '确认并写入整组'
-                          : '诊断准确，写入画像'}
-                      </button>
-                      <button onClick={() => decide(item, false)}>
-                        <ThumbsDown size={16} /> 不采用
-                      </button>
-                      <button onClick={() => copyTaskPrompt(item)}>
-                        {copiedTask === item.taskId ? (
-                          <>
-                            <Check size={15} /> 已复制
-                          </>
-                        ) : (
-                          <>
-                            <Send size={15} /> 重新复制任务说明
-                          </>
-                        )}
-                      </button>
-                    </div>
-                  ) : item.status === 'confirmed' && item.kind === 'analysis' && item.questionId ? (
-                    <div className="entry-actions">
-                      <span className="resolved">
-                        <Check size={15} /> 已写入画像
-                      </span>
-                      <button onClick={() => onStartVariant(item.questionId!)}>
-                        <Sparkles size={16} /> 现在修复
-                      </button>
-                    </div>
-                  ) : item.status === 'confirmed' && item.kind === 'batch' ? (
-                    <div className="entry-actions">
-                      <span className="resolved">
-                        <Check size={15} /> 整组记录与报告已生成
-                      </span>
-                      <button onClick={() => void onOpenPressureReport(item.taskId)}>
-                        <BarChart3 size={16} /> 查看学习报告
-                      </button>
-                    </div>
-                  ) : (
-                    <div className="resolved">
-                      <Check size={15} />{' '}
-                      {isRecommendation
-                        ? recommendationStatus
-                        : item.status === 'confirmed'
-                        ? item.kind === 'paper'
-                          ? '整卷已写入记录'
-                          : '已写入画像'
-                        : '已忽略'}
+                    <div className="advice-box">
+                      <span>🎯 专项修复执行动作 (ACTION)</span>
+                      <p>
+                        <MathText value={item.advice} />
+                      </p>
                     </div>
                   )}
+
+                  {(item.errorTags.length > 0 || item.weaknessTags.length > 0) && (
+                    <div className="tag-line">
+                      {item.errorTags.map((t) => (
+                        <span className="error-tag" key={t}>
+                          {t}
+                        </span>
+                      ))}
+                      {item.weaknessTags.map((t) => (
+                        <span className="weakness-tag" key={t}>
+                          {t}
+                        </span>
+                      ))}
+                    </div>
+                  )}
+
+                  <div className="tactical-entry-footer">
+                    {isRecommendation && canStart ? (
+                      <div className="entry-actions">
+                        <button className="primary-button" onClick={() => start(item)}>
+                          <Play size={15} /> 开始这组题
+                        </button>
+                        <button className="secondary-button" onClick={() => dismiss(item)}>
+                          <ThumbsDown size={15} /> 暂不采用
+                        </button>
+                      </div>
+                    ) : !isRecommendation && item.status === 'pending' ? (
+                      <div className="entry-actions">
+                        <button className="primary-button" onClick={() => decide(item, true)}>
+                          <ThumbsUp size={15} />{' '}
+                          {item.kind === 'paper'
+                            ? '确认并写入整卷'
+                            : item.kind === 'batch'
+                            ? '确认并写入整组'
+                            : '诊断准确，写入画像'}
+                        </button>
+                        <button className="secondary-button" onClick={() => decide(item, false)}>
+                          <ThumbsDown size={15} /> 不采用
+                        </button>
+                        <button className="secondary-button" onClick={() => copyTaskPrompt(item)}>
+                          {copiedTask === item.taskId ? (
+                            <>
+                              <Check size={14} /> 已复制说明
+                            </>
+                          ) : (
+                            <>
+                              <Send size={14} /> 复制任务说明
+                            </>
+                          )}
+                        </button>
+                      </div>
+                    ) : item.status === 'confirmed' && item.kind === 'analysis' && item.questionId ? (
+                      <div className="entry-actions">
+                        <span className="resolved">
+                          <Check size={15} /> 已写入画像
+                        </span>
+                        <button className="secondary-button" onClick={() => onStartVariant(item.questionId!)}>
+                          <Sparkles size={15} /> 现在修复变式
+                        </button>
+                      </div>
+                    ) : item.status === 'confirmed' && item.kind === 'batch' ? (
+                      <div className="entry-actions">
+                        <span className="resolved">
+                          <Check size={15} /> 整组记录与报告已生成
+                        </span>
+                        <button className="primary-button" onClick={() => void onOpenPressureReport(item.taskId)}>
+                          <BarChart3 size={15} /> 查看学习报告
+                        </button>
+                      </div>
+                    ) : (
+                      <div className="resolved">
+                        <Check size={15} />{' '}
+                        {isRecommendation
+                          ? recommendationStatus
+                          : item.status === 'confirmed'
+                          ? item.kind === 'paper'
+                            ? '整卷已写入记录'
+                            : '已写入画像'
+                          : '已忽略'}
+                      </div>
+                    )}
+                  </div>
                 </div>
               </article>
             )

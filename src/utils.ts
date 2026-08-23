@@ -218,3 +218,16 @@ export function verdictChip(verdict: string | null): { label: string; tone: stri
   if (verdict === 'uncertain') return { label: '不确定', tone: 'uncertain' }
   return { label: '已批改', tone: 'correct' }
 }
+
+/**
+ * 考场 150 分预测分映射计算器 (基于 HLTV Rating 3.0 与 KAST 稳定性)
+ */
+export function predictedExamScore(rating: number, kast = 75): number {
+  const k = Math.max(30, Math.min(100, kast)) / 100
+  const r = Math.max(0, Math.min(2.0, rating))
+  const exponent = -2.75 * (r - 1.05)
+  const logistic = 1 / (1 + Math.exp(exponent))
+  const score = 150 * logistic * Math.pow(k, 0.18)
+  return Math.round(Math.max(0, Math.min(150, score)))
+}
+

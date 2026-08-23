@@ -17,8 +17,13 @@ const LATEX_COMMANDS = [
   'begin', 'end', 'cases', 'aligned', 'array', 'matrix', 'pmatrix', 'bmatrix'
 ].join('|')
 
+// Strictly match standalone LaTeX macros or symbols without eating surrounding prose
 const NAKED_LATEX_REGEX = new RegExp(
-  `(?:\\\\(?:${LATEX_COMMANDS})\\b[^\\u4e00-\\u9fa5\\n\\$]+)`,
+  `(?:\\\\(?:frac|dfrac|cfrac)\\{(?:[^{}]|\\{[^{}]*\\})*\\}\\{(?:[^{}]|\\{[^{}]*\\})*\\}` +
+  `|\\\\sqrt(?:\\[[^\\]]*\\])?\\{(?:[^{}]|\\{[^{}]*\\})*\\}` +
+  `|\\\\(?:int|iint|iiint|oint|sum|prod|lim)(?:_\\{[^{}]*\\}|_[a-zA-Z0-9\\\\]+)?(?:\\^\\{[^{}]*\\}|\\^[a-zA-Z0-9\\\\]+)?` +
+  `|\\\\(?:text|mathrm|mathbf|mathbb|mathcal)\\{[^{}]*\\}` +
+  `|\\\\(?:${LATEX_COMMANDS}))`,
   'g'
 )
 
@@ -68,7 +73,11 @@ function preprocessMathText(text: string): string {
   s = s.replace(/\\\\([{}()_,\.\:])/g, '\\$1')
   s = s.replace(/\\\\,/g, '\\,')
 
-  // 2. Protect existing valid delimited blocks ($$...$$, \[...\], $...$, \(...\))
+  // 2. Collapse linebreaks surrounding isolated math operators or chained symbols
+  s = s.replace(/\n\s*([\+\-\=\*\/])\s*\n/g, ' $1 ')
+  s = s.replace(/(\\[a-zA-Z]+)\s*\n\s*([0-9a-zA-Z\^\_\{\}\+\-]+)/g, '$1 $2')
+
+  // 3. Protect existing valid delimited blocks ($$...$$, \[...\], $...$, \(...\))
   const placeholders: { id: string; content: string }[] = []
   s = s.replace(/(\$\$[\s\S]+?\$\$|\\\[[\s\S]+?\\\]|\$[^$\n]+?\$|\\\([\s\S]+?\\\))/g, (match) => {
     const id = `___MATH_PLH_${placeholders.length}___`
@@ -76,21 +85,20 @@ function preprocessMathText(text: string): string {
     return id
   })
 
-  // 3. In the remaining text, wrap naked LaTeX expressions
+  // 4. In the remaining text, wrap ONLY precisely recognized naked LaTeX formulas
   s = s.replace(NAKED_LATEX_REGEX, (rawMatch) => {
-    let match = rawMatch.trim()
-    // Strip trailing Chinese / full-width punctuation
-    match = match.replace(/[，。；？！：）、“”‘’（【】\s]+$/, '').trim()
-    // Strip trailing or leading single $ if mismatched
-    match = match.replace(/\$$/, '').trim()
-    if (match.startsWith('$')) match = match.slice(1).trim()
+    const match = rawMatch.trim()
     if (match.length > 0) {
       return `$${match}$`
     }
     return rawMatch
   })
 
-  // 4. Restore preserved blocks
+  // 5. Merge adjacent inline math blocks joined by simple operators like `$A$ + $B$` -> `$A + B$`
+  s = s.replace(/\$\s*([^\$]+?)\s*\$\s*([\+\-\=\,\;])\s*\$\s*([^\$]+?)\s*\$/g, '$$$1 $2 $3$$')
+  s = s.replace(/\$\s*([^\$]+?)\s*\$\s*([\+\-\=\,\;])\s*\$\s*([^\$]+?)\s*\$/g, '$$$1 $2 $3$$')
+
+  // 6. Restore preserved blocks
   for (const ph of placeholders) {
     s = s.replace(ph.id, ph.content)
   }
@@ -99,6 +107,7 @@ function preprocessMathText(text: string): string {
 }
 
 export function MathText({ value, className = '' }: Props) {
+  if (!value) return null
   const cleanValue = preprocessMathText(value)
   const parts = cleanValue.split(/(\$\$[\s\S]+?\$\$|\$[^$]+?\$|\\\[[\s\S]+?\\\]|\\\([\s\S]+?\\\))/g).filter(Boolean)
   return (
@@ -132,3 +141,4 @@ export function MathText({ value, className = '' }: Props) {
     </span>
   )
 }
+

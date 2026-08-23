@@ -1,12 +1,50 @@
 import { invoke } from '@tauri-apps/api/core'
 import { mockBootstrap, mockCategories, mockInbox, mockMastery, mockQuestions, mockRecommendations } from './mock'
-import type { BootstrapData, CategoryNode, CodexTask, DailyLog, DailyTrendPoint, EloStatus, TagClosure, ExportResult, FailedInboxItem, InboxItem, InboxSummary, InsightPoint, MasteryChapter, MasteryNode, PracticeSessionState, Question, QuestionPage, RatingDistribution, RecommendationBatch, RecommendedQuestion, ReviewHistory, ReviewPlan, SeasonStatus, SessionScoreboard, UserStreak, WeaknessRadar, PressureSession, GradingReport } from './types'
+import type { BootstrapData, CategoryNode, CodexTask, DailyLog, DailyTrendPoint, EloStatus, TagClosure, ExportResult, FailedInboxItem, InboxItem, InboxSummary, InsightPoint, MasteryChapter, MasteryNode, PracticeSessionState, Question, QuestionPage, RatingDistribution, RecommendationBatch, RecommendedQuestion, ReviewHistory, ReviewPlan, SeasonStatus, SessionScoreboard, UserStreak, WeaknessRadar, PressureSession, GradingReport, TacticalDashboardData } from './types'
 import { createPracticeSessionPayload } from './domain/evidence'
 
 const isTauri = () => '__TAURI_INTERNALS__' in window
 
 export async function bootstrap(): Promise<BootstrapData> {
   return isTauri() ? invoke('bootstrap') : mockBootstrap
+}
+
+export async function getTacticalDashboardStats(scope = 'ranked'): Promise<TacticalDashboardData> {
+  if (isTauri()) {
+    return invoke('get_tactical_dashboard_stats', { scope })
+  }
+  return {
+    profile: {
+      nickname: 'dr7fter',
+      title: '一锤定音的战场收割者',
+      combatPower: 3558,
+      currentElo: 1956,
+      peakElo: 1956,
+      currentRankLetter: 'A',
+      peakRankLetter: 'A',
+      weScore: 85.2,
+      ratingPro: 1.46,
+      matches: 160,
+      winRate: 55.0,
+      headshotRate: 65.9,
+      adr: 105,
+      kdRatio: 1.65,
+      rws: 13.98,
+      firepower: 98,
+    },
+    mapSubjects: [],
+    dimensions: [
+      { key: 'rigor', label: '严谨性', value: 84 },
+      { key: 'computation', label: '计算力', value: 86 },
+      { key: 'speed', label: '速度', value: 86 },
+      { key: 'modeling', label: '审题建模', value: 87 },
+      { key: 'methodUse', label: '方法使用', value: 84 },
+      { key: 'strategyInsight', label: '策略洞察力', value: 84 },
+    ],
+    specialtySkills: [],
+    weapons: [],
+    currentSeason: '2026S2·热浪争锋',
+  }
 }
 
 export async function getQuestion(id: number): Promise<Question> {
@@ -201,6 +239,11 @@ export async function listDatabaseBackups(): Promise<import('./types').BackupInf
 
 export async function toggleFavorite(questionId: number): Promise<boolean> {
   return isTauri() ? invoke('toggle_favorite', { questionId }) : true
+}
+
+export async function getTodayAttemptedQuestions(): Promise<import('./types').TodayAttemptItem[]> {
+  if (isTauri()) return invoke('get_today_attempted_questions')
+  return []
 }
 
 export async function saveNote(questionId: number, note: string): Promise<void> {

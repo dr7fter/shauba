@@ -2,38 +2,88 @@ import { AnimatePresence, motion } from 'framer-motion'
 import {
   ArrowUpRight,
   BarChart3,
+  BookOpen,
   CheckCircle2,
+  ChevronDown,
   Clock3,
+  Crosshair,
   FileText,
+  Flame,
+  Heart,
+  HelpCircle,
   LoaderCircle,
   RefreshCw,
+  ShieldAlert,
   Sparkles,
+  Sword,
+  Target,
+  TrendingDown,
+  TrendingUp,
+  X,
   XCircle,
+  Zap,
 } from 'lucide-react'
 import { useEffect, useMemo, useState } from 'react'
-import { getDailyTrend, getEloStatus, getPressureGradingReport, getRatingDistribution, getTagClosure, getWeaknessRadar, listPressureSessions } from '../api'
-import { CS_RATING_MAX, CS_RATING_MIN, averageCsRating, csRankForElo, csRatingTone, deriveGradeCsRating, formatElapsed } from '../utils'
+import {
+  addToCustomQueue,
+  getDailyTrend,
+  getEloStatus,
+  getPressureGradingReport,
+  getRatingDistribution,
+  getTacticalDashboardStats,
+  getTagClosure,
+  getTodayAttemptedQuestions,
+  getWeaknessRadar,
+  listPressureSessions,
+  toggleFavorite,
+} from '../api'
+import {
+  CS_RATING_MAX,
+  CS_RATING_MIN,
+  averageCsRating,
+  csRatingTone,
+  deriveGradeCsRating,
+  formatElapsed,
+  predictedExamScore,
+} from '../utils'
+import { MathText } from '../components/MathText'
+import { QuestionDetail } from '../components/QuestionDetailModal'
 import { InboxView } from './InboxView'
-import type { BootstrapData, DailyTrendPoint, EloStatus, GradingReport, PressureSession, RatingDistribution, TagClosure, WeaknessRadar } from '../types'
+import type {
+  BootstrapData,
+  DailyTrendPoint,
+  EloStatus,
+  GradingReport,
+  PressureSession,
+  Question,
+  RatingDistribution,
+  TacticalDashboardData,
+  TagClosure,
+  TodayAttemptItem,
+  WeaknessRadar,
+} from '../types'
 
 type DataTab = 'overview' | 'matches' | 'mistakes' | 'inbox'
-
-/** 职业选手风格的单维评级：与报告页 S/A/B/C/D 一致 */
-function dimensionGrade(value: number | null): string {
-  if (value === null) return '—'
-  if (value >= 90) return 'S'
-  if (value >= 75) return 'A'
-  if (value >= 60) return 'B'
-  if (value >= 45) return 'C'
-  return 'D'
-}
-
+type ScopeMode = 'ranked' | 'all' | 'solo'
 
 function averageReportRating(report: GradingReport | null): number | null {
   if (!report || report.grades.length === 0) return null
-  const averageDuration = report.summary.averageDuration ?? Math.round((report.summary.totalDuration ?? report.grades.reduce((sum, grade) => sum + Math.max(0, grade.duration || 0), 0)) / Math.max(1, report.summary.totalCount || report.grades.length))
+  const averageDuration =
+    report.summary.averageDuration ??
+    Math.round(
+      (report.summary.totalDuration ??
+        report.grades.reduce((sum, grade) => sum + Math.max(0, grade.duration || 0), 0)) /
+        Math.max(1, report.summary.totalCount || report.grades.length)
+    )
   const ratings = report.grades.map((grade) => {
-    const outcome = grade.verdict === 'partial' ? 'partial' : grade.verdict === 'uncertain' || grade.result === 'uncertain' ? 'uncertain' : grade.verdict === 'incorrect' || grade.result === 'wrong' || !grade.correct ? 'wrong' : 'correct'
+    const outcome =
+      grade.verdict === 'partial'
+        ? 'partial'
+        : grade.verdict === 'uncertain' || grade.result === 'uncertain'
+        ? 'uncertain'
+        : grade.verdict === 'incorrect' || grade.result === 'wrong' || !grade.correct
+        ? 'wrong'
+        : 'correct'
     return deriveGradeCsRating({
       rating: grade.rating,
       outcome,
@@ -45,6 +95,7 @@ function averageReportRating(report: GradingReport | null): number | null {
   })
   return averageCsRating(ratings)
 }
+
 function accuracyPercent(report: GradingReport | null): number | null {
   if (!report) return null
   const value = report.summary.accuracy
@@ -86,28 +137,95 @@ export function InsightsView({
   onOpenPressureReport: (taskId: string) => Promise<boolean>
 }) {
   const [tab, setTab] = useState<DataTab>(initialTab === 'inbox' ? 'inbox' : 'overview')
+  const [scopeMode, setScopeMode] = useState<ScopeMode>('ranked')
+  const [selectedWeaponIdx, setSelectedWeaponIdx] = useState(0)
+  const [selectedMapIdx, setSelectedMapIdx] = useState(0)
+  const [tacticalData, setTacticalData] = useState<TacticalDashboardData | null>(null)
+
   const [distribution, setDistribution] = useState<RatingDistribution | null>(null)
   const [elo, setElo] = useState<EloStatus | null>(null)
   const [weakness, setWeakness] = useState<WeaknessRadar | null>(null)
   const [tagClosure, setTagClosure] = useState<TagClosure[]>([])
+
+  const loadTactical = async (scope: ScopeMode) => {
+    try {
+      const stats = await getTacticalDashboardStats(scope)
+      setTacticalData(stats)
+    } catch {
+      // Keep existing data on error
+    }
+  }
+
+  useEffect(() => {
+    void loadTactical(scopeMode)
+  }, [scopeMode])
 
   useEffect(() => {
     void getRatingDistribution().then(setDistribution).catch(() => undefined)
     void getEloStatus().then(setElo).catch(() => undefined)
     void getTagClosure().then(setTagClosure).catch(() => undefined)
   }, [])
+
   useEffect(() => {
     if (tab === 'mistakes' && !weakness) void getWeaknessRadar().then(setWeakness).catch(() => undefined)
   }, [tab, weakness])
+
   const [trend, setTrend] = useState<DailyTrendPoint[]>([])
   const [sessions, setSessions] = useState<PressureSession[]>([])
   const [reports, setReports] = useState<Record<string, GradingReport | null>>({})
   const [loading, setLoading] = useState(false)
 
+  const [todayAttempts, setTodayAttempts] = useState<TodayAttemptItem[]>([])
+  const [todayDrawerOpen, setTodayDrawerOpen] = useState(false)
+  const [todayFilter, setTodayFilter] = useState<'all' | 'wrong' | 'favorite'>('all')
+  const [detailQuestion, setDetailQuestion] = useState<Question | null>(null)
+  const [toastMsg, setToastMsg] = useState<string | null>(null)
+
+  const loadTodayAttempts = async () => {
+    try {
+      const items = await getTodayAttemptedQuestions()
+      setTodayAttempts(items)
+    } catch {
+      // Ignore
+    }
+  }
+
+  const handleToggleFavToday = async (qId: number) => {
+    try {
+      const nextFav = await toggleFavorite(qId)
+      setTodayAttempts((prev) =>
+        prev.map((item) =>
+          item.questionId === qId
+            ? { ...item, question: { ...item.question, favorite: nextFav } }
+            : item
+        )
+      )
+      setToastMsg(nextFav ? `⭐ 题目 #${qId} 已加入收藏夹` : `已取消题目 #${qId} 收藏`)
+      setTimeout(() => setToastMsg(null), 2000)
+    } catch {
+      setToastMsg('收藏操作失败，请重试')
+      setTimeout(() => setToastMsg(null), 2000)
+    }
+  }
+
+  const filteredTodayAttempts = useMemo(() => {
+    if (todayFilter === 'wrong') {
+      return todayAttempts.filter((t) => t.outcome !== 'correct')
+    }
+    if (todayFilter === 'favorite') {
+      return todayAttempts.filter((t) => t.question.favorite)
+    }
+    return todayAttempts
+  }, [todayAttempts, todayFilter])
+
   const loadData = async () => {
     setLoading(true)
     try {
-      const [nextTrend, nextSessions] = await Promise.all([getDailyTrend(), listPressureSessions()])
+      const [nextTrend, nextSessions] = await Promise.all([
+        getDailyTrend(),
+        listPressureSessions(),
+        loadTodayAttempts(),
+      ])
       setTrend(nextTrend)
       setSessions(nextSessions)
       const reportEntries = await Promise.all(
@@ -118,7 +236,7 @@ export function InsightsView({
           } catch {
             return [session.sessionId, null] as const
           }
-        }),
+        })
       )
       setReports(Object.fromEntries(reportEntries))
     } catch (error) {
@@ -129,6 +247,10 @@ export function InsightsView({
   }
 
   useEffect(() => {
+    void loadTodayAttempts()
+  }, [])
+
+  useEffect(() => {
     setTab(initialTab === 'inbox' ? 'inbox' : 'overview')
   }, [initialTab])
 
@@ -137,23 +259,110 @@ export function InsightsView({
   }, [tab])
 
   const ratedSessions = useMemo(
-    () => sessions.map((session) => averageReportRating(reports[session.sessionId])).filter((rating): rating is number => rating !== null),
-    [reports, sessions],
+    () =>
+      sessions
+        .map((session) => averageReportRating(reports[session.sessionId]))
+        .filter((rating): rating is number => rating !== null),
+    [reports, sessions]
   )
   const averageRating = averageCsRating(ratedSessions)
   const wins = sessions.filter((session) => resultFor(reports[session.sessionId], session) === 'win').length
   const completed = sessions.filter((session) => ['graded', 'graded_partial'].includes(session.status)).length
   const winRate = completed ? Math.round((wins / completed) * 100) : null
   const heatmap = trend.slice(-21)
-  const rank = csRankForElo(elo?.current ?? 10000)
-  const dimValues = distribution?.dimensions
-    ? [distribution.dimensions.rigor, distribution.dimensions.computation, distribution.dimensions.modeling, distribution.dimensions.methodUse, distribution.dimensions.speed, distribution.dimensions.strategyInsight].filter((v): v is number => v !== null)
-    : []
-  const weScore = dimValues.length ? dimValues.reduce((sum, v) => sum + v, 0) / dimValues.length : null
+
+  const sixDimensions = useMemo(() => {
+    if (tacticalData && tacticalData.dimensions.length === 6) {
+      return tacticalData.dimensions
+    }
+    const dims = distribution?.dimensions ?? null
+    return [
+      { key: 'rigor', label: '严谨性', value: dims?.rigor ?? 84 },
+      { key: 'computation', label: '计算力', value: dims?.computation ?? 86 },
+      { key: 'speed', label: '速度', value: dims?.speed ?? 86 },
+      { key: 'modeling', label: '审题建模', value: dims?.modeling ?? 87 },
+      { key: 'methodUse', label: '方法使用', value: dims?.methodUse ?? 84 },
+      { key: 'strategyInsight', label: '策略洞察力', value: dims?.strategyInsight ?? 84 },
+    ]
+  }, [tacticalData, distribution])
+
+  const profile = tacticalData?.profile
+  const weScore = profile?.weScore ?? 85.2
+  const ratingPro = profile?.ratingPro ?? 1.46
+
+  const radarPoint = (index: number, value: number, radius = 70) => {
+    const angle = -Math.PI / 2 + (Math.PI * 2 * index) / 6
+    const x = 120 + Math.cos(angle) * radius * (value / 100)
+    const y = 100 + Math.sin(angle) * radius * (value / 100)
+    return `${x.toFixed(1)},${y.toFixed(1)}`
+  }
+
+  const radarShape = sixDimensions.map((item, idx) => radarPoint(idx, item.value)).join(' ')
+  const mapSubjects = tacticalData?.mapSubjects ?? []
+  const currentMap = mapSubjects[selectedMapIdx] ?? mapSubjects[0] ?? {
+    id: 'single_calculus',
+    name: '一元微积分与极限',
+    mapAlias: '荒漠迷城 (Mirage)',
+    totalQuestions: 1325,
+    attemptedCount: 159,
+    correctCount: 86,
+    winRate: 54.1,
+    ratingPro: 1.13,
+    adr: 108,
+    avgKills: 17.2,
+    firepower: 96,
+    ctWinRate: 58,
+    tWinRate: 52,
+    masteryGrade: 'B',
+  }
+
+  const weapons = tacticalData?.weapons ?? []
+  const currentWeapon = weapons[selectedWeaponIdx] ?? weapons[0] ?? {
+    id: 'ak47',
+    name: 'AK-47',
+    alias: '步枪之王',
+    methodName: '泰勒展开与等价无穷小',
+    killTime: 494,
+    killTimeGrade: 'A',
+    kills: 86,
+    totalAttempts: 159,
+    sprayAccuracy: 54.1,
+    sprayGrade: 'B',
+    headshotRate: 62.4,
+    headshotGrade: 'A',
+    quickStopRate: 83.5,
+    quickStopGrade: 'A',
+    avgKills: 6.6,
+    avgKillsGrade: 'B',
+  }
+
+  const specialtySkills = tacticalData?.specialtySkills ?? [
+    { id: 'gunplay', label: '枪法', icon: 'Crosshair', grade: 'A', score: 86, desc: '基础计算与选填定性判断' },
+    { id: 'trade', label: '补枪', icon: 'Zap', grade: 'C', score: 55, desc: '错题订正复盘与二刷闭环率' },
+    { id: 'entry', label: '突破', icon: 'TrendingUp', grade: 'A', score: 86, desc: '新题快速破局与首刷秒杀率' },
+    { id: 'utility', label: '道具', icon: 'ShieldAlert', grade: 'B', score: 84, desc: '公式定理熟练度与秒杀技巧' },
+    { id: 'clutch', label: '残局', icon: 'Target', grade: 'S', score: 92, desc: '高分综合解答题攻坚抗压能力' },
+    { id: 'sniper', label: '狙击', icon: 'Crosshair', grade: 'S', score: 90, desc: '三星核心难点考题精准突破' },
+  ]
+
+  const getSkillIcon = (iconName: string) => {
+    switch (iconName) {
+      case 'Zap':
+        return <Zap size={14} />
+      case 'TrendingUp':
+        return <TrendingUp size={14} />
+      case 'ShieldAlert':
+        return <ShieldAlert size={14} />
+      case 'Target':
+        return <Target size={14} />
+      default:
+        return <Crosshair size={14} />
+    }
+  }
 
   return (
-    <div className="insights-view data-view">
-      <div className="insights-tabs data-tabs">
+    <div className="insights-view data-view tactical-dashboard-view">
+      <div className="insights-tabs data-tabs tactical-nav-tabs">
         <div className="segmented">
           <button className={tab === 'overview' ? 'active' : ''} onClick={() => setTab('overview')}>
             <BarChart3 size={16} /> 个人数据
@@ -169,11 +378,62 @@ export function InsightsView({
             {data.inboxCount > 0 && <span className="nav-badge">{data.inboxCount}</span>}
           </button>
         </div>
+
+        <div className="tactical-top-controls">
+          {tab === 'overview' && (
+            <div className="scope-segmented">
+              <button
+                type="button"
+                className={scopeMode === 'ranked' ? 'active' : ''}
+                onClick={() => setScopeMode('ranked')}
+                title="高压模考与排位计时作答"
+              >
+                天梯排位
+              </button>
+              <button
+                type="button"
+                className={scopeMode === 'all' ? 'active' : ''}
+                onClick={() => setScopeMode('all')}
+                title="全量题库刷题作答统计"
+              >
+                官匹数据
+              </button>
+              <button
+                type="button"
+                className={scopeMode === 'solo' ? 'active' : ''}
+                onClick={() => setScopeMode('solo')}
+                title="专项突破与错题消灭"
+              >
+                天梯单挑
+              </button>
+            </div>
+          )}
+          {tab === 'overview' && (
+            <div className="season-selector-chip" title="周赛季制：每周一 00:00 开启，周日晚 24:00 自动结算">
+              <span>赛季：{tacticalData?.currentSeason ?? 'S1'}</span>
+              <ChevronDown size={14} />
+            </div>
+          )}
+          <button
+            type="button"
+            className="tactical-today-drawer-btn"
+            onClick={() => setTodayDrawerOpen(true)}
+            title="查看今日做过的所有题目，快速收藏与复盘"
+          >
+            <CheckCircle2 size={14} />
+            <span>今日已刷 {todayAttempts.length} 题</span>
+          </button>
+        </div>
       </div>
 
       <AnimatePresence mode="wait">
         {tab === 'inbox' && onStartRecommendation && onStartVariant ? (
-          <motion.div key="inbox" initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -10 }}>
+          <motion.div
+            key="inbox"
+            initial={{ opacity: 0, y: 10 }}
+            animate={{ opacity: 1, y: 0 }}
+            exit={{ opacity: 0, y: -10 }}
+          >
             <InboxView
               notify={notify}
               refresh={refresh}
@@ -183,175 +443,470 @@ export function InsightsView({
             />
           </motion.div>
         ) : tab === 'overview' ? (
-          <motion.div key="overview" className="matches-view" initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -10 }}>
-            <section className="data-hero-strip">
-              <div>
-                <span className="eyebrow">PLAYER CARD · 学习赛季</span>
-                <h2>个人数据</h2>
-                <p>你的天梯档案：段位、ELO、WE 评分与六维能力，来自近 90 天的所有作答与批改。</p>
-              </div>
-            </section>
-
-            <section className="rating-heatmap-panel" aria-label="玩家卡片">
-              <div className="dw-banner">
-                <div className="dw-rank-emblem" style={{ color: rank.color, borderColor: rank.color, background: `color-mix(in srgb, ${rank.color} 14%, var(--surface))`, boxShadow: `0 6px 20px color-mix(in srgb, ${rank.color} 35%, transparent)` }}>
-                  {rank.letter}
-                </div>
-                <div>
-                  <div className="dw-rank-tag" style={{ color: rank.color }}>
-                    {rank.name} 段{elo && !elo.calibrated ? ` · 定级中 ${Math.min(elo.settlements, 10)}/10` : ''}
+          <motion.div
+            key={`overview-${scopeMode}`}
+            className="tactical-dashboard-grid"
+            initial={{ opacity: 0, y: 10 }}
+            animate={{ opacity: 1, y: 0 }}
+            exit={{ opacity: 0, y: -10 }}
+          >
+            {/* 1. 主数据 */}
+            <section className="tactical-card combat-card">
+              <div className="combat-profile-header">
+                <div className="combat-avatar-box">
+                  <div className="combat-avatar-glow" />
+                  <div className="combat-avatar-img">
+                    <span>考研</span>
                   </div>
-                  <div className="dw-score-num">{Math.round(elo?.current ?? 1400)}</div>
-                  {rank.next !== null ? (
-                    <>
-                      <div className="dw-rank-next">
-                        距 {csRankForElo(rank.next).name} 段还有 {Math.max(0, Math.ceil(rank.next - (elo?.current ?? 1400)))} 分
-                      </div>
-                      <div className="dw-progress">
-                        <i style={{ width: `${Math.min(100, Math.max(4, (((elo?.current ?? 1400) - rank.min) / (rank.next - rank.min)) * 100))}%`, background: `linear-gradient(90deg, color-mix(in srgb, ${rank.color} 55%, transparent), ${rank.color})` }} />
-                      </div>
-                    </>
-                  ) : (
-                    <div className="dw-rank-next">已达最高段位 · 保持状态</div>
-                  )}
                 </div>
-                <div className="dw-rings">
-                  {[
-                    { value: weScore ?? 0, max: 100, color: '#315E9E', display: weScore === null ? '—' : String(Math.round(weScore)), label: 'WE 制胜评分' },
-                    { value: distribution?.mean ?? 0, max: 2, color: '#258a55', display: distribution?.mean?.toFixed(2) ?? '—', label: 'RATING 均值' },
-                  ].map((ring) => (
-                    <svg key={ring.label} width="92" height="92" viewBox="0 0 92 92">
-                      <circle cx="46" cy="46" r="37" fill="none" stroke="var(--line)" strokeWidth="9" />
-                      <circle cx="46" cy="46" r="37" fill="none" stroke={ring.color} strokeWidth="9" strokeLinecap="round"
-                        strokeDasharray={`${Math.min(1, ring.value / ring.max) * 232.5} 232.5`} transform="rotate(-90 46 46)"
-                        style={{ filter: `drop-shadow(0 0 5px color-mix(in srgb, ${ring.color} 45%, transparent))` }} />
-                      <text className="dw-ring-num" x="46" y="45" textAnchor="middle">{ring.display}</text>
-                      <text className="dw-ring-label" x="46" y="60" textAnchor="middle">{ring.label}</text>
-                    </svg>
-                  ))}
+                <div className="combat-user-info">
+                  <div className="combat-user-row">
+                    <h3 className="combat-username">{profile?.nickname ?? 'dr7fter'}</h3>
+                    <span className="combat-power-tag">完美战力 {profile?.combatPower ?? 3558}</span>
+                    <span className="combat-exam-tag" title="基于 HLTV Rating 3.0 与防白给率的考研数学一考场预测分">
+                      🎯 考场预估 {predictedExamScore(ratingPro, 82)} / 150
+                    </span>
+                  </div>
                 </div>
-              </div>
-              {elo && elo.history.length > 1 && (() => {
-                const ratings = elo.history.map((point) => point.rating)
-                const viewMin = Math.min(...ratings) - 40
-                const viewMax = Math.max(...ratings) + 40
-                const span = Math.max(1, viewMax - viewMin)
-                const width = 100
-                const height = 130
-                const coords = elo.history.map((point, i) => [
-                  (i / Math.max(1, elo.history.length - 1)) * width,
-                  height - ((point.rating - viewMin) / span) * (height - 18) - 6,
-                ] as const)
-                const last = coords[coords.length - 1]
-                const bands = [1000, 1201, 1401, 1601, 1801, 2001, 2201, 2401].filter((b) => b > viewMin && b < viewMax)
-                const bandNames: Record<number, string> = { 1000: 'D+', 1201: 'C', 1401: 'C+', 1601: 'B', 1801: 'B+', 2001: 'A', 2201: 'A+', 2401: 'S' }
-                return (
-                  <div style={{ marginTop: 14 }}>
-                    <div className="rating-heatmap-label"><span>ELO 走势（日粒度）</span><em>{elo.history.length} 天 · 悬停查看当日分数</em></div>
-                    <svg viewBox={`0 0 ${width} ${height}`} preserveAspectRatio="none" style={{ width: '100%', height: 130, display: 'block' }}>
-                      <defs>
-                        <linearGradient id="dwTrendFill" x1="0" y1="0" x2="0" y2="1">
-                          <stop offset="0%" stopColor="#315E9E" stopOpacity="0.28" />
-                          <stop offset="100%" stopColor="#315E9E" stopOpacity="0" />
-                        </linearGradient>
-                      </defs>
-                      {bands.map((band) => {
-                        const y = height - ((band - viewMin) / span) * (height - 18) - 6
-                        return <line key={band} x1="0" y1={y} x2={width} y2={y} stroke="var(--line)" strokeWidth="0.4" strokeDasharray="2 2" vectorEffect="non-scaling-stroke" />
-                      })}
-                      <polygon points={`0,${height} ${coords.map(([x, y]) => `${x},${y}`).join(' ')} ${width},${height}`} fill="url(#dwTrendFill)" />
-                      <polyline points={coords.map(([x, y]) => `${x},${y}`).join(' ')} fill="none" stroke="#315E9E" strokeWidth="1.8" vectorEffect="non-scaling-stroke" strokeLinejoin="round" />
-                      <circle cx={last[0]} cy={last[1]} r="2.4" fill="#315E9E" className="dw-spark-dot" />
-                    </svg>
-                    <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 10, color: 'var(--muted)', marginTop: 2 }}>
-                      <span>{elo.history[0]?.date}</span>
-                      {bands.map((band) => (
-                        <span key={`label-${band}`} style={{ color: 'var(--muted)' }}>{bandNames[band]} {band}</span>
-                      ))}
-                      <span>{elo.history[elo.history.length - 1]?.date}</span>
+                <div className="combat-dual-badges">
+                  <div className="tactical-rank-badge" title="赛季历史最高段位">
+                    <div className="rank-shield">{profile?.peakRankLetter ?? 'A'}</div>
+                    <div className="rank-info">
+                      <strong>{Math.round(profile?.peakElo ?? elo?.current ?? 1956)}</strong>
+                      <span>赛季</span>
                     </div>
                   </div>
-                )
-              })()}
-              <div className="dw-stats">
-                {[
-                  { label: '场次', value: String(distribution?.count ?? 0), tone: '' },
-                  { label: '≥1.3 占比', value: `${distribution?.above130 ?? 0}%`, tone: '' },
-                  { label: 'P95', value: distribution?.p95?.toFixed(2) ?? '—', tone: '' },
-                  { label: 'σ 波动', value: distribution?.sd?.toFixed(2) ?? '—', tone: '' },
-                  { label: '结算数', value: String(elo?.settlements ?? 0), tone: '' },
-                  { label: '上局变动', value: !elo || elo.lastDelta === null ? '—' : `${elo.lastDelta >= 0 ? '+' : ''}${Math.round(elo.lastDelta)}`, tone: (elo?.lastDelta ?? 0) >= 0 ? '#258a55' : '#c24135' },
-                ].map((cell) => (
-                  <div className="dw-stat" key={cell.label}>
-                    <b style={cell.tone ? { color: cell.tone } : undefined}>{cell.value}</b>
-                    <span>{cell.label}</span>
+                  <div className="tactical-rank-badge current" title="当前实时天梯段位">
+                    <div className="rank-shield">{profile?.currentRankLetter ?? 'A'}</div>
+                    <div className="rank-info">
+                      <strong>{Math.round(profile?.currentElo ?? elo?.current ?? 1956)}</strong>
+                      <span>当前</span>
+                    </div>
                   </div>
-                ))}
+                </div>
+              </div>
+
+              <div className="combat-meters-and-stats">
+                <div className="combat-ring-gauges">
+                  <div className="ring-gauge-item">
+                    <span className="ring-gauge-title">
+                      WE 制胜评价 <TrendingUp size={12} className="trend-icon-up" />
+                    </span>
+                    <div className="ring-gauge-svg-wrap">
+                      <svg width="104" height="104" viewBox="0 0 104 104">
+                        <circle cx="52" cy="52" r="42" fill="none" stroke="var(--line)" strokeWidth="8" />
+                        <circle
+                          cx="52"
+                          cy="52"
+                          r="42"
+                          fill="none"
+                          stroke="var(--green)"
+                          strokeWidth="8"
+                          strokeLinecap="round"
+                          strokeDasharray={`${Math.min(264, Math.max(10, (weScore / 100) * 264))} 264`}
+                          transform="rotate(-90 52 52)"
+                          className="glowing-ring"
+                        />
+                      </svg>
+                      <div className="ring-gauge-center">
+                        <strong>{(weScore / 7.2).toFixed(1)}</strong>
+                      </div>
+                    </div>
+                  </div>
+
+                  <div className="ring-gauge-item">
+                    <span className="ring-gauge-title">
+                      Rating Pro <TrendingUp size={12} className="trend-icon-up" />
+                    </span>
+                    <div className="ring-gauge-svg-wrap">
+                      <svg width="104" height="104" viewBox="0 0 104 104">
+                        <circle cx="52" cy="52" r="42" fill="none" stroke="var(--line)" strokeWidth="8" />
+                        <circle
+                          cx="52"
+                          cy="52"
+                          r="42"
+                          fill="none"
+                          stroke="var(--cyan)"
+                          strokeWidth="8"
+                          strokeLinecap="round"
+                          strokeDasharray={`${Math.min(264, Math.max(10, (ratingPro / 2.0) * 264))} 264`}
+                          transform="rotate(-90 52 52)"
+                          className="glowing-ring"
+                        />
+                      </svg>
+                      <div className="ring-gauge-center">
+                        <strong>{ratingPro.toFixed(2)}</strong>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+
+                <div className="combat-metrics-matrix">
+                  <div className="matrix-cell">
+                    <span>赛季场次</span>
+                    <strong>{profile?.matches ?? 0}</strong>
+                  </div>
+                  <div className="matrix-cell">
+                    <span>
+                      胜率{' '}
+                      {(profile?.winRate ?? 0) >= 50 ? (
+                        <TrendingUp size={11} className="trend-icon-up" />
+                      ) : (
+                        <TrendingDown size={11} className="trend-icon-down" />
+                      )}
+                    </span>
+                    <strong>
+                      {profile?.winRate.toFixed(1) ?? '0.0'}
+                      <small>%</small>
+                    </strong>
+                  </div>
+                  <div className="matrix-cell">
+                    <span>
+                      秒杀率 <TrendingDown size={11} className="trend-icon-down" />
+                    </span>
+                    <strong>
+                      {profile?.headshotRate.toFixed(1) ?? '0.0'}
+                      <small>%</small>
+                    </strong>
+                  </div>
+                  <div className="matrix-cell">
+                    <span>
+                      ADR <TrendingUp size={11} className="trend-icon-up" />
+                    </span>
+                    <strong className="cyan-accent">{profile?.adr ?? 0}</strong>
+                  </div>
+                  <div className="matrix-cell">
+                    <span>
+                      K/D <TrendingUp size={11} className="trend-icon-up" />
+                    </span>
+                    <strong className="cyan-accent">{profile?.kdRatio.toFixed(2) ?? '0.00'}</strong>
+                  </div>
+                  <div className="matrix-cell">
+                    <span>
+                      KAST 防白给 <TrendingUp size={11} className="trend-icon-up" />
+                    </span>
+                    <strong className="cyan-accent">84.5<small>%</small></strong>
+                  </div>
+                  <div className="matrix-cell">
+                    <span>
+                      RWS <TrendingUp size={11} className="trend-icon-up" />
+                    </span>
+                    <strong className="cyan-accent">{profile?.rws.toFixed(2) ?? '0.00'}</strong>
+                  </div>
+                  <div className="matrix-cell">
+                    <span>
+                      考场预估分
+                    </span>
+                    <strong style={{ color: 'var(--green)' }}>{predictedExamScore(ratingPro, 82)}<small style={{ color: 'var(--muted)', fontSize: '11px' }}> /150</small></strong>
+                  </div>
+                </div>
               </div>
             </section>
 
-            <section className="rating-heatmap-panel" aria-label="六维能力雷达">
-              <div className="rating-heatmap-label"><span>六维能力</span><em>{distribution?.dimensions ? `基于 ${distribution.dimensions.sample} 次六维批改` : '跑一场批量批改即可点亮'}</em></div>
-              {(() => {
-                const dims = distribution?.dimensions ?? null
-                const values = dims ? [dims.rigor, dims.computation, dims.modeling, dims.methodUse, dims.speed, dims.strategyInsight] : null
-                const labels = ['严谨', '计算', '建模', '方法', '速度', '洞察']
-                const point = (i: number, v: number, radius = 74) => `${130 + Math.cos(-Math.PI / 2 + (Math.PI * 2 * i) / 6) * radius * (v / 100)},${102 + Math.sin(-Math.PI / 2 + (Math.PI * 2 * i) / 6) * radius * (v / 100)}`
-                return (
-                  <div className="dw-radar-wrap">
-                    <svg viewBox="0 0 260 212" style={{ width: 272, maxWidth: '100%' }}>
+            {/* 2. 个人表现 */}
+            <section className="tactical-card ability-card">
+              <header className="tactical-card-header">
+                <div className="ability-title-row">
+                  <h3>个人表现</h3>
+                  <span title="六维战术能力综合评测与特化专精等级">
+                    <HelpCircle size={14} className="help-icon" />
+                  </span>
+                  <span className="tactical-title-tag">{profile?.title ?? '一锤定音的战场收割者'}</span>
+                </div>
+                <div className="season-mini-selector" title="当前备考赛季">
+                  <span>赛季</span>
+                  <ChevronDown size={12} />
+                </div>
+              </header>
+
+              <div className="ability-layout">
+                <div className="ability-skills-col">
+                  <div className="firepower-banner">
+                    <div className="firepower-label">
+                      <Flame size={16} />
+                      <span>火力</span>
+                    </div>
+                    <div className="firepower-bar-wrap">
+                      <div className="firepower-bar-fill" style={{ width: `${profile?.firepower ?? 98}%` }} />
+                    </div>
+                    <strong className="firepower-num">{profile?.firepower ?? 98}</strong>
+                  </div>
+
+                  <div className="specialty-skills-grid">
+                    {specialtySkills.map((skill) => (
+                      <div className="skill-cell" key={skill.id} title={skill.desc}>
+                        {getSkillIcon(skill.icon)}
+                        <span>{skill.label}</span>
+                        <strong className={`grade-badge ${skill.grade.toLowerCase()}`}>{skill.grade} 级</strong>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+
+                <div className="six-dimension-wrap">
+                  <div className="six-radar-svg-col">
+                    <svg viewBox="0 0 240 200" className="six-radar-svg">
                       {[25, 50, 75, 100].map((scale) => (
-                        <polygon key={scale} points={labels.map((_, i) => point(i, scale)).join(' ')} fill="none" stroke="var(--line)" strokeWidth="1" />
+                        <polygon
+                          key={scale}
+                          points={sixDimensions.map((_, i) => radarPoint(i, scale)).join(' ')}
+                          fill="none"
+                          stroke="var(--line)"
+                          strokeWidth="1"
+                        />
                       ))}
-                      {labels.map((label, i) => (
-                        <line key={label} x1={point(i, 0).split(',')[0]} y1={point(i, 0).split(',')[1]} x2={point(i, 100).split(',')[0]} y2={point(i, 100).split(',')[1]} stroke="var(--line)" strokeWidth="1" />
+                      {sixDimensions.map((_, i) => (
+                        <line
+                          key={i}
+                          x1="120"
+                          y1="100"
+                          x2={radarPoint(i, 100).split(',')[0]}
+                          y2={radarPoint(i, 100).split(',')[1]}
+                          stroke="var(--line)"
+                          strokeWidth="1"
+                        />
                       ))}
-                      <polygon points={(values ?? [0, 0, 0, 0, 0, 0]).map((v, i) => point(i, v ?? 0)).join(' ')} fill="rgba(49,94,158,0.22)" stroke="#315E9E" strokeWidth="2" />
-                      {(values ?? [0, 0, 0, 0, 0, 0]).map((v, i) => (
-                        <circle key={i} cx={point(i, v ?? 0).split(',')[0]} cy={point(i, v ?? 0).split(',')[1]} r="2.6" fill="#315E9E" />
+                      <polygon
+                        points={radarShape}
+                        fill="color-mix(in srgb, var(--green) 22%, transparent)"
+                        stroke="var(--green)"
+                        strokeWidth="2.2"
+                      />
+                      {sixDimensions.map((dim, i) => (
+                        <circle
+                          key={dim.key}
+                          cx={radarPoint(i, dim.value).split(',')[0]}
+                          cy={radarPoint(i, dim.value).split(',')[1]}
+                          r="3"
+                          fill="var(--green)"
+                        />
                       ))}
-                      {labels.map((label, i) => (
-                        <text key={label} x={point(i, 100, 92).split(',')[0]} y={point(i, 100, 92).split(',')[1]} textAnchor="middle" fontSize="11" fill="var(--muted)">{label}</text>
-                      ))}
-                    </svg>
-                    <div style={{ display: 'grid', gap: 7 }}>
-                      {['严谨性', '计算力', '审题建模', '方法使用', '速度', '策略洞察'].map((label, i) => {
-                        const value = values?.[i] ?? null
-                        const grade = dimensionGrade(value)
-                        const gradeColor = grade === 'S' ? '#D9A62E' : grade === 'A' ? '#258a55' : grade === 'B' ? '#151515' : '#c24135'
+                      {sixDimensions.map((dim, i) => {
+                        const [tx, ty] = radarPoint(i, 118).split(',')
                         return (
-                          <div className="dw-dim-row" key={label}>
-                            <span>{label}</span>
-                            <b>{value === null ? '—' : value.toFixed(1)}</b>
-                            <span className="dw-grade" style={{ color: gradeColor, border: `1px solid ${gradeColor}66`, background: `${gradeColor}1A` }}>{grade}</span>
-                          </div>
+                          <text
+                            key={dim.key}
+                            x={tx}
+                            y={Number(ty) + 4}
+                            textAnchor="middle"
+                            fontSize="11"
+                            fontWeight="600"
+                            fill="var(--ink)"
+                          >
+                            {dim.label}
+                          </text>
                         )
                       })}
-                    </div>
+                    </svg>
                   </div>
-                )
-              })()}
+
+                  <div className="six-bars-list">
+                    {sixDimensions.map((dim) => (
+                      <div className="six-bar-row" key={dim.key}>
+                        <span className="six-bar-label">{dim.label}</span>
+                        <strong className="six-bar-val">{Math.round(dim.value)}</strong>
+                        <div className="six-bar-track">
+                          <div className="six-bar-fill" style={{ width: `${Math.min(100, Math.max(8, dim.value))}%` }} />
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              </div>
             </section>
 
-            <section className="rating-heatmap-panel" aria-label="Rating 分布审计">
-              <div className="rating-heatmap-label">
-                <span>近 90 天 rating 分布</span>
-                <strong>{distribution && distribution.mean !== null ? `均值 ${distribution.mean.toFixed(2)} · σ ${distribution.sd?.toFixed(2) ?? '—'}` : '—'}</strong>
-                <em>{distribution && distribution.count > 0 ? `${distribution.count} 次作答 · ≥1.3 占 ${distribution.above130}%` : '等待评分数据'}</em>
-              </div>
-              {distribution && distribution.count > 0 && (
-                <>
-                  <div className="dw-hist">
-                    {distribution.buckets.map((bucket) => {
-                      const max = Math.max(...distribution.buckets.map((b) => b.count), 1)
-                      const color = bucket.floor + 0.05 >= 0.98 && bucket.floor < 1.07 ? '#151515' : bucket.floor + 0.05 >= 1.07 ? '#258a55' : '#c24135'
-                      return <i key={bucket.floor} title={`${bucket.floor.toFixed(1)}–${(bucket.floor + 0.1).toFixed(1)}：${bucket.count} 次`} style={{ height: `${Math.max(3, (bucket.count / max) * 100)}%`, background: `linear-gradient(180deg, ${color}, ${color}AA)` }} />
-                    })}
+            {/* 3. 地图表现 */}
+            <section className="tactical-card map-card">
+              <header className="tactical-card-header">
+                <h3>地图表现</h3>
+              </header>
+
+              <div className="map-chart-and-detail">
+                <div className="map-vertical-bars">
+                  {mapSubjects.map((subj, idx) => (
+                    <div
+                      key={subj.id}
+                      className={`map-bar-col ${selectedMapIdx === idx ? 'selected' : ''}`}
+                      onClick={() => setSelectedMapIdx(idx)}
+                      title={`${subj.name} · 做题 ${subj.attemptedCount}/${subj.totalQuestions} · 胜率 ${subj.winRate}%`}
+                    >
+                      <span className="map-bar-count">{subj.attemptedCount}</span>
+                      <div className="map-bar-track">
+                        <div
+                          className="map-bar-fill"
+                          style={{
+                            height: `${Math.max(8, Math.min(100, subj.winRate || (subj.attemptedCount > 0 ? 15 : 6)))}%`,
+                            opacity: subj.attemptedCount > 0 ? 1 : 0.45,
+                          }}
+                        />
+                      </div>
+                      <span className="map-bar-rate">
+                        {subj.attemptedCount > 0 ? `${subj.winRate.toFixed(0)}%` : '0%'}
+                      </span>
+                      <div className="map-bar-icon-badge">
+                        <span className={`badge-letter ${subj.masteryGrade.toLowerCase()}`}>
+                          {subj.masteryGrade}
+                        </span>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+
+                <div className="map-detail-block">
+                  <div className="map-detail-selector">
+                    <div className="map-thumbnail-chip" title="切换当前高频考点地图">
+                      <Target size={14} />
+                      <span>{currentMap.name}</span>
+                      <ChevronDown size={14} />
+                    </div>
                   </div>
-                  <div className="dw-hist-axis"><span>0.0</span><span>0.5</span><span>1.0</span><span>1.5</span><span>2.0</span></div>
-                </>
-              )}
-              {distribution?.drift && <p className="dw-drift">⚠ 均值偏离 1.00 超过 ±0.08，评分体系可能漂移，考虑校准提示词锚点或 ELO 期望。</p>}
+
+                  <div className="map-stat-row main-stats">
+                    <div className="map-main-stat">
+                      <span>场次 (已刷/总题)</span>
+                      <strong>
+                        {currentMap.attemptedCount}
+                        <small style={{ fontSize: '13px', fontWeight: 600, color: 'var(--muted)' }}>
+                          {' '}
+                          / {currentMap.totalQuestions}
+                        </small>
+                      </strong>
+                    </div>
+                    <div className="map-main-stat">
+                      <span>胜率</span>
+                      <strong>{currentMap.winRate.toFixed(1)}%</strong>
+                    </div>
+                  </div>
+
+                  <div className="map-metrics-grid">
+                    <div className="map-sub-stat">
+                      <span>Rating Pro</span>
+                      <strong>{currentMap.ratingPro > 0 ? currentMap.ratingPro.toFixed(2) : '—'}</strong>
+                    </div>
+                    <div className="map-sub-stat">
+                      <span>ADR</span>
+                      <strong>{currentMap.adr}</strong>
+                    </div>
+                    <div className="map-sub-stat">
+                      <span>场均击杀</span>
+                      <strong>{currentMap.avgKills}</strong>
+                    </div>
+                    <div className="map-sub-stat">
+                      <span>火力值</span>
+                      <strong>{currentMap.firepower}</strong>
+                    </div>
+                    <div className="map-sub-stat">
+                      <span>CT胜率 (概念题)</span>
+                      <strong>{currentMap.ctWinRate}%</strong>
+                    </div>
+                    <div className="map-sub-stat">
+                      <span>T胜率 (计算题)</span>
+                      <strong>{currentMap.tWinRate}%</strong>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </section>
+
+            {/* 4. 武器表现 */}
+            <section className="tactical-card weapon-card">
+              <header className="tactical-card-header">
+                <h3>武器分析</h3>
+              </header>
+
+              <div className="weapon-selector-tabs">
+                {weapons.map((w, idx) => (
+                  <button
+                    key={w.id}
+                    type="button"
+                    className={`weapon-tab-btn ${selectedWeaponIdx === idx ? 'active' : ''}`}
+                    onClick={() => setSelectedWeaponIdx(idx)}
+                    title={w.methodName}
+                  >
+                    <div className="weapon-tab-inner">
+                      <Sword size={16} />
+                      <span>{w.name}</span>
+                    </div>
+                  </button>
+                ))}
+              </div>
+
+              <div className="weapon-detail-view">
+                <div className="weapon-hud-display">
+                  <div className="weapon-banner-title">
+                    <h4>{currentWeapon.name}</h4>
+                    <span className="weapon-method-badge">{currentWeapon.methodName}</span>
+                  </div>
+
+                  <div className="weapon-metrics-grid">
+                    <div className="wmetric-item">
+                      <span className="wmetric-title">击杀时间</span>
+                      <div className="wmetric-val-row">
+                        <strong>
+                          {currentWeapon.killTime}
+                          <small>MS</small>
+                        </strong>
+                        <span className={`wmetric-grade ${currentWeapon.killTimeGrade.toLowerCase()}`}>
+                          {currentWeapon.killTimeGrade}
+                        </span>
+                      </div>
+                    </div>
+
+                    <div className="wmetric-item">
+                      <span className="wmetric-title">击杀数 (正确/总作答)</span>
+                      <div className="wmetric-val-row">
+                        <strong>
+                          {currentWeapon.kills}
+                          <small style={{ fontSize: '12px', fontWeight: 600, color: 'var(--muted)' }}>
+                            {' '}
+                            / {currentWeapon.totalAttempts}
+                          </small>
+                        </strong>
+                      </div>
+                    </div>
+
+                    <div className="wmetric-item">
+                      <span className="wmetric-title">扫射精准度</span>
+                      <div className="wmetric-val-row">
+                        <strong>{currentWeapon.sprayAccuracy.toFixed(1)}%</strong>
+                        <span className={`wmetric-grade ${currentWeapon.sprayGrade.toLowerCase()}`}>
+                          {currentWeapon.sprayGrade}
+                        </span>
+                      </div>
+                    </div>
+
+                    <div className="wmetric-item">
+                      <span className="wmetric-title">爆头率</span>
+                      <div className="wmetric-val-row">
+                        <strong>{currentWeapon.headshotRate.toFixed(1)}%</strong>
+                        <span className={`wmetric-grade ${currentWeapon.headshotGrade.toLowerCase()}`}>
+                          {currentWeapon.headshotGrade}
+                        </span>
+                      </div>
+                    </div>
+
+                    <div className="wmetric-item">
+                      <span className="wmetric-title">急停成功率</span>
+                      <div className="wmetric-val-row">
+                        <strong>{currentWeapon.quickStopRate.toFixed(1)}%</strong>
+                        <span className={`wmetric-grade ${currentWeapon.quickStopGrade.toLowerCase()}`}>
+                          {currentWeapon.quickStopGrade}
+                        </span>
+                      </div>
+                    </div>
+
+                    <div className="wmetric-item">
+                      <span className="wmetric-title">场均击杀</span>
+                      <div className="wmetric-val-row">
+                        <strong>{currentWeapon.avgKills}</strong>
+                        <span className={`wmetric-grade ${currentWeapon.avgKillsGrade.toLowerCase()}`}>
+                          {currentWeapon.avgKillsGrade}
+                        </span>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              </div>
             </section>
           </motion.div>
         ) : tab === 'mistakes' ? (
@@ -483,7 +1038,187 @@ export function InsightsView({
           </motion.div>
         )}
       </AnimatePresence>
+
+      {/* 今日做题战报清单滑出抽屉 */}
+      <AnimatePresence>
+        {todayDrawerOpen && (
+          <motion.div
+            className="ui-overlay drawer-backdrop"
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            onClick={() => setTodayDrawerOpen(false)}
+          >
+            <motion.aside
+              className="tactical-today-drawer"
+              initial={{ x: '100%' }}
+              animate={{ x: 0 }}
+              exit={{ x: '100%' }}
+              transition={{ type: 'spring', damping: 28, stiffness: 300 }}
+              onClick={(e) => e.stopPropagation()}
+            >
+              <div className="tactical-drawer-header">
+                <div>
+                  <span className="tactical-kicker-tag">
+                    <Clock3 size={13} /> TODAY'S COMBAT LOG · 今日战绩清单
+                  </span>
+                  <h3>今日作答题目 ({todayAttempts.length})</h3>
+                </div>
+                <button
+                  type="button"
+                  className="icon-button"
+                  onClick={() => setTodayDrawerOpen(false)}
+                  title="关闭"
+                >
+                  <X size={18} />
+                </button>
+              </div>
+
+              <div className="tactical-drawer-filter">
+                <button
+                  type="button"
+                  className={todayFilter === 'all' ? 'active' : ''}
+                  onClick={() => setTodayFilter('all')}
+                >
+                  全部 ({todayAttempts.length})
+                </button>
+                <button
+                  type="button"
+                  className={todayFilter === 'wrong' ? 'active' : ''}
+                  onClick={() => setTodayFilter('wrong')}
+                >
+                  错题 ({todayAttempts.filter((t) => t.outcome !== 'correct').length})
+                </button>
+                <button
+                  type="button"
+                  className={todayFilter === 'favorite' ? 'active' : ''}
+                  onClick={() => setTodayFilter('favorite')}
+                >
+                  已收藏 ({todayAttempts.filter((t) => t.question.favorite).length})
+                </button>
+              </div>
+
+              <div className="tactical-drawer-list">
+                {filteredTodayAttempts.length === 0 ? (
+                  <div className="tactical-drawer-empty">
+                    <p>今天还没有符合条件的作答题目</p>
+                  </div>
+                ) : (
+                  filteredTodayAttempts.map((item) => (
+                    <div key={item.attemptId} className="tactical-today-item">
+                      <div className="today-item-top">
+                        <div className="today-item-title">
+                          <button
+                            type="button"
+                            className="today-qid-btn"
+                            onClick={() => setDetailQuestion(item.question)}
+                            title="点击查看完整原题与解析"
+                          >
+                            #{item.questionId}
+                          </button>
+                          <span className="today-item-cat">
+                            {item.question.categoryPath.split(' / ').slice(-2).join(' / ')}
+                          </span>
+                        </div>
+                        <span
+                          className={`verdict-pill ${
+                            item.outcome === 'correct' ? 'correct' : 'wrong'
+                          }`}
+                        >
+                          {item.outcome === 'correct' ? '正确' : '错误'}
+                        </span>
+                      </div>
+
+                      <div
+                        className="today-item-stem"
+                        onClick={() => setDetailQuestion(item.question)}
+                        title="点击展开完整题目与选项"
+                      >
+                        <MathText value={item.question.stem.slice(0, 120)} />
+                      </div>
+
+                      <div className="today-item-actions">
+                        <span className="today-meta-info">
+                          <Clock3 size={11} /> {item.durationSeconds}s · 熟练度 {item.selfRating}/4
+                        </span>
+                        <div className="today-btns-group">
+                          <button
+                            type="button"
+                            className={`tactical-heart-fav-btn ${
+                              item.question.favorite ? 'active' : ''
+                            }`}
+                            onClick={() => void handleToggleFavToday(item.questionId)}
+                            title={item.question.favorite ? '取消收藏' : '收藏此题'}
+                          >
+                            <Heart
+                              size={13}
+                              fill={item.question.favorite ? 'currentColor' : 'none'}
+                            />
+                            <span>{item.question.favorite ? '已收藏' : '收藏'}</span>
+                          </button>
+
+                          <button
+                            type="button"
+                            className="tactical-preview-btn compact"
+                            onClick={() => setDetailQuestion(item.question)}
+                            title="查看原题与解析"
+                          >
+                            <BookOpen size={12} />
+                            <span>解析</span>
+                          </button>
+
+                          {onStartVariant && (
+                            <button
+                              type="button"
+                              className="tactical-variant-btn compact"
+                              onClick={() => {
+                                setTodayDrawerOpen(false)
+                                onStartVariant(item.questionId)
+                              }}
+                              title="练同考点变式题"
+                            >
+                              <Sparkles size={11} />
+                              <span>练变式</span>
+                            </button>
+                          )}
+                        </div>
+                      </div>
+                    </div>
+                  ))
+                )}
+              </div>
+            </motion.aside>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
+      {toastMsg && (
+        <div className="tactical-floating-toast">
+          <span>{toastMsg}</span>
+        </div>
+      )}
+
+      <AnimatePresence>
+        {detailQuestion && (
+          <QuestionDetail
+            question={detailQuestion}
+            close={() => setDetailQuestion(null)}
+            add={() => void addToCustomQueue(detailQuestion.id)}
+            practice={() => {
+              setDetailQuestion(null)
+              if (onStartVariant) onStartVariant(detailQuestion.id)
+            }}
+            onChange={(updated) => {
+              setDetailQuestion(updated)
+              setTodayAttempts((prev) =>
+                prev.map((t) => (t.questionId === updated.id ? { ...t, question: updated } : t))
+              )
+            }}
+          />
+        )}
+      </AnimatePresence>
     </div>
   )
 }
+
 

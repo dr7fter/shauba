@@ -283,17 +283,16 @@ pub fn node_ratings(conn: &Connection, today: NaiveDate) -> Result<HashMap<i64, 
     )
 }
 
-/// HLTV Rating 2.0 风格的六维线性合成：
-/// `P = 0.42×解决 + 0.18×严谨 + 0.18×影响力 − 0.22×错误代价`，
-/// `rating = clamp(0.24 + 0.0168×P) × 难度系数`。权重按 Rating 3.0 的
-/// 「产出 60% / 代价 40%」理念配平：部分正确恰好落在均值 1.00，
-/// 全维满分的普通全对约 1.45，六维全优约 1.55，做错沉到 0.4 一档。
-const HLTV_W_SOLVING: f64 = 0.42;
-const HLTV_W_RIGOR: f64 = 0.18;
-const HLTV_W_IMPACT: f64 = 0.18;
-const HLTV_W_COST: f64 = 0.22;
-const HLTV_INTERCEPT: f64 = 0.30;
-const HLTV_SLOPE: f64 = 0.016;
+/// HLTV Rating 3.0 风格的五维战术复合模型：
+/// `P = 0.35×得分产出(Cast) + 0.25×破局影响(Impact) + 0.20×防白给稳定性(KAST) + 0.20×节奏效率(Pacing) − 经济拖累(EcoDrag)`，
+/// `rating = clamp(0.26 + 0.0165×P) × 难度系数`。
+/// 兼顾得分产出、上限突破（Clutch 残局加成）、严谨防守与时间黑洞惩罚。
+const HLTV3_W_CAST: f64 = 0.38;
+const HLTV3_W_IMPACT: f64 = 0.22;
+const HLTV3_W_KAST: f64 = 0.20;
+const HLTV3_W_PACING: f64 = 0.20;
+const HLTV3_INTERCEPT: f64 = 0.26;
+const HLTV3_SLOPE: f64 = 0.0125;
 
 /// Codex 六维证据（0-100），任一存在即走 HLTV 合成。
 #[derive(Debug, Clone, Copy, Default, PartialEq)]
@@ -325,54 +324,103 @@ pub fn hltv_rating(
     benchmark_seconds: i64,
     difficulty_multiplier: Option<f64>,
 ) -> f64 {
-    let solving = match outcome {
-        "correct" => 100.0,
-        "partial" => 62.0,
-        "uncertain" => 35.0,
-        _ => 25.0,
-    };
-    let base_cost = match outcome {
-        "correct" => 0.0,
-        "partial" => 40.0,
-        "uncertain" => 60.0,
-        _ => 100.0,
-    };
-    let duration = duration_seconds.max(1) as f64;
-    let bench = benchmark_seconds.max(1) as f64;
-    let time_cost = (((duration / bench) - 1.0).clamp(0.0, 1.0)) * 100.0;
-    let cost = base_cost * 0.75 + time_cost * 0.25;
+    let diff = difficulty_multiplier
+        .unwrap_or(1.0)
+        .clamp(DIFFICULTY_MULTIPLIER_MIN, DIFFICULTY_MULTIPLIER_MAX);
 
-    // 维度缺失时按结果回退，保证公式对任何输入都可计算
-    let rigor = dims.rigor.unwrap_or(match outcome {
-        "correct" => 75.0,
-        "partial" => 60.0,
-        "uncertain" => 50.0,
-        _ => 55.0,
+    // 1. Cast (得分产出值)
+    let comp_hint = dims.computation.unwrap_or(50.0);
+    let cast = match outcome {
+        "correct" => 100.0,
+        "partial" => 38.0 + (comp_hint / 100.0) * 12.0,
+        "uncertain" => 30.0,
+        _ => 10.0,
+    };
+
+    // 2. Impact (破局突破与技巧，含 Clutch 残局加成)
+    let strategy = dims.strategy_insight.unwrap_or(match outcome {
+        "correct" => 65.0,
+        "partial" => 45.0,
+        "uncertain" => 30.0,
+        _ => 18.0,
     });
-    let mut impact = 0.6 * dims.strategy_insight.unwrap_or(match outcome {
-        "correct" => 60.0,
-        "partial" => 50.0,
-        "uncertain" => 45.0,
-        _ => 40.0,
-    }) + 0.4 * dims.method_use.unwrap_or(match outcome {
-        "correct" => 60.0,
-        "partial" => 50.0,
-        "uncertain" => 45.0,
-        _ => 40.0,
+    let method = dims.method_use.unwrap_or(match outcome {
+        "correct" => 65.0,
+        "partial" => 45.0,
+        "uncertain" => 30.0,
+        _ => 18.0,
     });
+    let mut impact = 0.60 * strategy + 0.40 * method;
     if dims.technique_level.unwrap_or(0) >= 4 {
-        impact += 5.0;
+        impact += 6.0;
+    }
+    // 难题残局突破加成 (Clutch)
+    if diff >= 1.06 && outcome != "wrong" {
+        impact += 6.0;
     }
     let impact = impact.clamp(0.0, 100.0);
 
-    let composite = HLTV_W_SOLVING * solving
-        + HLTV_W_RIGOR * rigor
-        + HLTV_W_IMPACT * impact
-        - HLTV_W_COST * cost;
-    let difficulty = difficulty_multiplier
-        .unwrap_or(1.0)
-        .clamp(DIFFICULTY_MULTIPLIER_MIN, DIFFICULTY_MULTIPLIER_MAX);
-    round2(((HLTV_INTERCEPT + HLTV_SLOPE * composite) * difficulty).clamp(RATING_MIN, RATING_MAX))
+    // 3. KAST (严谨防白给率: 严谨性50% + 计算力30% + 审题建模20%)
+    let rigor = dims.rigor.unwrap_or(match outcome {
+        "correct" => 75.0,
+        "partial" => 48.0,
+        "uncertain" => 35.0,
+        _ => 25.0,
+    });
+    let computation = dims.computation.unwrap_or(match outcome {
+        "correct" => 75.0,
+        "partial" => 48.0,
+        "uncertain" => 35.0,
+        _ => 25.0,
+    });
+    let modeling = dims.modeling.unwrap_or(match outcome {
+        "correct" => 75.0,
+        "partial" => 48.0,
+        "uncertain" => 35.0,
+        _ => 25.0,
+    });
+    let kast = (0.50 * rigor + 0.30 * computation + 0.20 * modeling).clamp(0.0, 100.0);
+
+    // 4. Pacing (时间节奏分)
+    let duration = duration_seconds.max(1) as f64;
+    let bench = benchmark_seconds.max(1) as f64;
+    let pacing = dims.speed.unwrap_or_else(|| {
+        ((bench / duration) * 100.0).clamp(45.0, 115.0)
+    });
+
+    // 5. EcoDrag (经济黑洞非线性惩罚: 做错且超时严重)
+    let eco_drag = if outcome == "wrong" || outcome == "incorrect" {
+        if duration > bench * 1.2 {
+            (((duration / bench) - 1.0).clamp(0.0, 1.5)) * 24.0
+        } else {
+            8.0
+        }
+    } else {
+        0.0
+    };
+
+    let composite = HLTV3_W_CAST * cast
+        + HLTV3_W_IMPACT * impact
+        + HLTV3_W_KAST * kast
+        + HLTV3_W_PACING * pacing
+        - eco_drag;
+
+    round2(((HLTV3_INTERCEPT + HLTV3_SLOPE * composite) * diff).clamp(RATING_MIN, RATING_MAX))
+}
+
+/// 考场 150 分预测分映射算法 (单调分段函数)
+pub fn predicted_exam_score(rating: f64, kast: Option<f64>) -> i32 {
+    let k = kast.unwrap_or(75.0).clamp(30.0, 100.0) / 100.0;
+    let r = rating.clamp(0.0, 2.0);
+    let base = if r <= 0.80 {
+        45.0 * (r / 0.80)
+    } else if r <= 1.20 {
+        45.0 + ((r - 0.80) / 0.40) * 70.0 // 0.80 -> 45, 1.00 -> 80, 1.20 -> 115
+    } else {
+        115.0 + ((r - 1.20) / 0.40).clamp(0.0, 1.0) * 32.0 // 1.30 -> 123, 1.60 -> 147
+    };
+    let score = base * k.powf(0.12);
+    score.round().clamp(0.0, 150.0) as i32
 }
 
 /// 完美平台段位分界：D <1000，D+ 1000-1200，C 1201-1400，C+ 1401-1600，
@@ -493,4 +541,16 @@ mod tests {
         assert!(rating > 1.5, "recent evidence should dominate: {rating}");
         assert!(aggregate_question_rating(&[], today).is_none());
     }
+
+    #[test]
+    fn predicted_exam_score_maps_realistically() {
+        assert!(predicted_exam_score(0.60, Some(50.0)) <= 45);
+        let average = predicted_exam_score(1.00, Some(75.0));
+        assert!((70..=95).contains(&average), "1.00 should map to ~70-95: {average}");
+        let high = predicted_exam_score(1.30, Some(85.0));
+        assert!((115..=135).contains(&high), "1.30 should map to ~115-135: {high}");
+        let perfect = predicted_exam_score(1.60, Some(100.0));
+        assert!(perfect >= 140, "1.60+ should map to 140-150: {perfect}");
+    }
 }
+

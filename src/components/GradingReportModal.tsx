@@ -1,7 +1,32 @@
-import { Activity, ArrowRight, ClipboardCheck, Clock3, HelpCircle, LoaderCircle, RefreshCw, X } from 'lucide-react'
-import { CS_RATING_MAX, averageCsRating, csRatingTier, csRatingTone, deriveGradeCsRating, formatElapsed } from '../utils'
+import {
+  Activity,
+  ArrowRight,
+  BookOpen,
+  CheckCircle2,
+  ClipboardCheck,
+  Clock3,
+  Heart,
+  HelpCircle,
+  LoaderCircle,
+  RefreshCw,
+  Sparkles,
+  X,
+} from 'lucide-react'
+import { AnimatePresence } from 'framer-motion'
+import { useState } from 'react'
+import { addToCustomQueue, getQuestion, toggleFavorite } from '../api'
+import {
+  CS_RATING_MAX,
+  averageCsRating,
+  csRatingTier,
+  csRatingTone,
+  deriveGradeCsRating,
+  formatElapsed,
+  predictedExamScore,
+} from '../utils'
 import { MathText } from './MathText'
 import { EmptyState } from './EmptyState'
+import { QuestionDetail } from './QuestionDetailModal'
 import type { GradingReport, PressureSession, Question } from '../types'
 
 export function PressureLearningReportView({
@@ -11,6 +36,7 @@ export function PressureLearningReportView({
   loading,
   onRefresh,
   onClose,
+  onStartVariant,
 }: {
   report: GradingReport
   session: PressureSession | null
@@ -18,15 +44,47 @@ export function PressureLearningReportView({
   loading: boolean
   onRefresh: () => void
   onClose: () => void
+  onStartVariant?: (questionId: number) => void
 }) {
+  const [detailQuestion, setDetailQuestion] = useState<Question | null>(null)
+  const [favoriteMap, setFavoriteMap] = useState<Record<number, boolean>>({})
+  const [toastMsg, setToastMsg] = useState<string | null>(null)
+
+  const handleToggleFav = async (qId: number) => {
+    try {
+      const nextFav = await toggleFavorite(qId)
+      setFavoriteMap((prev) => ({ ...prev, [qId]: nextFav }))
+      setToastMsg(nextFav ? `⭐ 题目 #${qId} 已加入收藏夹` : `已取消题目 #${qId} 收藏`)
+      setTimeout(() => setToastMsg(null), 2200)
+    } catch {
+      setToastMsg('收藏操作失败，请重试')
+      setTimeout(() => setToastMsg(null), 2200)
+    }
+  }
+
+  const handleOpenDetail = async (qId: number) => {
+    const existing = questions[qId]
+    if (existing) {
+      setDetailQuestion(existing)
+      return
+    }
+    try {
+      const fetched = await getQuestion(qId)
+      setDetailQuestion(fetched)
+    } catch {
+      setToastMsg(`无法加载题目 #${qId} 详情`)
+      setTimeout(() => setToastMsg(null), 2000)
+    }
+  }
+
   const gradeTone = (grade: GradingReport['grades'][number]) => {
     if (grade.verdict === 'partial')
-      return { key: 'partial', label: '部分正确', color: '#A66A17', background: '#FFF5DC' }
+      return { key: 'partial', label: '部分正确' }
     if (grade.verdict === 'uncertain' || grade.result === 'uncertain')
-      return { key: 'uncertain', label: '不确定', color: '#6B7280', background: '#F1F3F5' }
+      return { key: 'uncertain', label: '不确定' }
     if (grade.verdict === 'incorrect' || grade.result === 'wrong' || !grade.correct)
-      return { key: 'wrong', label: '错误', color: '#B54236', background: '#FCE9E7' }
-    return { key: 'correct', label: '正确', color: '#267655', background: '#E7F5EE' }
+      return { key: 'wrong', label: '错误' }
+    return { key: 'correct', label: '正确' }
   }
 
   const grades = report.grades ?? []
@@ -73,7 +131,6 @@ export function PressureLearningReportView({
       ? Math.round(observed.reduce((sum, score) => sum + score, 0) / observed.length)
       : grades.length ? Math.round(grades.reduce((sum, grade) => sum + fallback(grade), 0) / grades.length) : 0
   }
-  // fallback 与后端 HLTV 内核的维度回退口径一致（rigor 75/60/55、impact 类 60/50/40）
   const ratingDimensions = [
     { label: '严谨性', value: dimensionAverage('rigor', (grade) => (gradeTone(grade).key === 'correct' ? 75 : gradeTone(grade).key === 'partial' ? 60 : 55)) },
     { label: '计算力', value: dimensionAverage('computation', (grade) => Math.max(1, Math.min(4, grade.selfRating ?? 2)) / 4 * 100) },
@@ -82,6 +139,13 @@ export function PressureLearningReportView({
     { label: '方法使用', value: dimensionAverage('methodUse', (grade) => (gradeTone(grade).key === 'correct' ? 60 : gradeTone(grade).key === 'partial' ? 50 : 40)) },
     { label: '策略洞察力', value: dimensionAverage('strategyInsight', (grade) => (grade.betterSolution ? 72 : gradeTone(grade).key === 'correct' ? 60 : 50)) },
   ]
+  const kastRate = Math.round(
+    0.50 * ratingDimensions[0].value +
+    0.30 * ratingDimensions[1].value +
+    0.20 * ratingDimensions[3].value
+  )
+  const examPrediction = predictedExamScore(averageRatingScore, kastRate)
+
   const radarPoint = (index: number, value: number, radius = 78) => {
     const angle = -Math.PI / 2 + (Math.PI * 2 * index) / ratingDimensions.length
     return `${140 + Math.cos(angle) * radius * value / 100},${104 + Math.sin(angle) * radius * value / 100}`
@@ -93,86 +157,50 @@ export function PressureLearningReportView({
       title: '做得好的地方',
       icon: '✓',
       items: report.summary.strengths ?? [],
-      color: '#267655',
-      background: '#F0F8F4',
+      className: 'strength',
     },
     {
       title: '主要薄弱点',
       icon: '!',
       items: report.summary.weaknesses ?? [],
-      color: '#A65C20',
-      background: '#FFF7EA',
+      className: 'weakness',
     },
     {
       title: '下一步训练建议',
       icon: '→',
       items: report.summary.suggestions ?? [],
-      color: '#315E9E',
-      background: '#EEF4FC',
+      className: 'suggestion',
     },
   ]
 
   return (
     <div
-      className="ui-overlay"
-      style={{
-        position: 'fixed',
-        inset: 0,
-        zIndex: 140,
-        background: 'var(--bg, #f5f3ee)',
-        overflowY: 'auto',
-      }}
+      className="ui-overlay pressure-report-overlay"
       role="dialog"
       aria-modal="true"
       aria-labelledby="pressure-learning-report-title"
     >
-      <div
-        className="pressure-report-wrap"
-        style={{ width: 'min(1120px, calc(100% - 32px))', margin: '0 auto', padding: '24px 0 48px' }}
-      >
-        <div className="pressure-report" style={{ minHeight: 'calc(100vh - 48px)' }}>
-          <div
-            className="report-header"
-            style={{
-              position: 'sticky',
-              top: 0,
-              zIndex: 2,
-              display: 'flex',
-              justifyContent: 'space-between',
-              gap: 20,
-              alignItems: 'flex-start',
-              background: 'inherit',
-              paddingBottom: 16,
-            }}
-          >
+      <div className="pressure-report-wrap">
+        <div className="pressure-report">
+          <div className="report-header tactical-report-header">
             <div>
-              <span
-                style={{
-                  display: 'inline-flex',
-                  alignItems: 'center',
-                  gap: 7,
-                  color: '#6B7280',
-                  fontSize: 13,
-                  fontWeight: 700,
-                  letterSpacing: '.08em',
-                }}
-              >
-                <ClipboardCheck size={16} /> CODEX 纸笔批改
+              <span className="report-badge-kicker">
+                <ClipboardCheck size={16} /> TACTICAL AFTER-ACTION REPORT · 压力演练复盘
               </span>
-              <h2 id="pressure-learning-report-title" style={{ margin: '8px 0 6px' }}>
+              <h2 id="pressure-learning-report-title">
                 压力模拟学习报告
               </h2>
-              <div className="report-meta" style={{ display: 'flex', flexWrap: 'wrap', gap: 12 }}>
+              <div className="report-meta">
                 <span>{reportDate.toLocaleString('zh-CN')}</span>
-                <span>
+                <span className="report-meta-tag">
                   {report.status === 'graded_partial' || ungradedIds.length > 0
                     ? '部分批改报告'
                     : '完整批改报告'}
                 </span>
-                {report.sourceTaskId && <span>任务 {report.sourceTaskId}</span>}
+                {report.sourceTaskId && <span className="report-meta-task">任务 {report.sourceTaskId}</span>}
               </div>
             </div>
-            <div style={{ display: 'flex', gap: 8 }}>
+            <div className="report-header-actions">
               <button
                 className="secondary-button compact"
                 disabled={loading}
@@ -186,100 +214,112 @@ export function PressureLearningReportView({
             </div>
           </div>
 
-          <section
-            aria-label="本次概览"
-            style={{
-              display: 'grid',
-              gridTemplateColumns: 'minmax(180px, 1.2fr) repeat(3, minmax(120px, 1fr))',
-              gap: 12,
-              margin: '12px 0 20px',
-            }}
-          >
-            <div className="report-score-card" style={{ margin: 0, minHeight: 126 }}>
-              <div className="score-circle">
-                <div className="score-value">{accuracy}</div>
-                <div className="score-label">正确率 %</div>
+          <section className="report-overview-grid" aria-label="本次概览">
+            {/* 1. 战术正确率 */}
+            <div className="overview-metric-cell highlight-cell">
+              <div className="metric-header-row">
+                <span className="metric-label">战术正确率</span>
+                <span className="metric-badge">胜率</span>
               </div>
-              <div>
-                <strong style={{ display: 'block', fontSize: 18 }}>本次概览</strong>
-                <span style={{ color: '#6B7280', fontSize: 13 }}>
-                  已批改 {grades.length} / 共 {totalCount} 题
-                </span>
-              </div>
+              <strong className="metric-val text-green">{accuracy}<small>%</small></strong>
+              <small className="metric-note">已批改 {grades.length} / 共 {totalCount} 题</small>
             </div>
-            {[
-              ['总时长', formatElapsed(totalDuration * 1000), '真实经过时间'],
-              ['平均用时', formatElapsed(averageDuration * 1000), '每题平均'],
-              ['报告状态', ungradedIds.length > 0 ? '部分完成' : '已完成', ungradedIds.length > 0 ? `${ungradedIds.length} 题未批改` : '已确认并生成'],
-            ].map(([label, value, note]) => (
-              <div
-                key={label}
-                style={{
-                  border: '1px solid var(--border, #e5e1d8)',
-                  borderRadius: 16,
-                  padding: 18,
-                  background: 'var(--surface, #fff)',
-                }}
-              >
-                <span style={{ color: '#6B7280', fontSize: 13 }}>{label}</span>
-                <strong style={{ display: 'block', margin: '10px 0 5px', fontSize: 23 }}>
-                  {value}
-                </strong>
-                <small style={{ color: '#8B8F97' }}>{note}</small>
+
+            {/* 2. Rating 3.0 与 考场预估分 */}
+            <div className="overview-metric-cell">
+              <div className="metric-header-row">
+                <span className="metric-label">Rating 3.0 & 考场预估</span>
+                <span className="combat-tier-badge">{ratingTier} 段</span>
               </div>
-            ))}
+              <strong className="metric-val cyan-accent">{averageRatingScore.toFixed(2)}</strong>
+              <small className="metric-note text-green">🎯 考场预估 {examPrediction} / 150 分</small>
+            </div>
+
+            {/* 3. 总耗时与单题均耗 */}
+            <div className="overview-metric-cell">
+              <div className="metric-header-row">
+                <span className="metric-label">总耗时与节奏</span>
+                <Clock3 size={12} className="text-muted" />
+              </div>
+              <strong className="metric-val">{formatElapsed(totalDuration * 1000)}</strong>
+              <small className="metric-note">均题 {formatElapsed(averageDuration * 1000)} / 题</small>
+            </div>
+
+            {/* 4. 防白给稳定性 */}
+            <div className="overview-metric-cell">
+              <div className="metric-header-row">
+                <span className="metric-label">KAST 防白给率</span>
+                <Sparkles size={12} className="text-cyan" />
+              </div>
+              <strong className="metric-val">{kastRate}<small>%</small></strong>
+              <small className="metric-note">
+                {ungradedIds.length > 0 ? `${ungradedIds.length} 题未批改` : '完整批改已生成'}
+              </small>
+            </div>
           </section>
 
-          <section
-            className="score-details"
-            aria-label="批改结果分布"
-            style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 10, marginBottom: 22 }}
-          >
-            {[
-              ['正确', correctCount, '#267655', '#E7F5EE'],
-              ['部分正确', partialCount, '#A66A17', '#FFF5DC'],
-              ['错误', wrongCount, '#B54236', '#FCE9E7'],
-              ['不确定', uncertainCount, '#6B7280', '#F1F3F5'],
-            ].map(([label, value, color, background]) => (
-              <div
-                key={String(label)}
-                style={{
-                  padding: '14px 16px',
-                  borderRadius: 13,
-                  background: String(background),
-                  color: String(color),
-                  display: 'flex',
-                  alignItems: 'center',
-                  justifyContent: 'space-between',
-                }}
-              >
-                <span>{label}</span>
-                <strong style={{ fontSize: 22 }}>{value}</strong>
+          <section className="report-stat-pills" aria-label="批改结果分布">
+            <div className="report-stat-pill correct">
+              <div className="pill-title-wrap">
+                <CheckCircle2 size={15} />
+                <span>正确 CORRECT</span>
               </div>
-            ))}
+              <strong>{correctCount}</strong>
+            </div>
+            <div className="report-stat-pill partial">
+              <div className="pill-title-wrap">
+                <Sparkles size={15} />
+                <span>部分正确 PARTIAL</span>
+              </div>
+              <strong>{partialCount}</strong>
+            </div>
+            <div className="report-stat-pill wrong">
+              <div className="pill-title-wrap">
+                <X size={15} />
+                <span>错误 INCORRECT</span>
+              </div>
+              <strong>{wrongCount}</strong>
+            </div>
+            <div className="report-stat-pill uncertain">
+              <div className="pill-title-wrap">
+                <HelpCircle size={15} />
+                <span>不确定 UNCERTAIN</span>
+              </div>
+              <strong>{uncertainCount}</strong>
+            </div>
           </section>
 
           <section className={`report-rating-panel ${ratingTone}`} aria-label="本次作答 rating">
             <div className="report-rating-heading">
               <div>
-                <span className="report-kicker"><Activity size={15} /> PERFORMANCE RATING</span>
-                <h3>本次作答 rating</h3>
-                <p>综合正确性、流畅度自评与相对用时，反映这次作答的整体状态。</p>
+                <span className="report-kicker"><Activity size={15} /> TACTICAL RATING 3.0 & RADAR</span>
+                <h3>本次作答 Rating 与六维能力分布</h3>
+                <p>基于得分产出(Cast)、突破上限(Clutch)、防白给率(KAST)与节奏效率(Pacing)多维复合评估。</p>
               </div>
               <div className="report-rating-total">
-                <strong className={`rating-number rating-${ratingTone}`}>{averageRatingScore.toFixed(2)}</strong>
-                <b>{ratingTier} 级</b>
+                <div className="rating-num-row">
+                  <strong className={`rating-number rating-${ratingTone}`}>{averageRatingScore.toFixed(2)}</strong>
+                  <b className="tier-capsule">{ratingTier} 级</b>
+                </div>
+                <span className="rating-exam-subtext">🎯 考场预测分 {examPrediction} / 150</span>
               </div>
             </div>
             {grades.length > 0 ? (
               <div className="report-rating-chart" role="list" aria-label="逐题 rating 分布">
                 {grades.map((grade, index) => {
                   const score = ratingScores[index] ?? 0
+                  const isClutch = score >= 1.35
+                  const tone = gradeTone(grade)
                   return (
                     <div className="report-rating-column" key={`${grade.questionId}-${index}`} role="listitem">
-                      <div className={`report-rating-value rating-${csRatingTone(score)}`}>{score}</div>
-                      <div className={`report-rating-track rating-${csRatingTone(score)}`}><i style={{ height: `${Math.max(6, score / CS_RATING_MAX * 100)}%` }} /></div>
-                      <span>#{grade.questionId}</span>
+                      <div className={`report-rating-value rating-${csRatingTone(score)}`}>
+                        {score}
+                        {isClutch && <span className="clutch-spark-tag" title="高难度突破 / 巧解秒杀">⚡</span>}
+                      </div>
+                      <div className={`report-rating-track rating-${csRatingTone(score)}`}>
+                        <i style={{ height: `${Math.max(6, (score / CS_RATING_MAX) * 100)}%` }} />
+                      </div>
+                      <span className={`q-col-id ${tone.key}`}>#{grade.questionId}</span>
                     </div>
                   )
                 })}
@@ -303,9 +343,15 @@ export function PressureLearningReportView({
                 </svg>
               </div>
               <div className="report-dimension-list">
+                <div className="dimension-kast-banner">
+                  <span>🛡️ KAST 防白给指数</span>
+                  <strong>{kastRate}%</strong>
+                </div>
                 {ratingDimensions.map((item) => (
                   <div className="report-dimension-row" key={item.label}>
-                    <span>{item.label}</span><strong>{item.value}</strong><i><b style={{ width: `${item.value}%` }} /></i>
+                    <span>{item.label}</span>
+                    <strong>{item.value}</strong>
+                    <i><b style={{ width: `${item.value}%` }} /></i>
                   </div>
                 ))}
               </div>
@@ -313,7 +359,7 @@ export function PressureLearningReportView({
           </section>
 
           {ungradedIds.length > 0 && (
-            <div className="pressure-tip" style={{ marginBottom: 20 }}>
+            <div className="pressure-tip">
               <HelpCircle size={16} />
               <span>
                 题目 {ungradedIds.map((id) => `#${id}`).join('、')} 没有得到可确认结果，不计入正式正确率和掌握进度。
@@ -322,16 +368,9 @@ export function PressureLearningReportView({
           )}
 
           <section className="report-questions">
-            <div
-              style={{
-                display: 'flex',
-                alignItems: 'baseline',
-                justifyContent: 'space-between',
-                marginBottom: 10,
-              }}
-            >
-              <h3 style={{ margin: 0 }}>逐题批改与诊断</h3>
-              <small style={{ color: '#6B7280' }}>正确性与熟练度仍分别记录</small>
+            <div className="report-questions-title-row">
+              <h3>逐题步骤诊断与断点复盘 (STEP-BY-STEP BREAKDOWN)</h3>
+              <small>点击题号或“原题解析”查看完整官方解析 · 可随时一键收藏</small>
             </div>
             {grades.length === 0 ? (
               <EmptyState
@@ -345,41 +384,73 @@ export function PressureLearningReportView({
                 const question = questions[grade.questionId]
                 const errorTags = grade.errorTags ?? []
                 const weaknessTags = grade.weaknessTags ?? []
+                const isFav = favoriteMap[grade.questionId] ?? question?.favorite ?? false
                 return (
                   <article
                     key={`${grade.questionId}-${index}`}
-                    className={`report-question-item ${tone.key}`}
-                    style={{ borderLeft: `4px solid ${tone.color}`, marginBottom: 14 }}
+                    className={`report-question-item tactical-q-item ${tone.key}`}
                   >
-                    <div className="report-question-header" style={{ alignItems: 'flex-start' }}>
+                    <div className="report-question-header">
                       <div>
-                        <span className="question-number">
+                        <button
+                          type="button"
+                          className="question-number-btn"
+                          onClick={() => void handleOpenDetail(grade.questionId)}
+                          title="点击查看完整原题、选项与标准解析"
+                        >
                           第 {index + 1} 题 · #{grade.questionId}
-                        </span>
+                        </button>
                         {question && (
-                          <small style={{ display: 'block', marginTop: 5, color: '#6B7280' }}>
+                          <small className="question-cat-path">
                             {question.categoryPath}
                           </small>
                         )}
                       </div>
-                      <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
-                        <span
-                          style={{
-                            padding: '5px 10px',
-                            borderRadius: 999,
-                            color: tone.color,
-                            background: tone.background,
-                            fontSize: 12,
-                            fontWeight: 700,
-                          }}
+                      <div className="question-status-group">
+                        <button
+                          type="button"
+                          className={`tactical-heart-fav-btn ${isFav ? 'active' : ''}`}
+                          onClick={() => void handleToggleFav(grade.questionId)}
+                          title={isFav ? '取消收藏此题' : '收藏此题到题本'}
+                          aria-label="收藏题目"
                         >
+                          <Heart
+                            size={14}
+                            fill={isFav ? 'currentColor' : 'none'}
+                          />
+                          <span>{isFav ? '已收藏' : '收藏'}</span>
+                        </button>
+
+                        <button
+                          type="button"
+                          className="tactical-preview-btn"
+                          onClick={() => void handleOpenDetail(grade.questionId)}
+                          title="查看题目完整原题、解析与笔记"
+                        >
+                          <BookOpen size={13} />
+                          <span>原题解析</span>
+                        </button>
+
+                        {onStartVariant && (
+                          <button
+                            type="button"
+                            className="tactical-variant-practice-btn"
+                            onClick={() => onStartVariant(grade.questionId)}
+                            title="调出此题同考点的 3 道变式题趁热打铁"
+                          >
+                            <Sparkles size={12} />
+                            <span>练变式</span>
+                          </button>
+                        )}
+
+                        <span className={`verdict-pill ${tone.key}`}>
                           {tone.label}
                         </span>
                         <span className="question-duration">
                           <Clock3 size={13} /> {formatElapsed(Math.max(0, grade.duration || 0) * 1000)}
                         </span>
                         {grade.selfRating != null && (
-                          <span style={{ color: '#6B7280', fontSize: 12 }}>
+                          <span className="question-fluency-label">
                             熟练度 {grade.selfRating}/4
                           </span>
                         )}
@@ -412,7 +483,7 @@ export function PressureLearningReportView({
                     )}
                     {grade.earliestError && (
                       <div className="earliest-error">
-                        <span>最早错误断点</span>
+                        <span>⚠️ 最早错误断点定位 (BREAKPOINT)</span>
                         <p>
                           <MathText value={grade.earliestError} />
                         </p>
@@ -433,28 +504,21 @@ export function PressureLearningReportView({
                       </div>
                     )}
                     {grade.betterSolution && (
-                      <div
-                        style={{
-                          marginTop: 12,
-                          padding: 14,
-                          borderRadius: 12,
-                          background: '#F2F7FC',
-                        }}
-                      >
-                        <strong style={{ display: 'block', marginBottom: 6, color: '#315E9E' }}>
-                          更好的解法
-                        </strong>
+                      <div className="better-solution-box">
+                        <strong>⚡ 考场更优秒杀解法 (SPEED-KILL SOLUTION)</strong>
                         <MathText value={grade.betterSolution} />
                       </div>
                     )}
                     {grade.advice && (
-                      <p className="advice" style={{ marginTop: 12 }}>
-                        <strong>下一步：</strong>
-                        <MathText value={grade.advice} />
-                      </p>
+                      <div className="advice-box">
+                        <span>🎯 专项修复执行动作 (ACTION)</span>
+                        <p>
+                          <MathText value={grade.advice} />
+                        </p>
+                      </div>
                     )}
                     {grade.confidence != null && (
-                      <small style={{ display: 'block', marginTop: 8, color: '#8B8F97' }}>
+                      <small className="diagnosis-confidence-note">
                         Codex 诊断置信度 {Math.round(grade.confidence * 100)}%
                       </small>
                     )}
@@ -464,16 +528,15 @@ export function PressureLearningReportView({
             )}
           </section>
 
-          <section className="report-summary" style={{ marginTop: 24 }}>
-            <h3>总体学习结论</h3>
-            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, minmax(0, 1fr))', gap: 12 }}>
+          <section className="report-summary">
+            <h3>总体学习结论与作战建议</h3>
+            <div className="report-summary-cards">
               {summaryGroups.map((group) => (
                 <div
                   key={group.title}
-                  className="summary-section"
-                  style={{ margin: 0, padding: 16, borderRadius: 14, background: group.background }}
+                  className={`summary-section ${group.className}`}
                 >
-                  <h4 style={{ color: group.color }}>
+                  <h4>
                     {group.icon} {group.title}
                   </h4>
                   {group.items.length > 0 ? (
@@ -485,15 +548,15 @@ export function PressureLearningReportView({
                       ))}
                     </ul>
                   ) : (
-                    <p style={{ color: '#7A7F87', margin: 0 }}>本次暂无明确结论</p>
+                    <p className="summary-empty-text">本次暂无明确结论</p>
                   )}
                 </div>
               ))}
             </div>
           </section>
 
-          <div className="report-actions" style={{ justifyContent: 'space-between', marginTop: 28 }}>
-            <span style={{ color: '#6B7280', fontSize: 13 }}>
+          <div className="report-actions">
+            <span className="report-disclaimer">
               报告用于复盘展示；正式作答记录仍以收件箱确认结果为准。
             </span>
             <button className="primary-button" onClick={onClose}>
@@ -502,6 +565,30 @@ export function PressureLearningReportView({
           </div>
         </div>
       </div>
+
+      {toastMsg && (
+        <div className="tactical-floating-toast">
+          <span>{toastMsg}</span>
+        </div>
+      )}
+
+      <AnimatePresence>
+        {detailQuestion && (
+          <QuestionDetail
+            question={detailQuestion}
+            close={() => setDetailQuestion(null)}
+            add={() => void addToCustomQueue(detailQuestion.id)}
+            practice={() => {
+              setDetailQuestion(null)
+              onStartVariant?.(detailQuestion.id)
+            }}
+            onChange={(updated) => {
+              setDetailQuestion(updated)
+              setFavoriteMap((prev) => ({ ...prev, [updated.id]: updated.favorite }))
+            }}
+          />
+        )}
+      </AnimatePresence>
     </div>
   )
 }

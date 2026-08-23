@@ -1051,6 +1051,10 @@ export default function App() {
             void openPressureReport({ sessionId: pressureReport.sessionId })
           }
           onClose={() => setPressureReportOpen(false)}
+          onStartVariant={(questionId) => {
+            setPressureReportOpen(false)
+            void startVariantPractice(questionId)
+          }}
         />
       )}
 

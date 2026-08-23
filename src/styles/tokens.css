@@ -50,6 +50,9 @@
   --gold: #a88d22;
   --gold-strong: #6c4d08;
   --gold-soft: #fdf7e7;
+  --cyan: #315e9e;
+  --cyan-strong: #204070;
+  --cyan-soft: #eef4fc;
   /* 旧语义色（保留，逐步迁移） */
   --blue: #718995;
   --blue-soft: #e9eff1;
@@ -222,6 +225,9 @@
   --gold: #8f7a2a;
   --gold-strong: #5f4408;
   --gold-soft: #f8efd8;
+  --cyan: #2a5888;
+  --cyan-strong: #1b3d60;
+  --cyan-soft: #edf3fa;
   --scrim: rgba(41, 36, 30, 0.65);
   --surface-glass: rgba(253, 250, 242, 0.9);
   --scrim-soft: rgba(41, 36, 30, 0.32);

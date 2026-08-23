@@ -265,6 +265,85 @@ export type TagClosure = {
   delta: number | null
 }
 
+export type TacticalProfile = {
+  nickname: string
+  title: string
+  combatPower: number
+  currentElo: number
+  peakElo: number
+  currentRankLetter: string
+  peakRankLetter: string
+  weScore: number
+  ratingPro: number
+  matches: number
+  winRate: number
+  headshotRate: number
+  adr: number
+  kdRatio: number
+  rws: number
+  firepower: number
+}
+
+export type TacticalMapSubject = {
+  id: string
+  name: string
+  mapAlias: string
+  totalQuestions: number
+  attemptedCount: number
+  correctCount: number
+  winRate: number
+  ratingPro: number
+  adr: number
+  avgKills: number
+  firepower: number
+  ctWinRate: number
+  tWinRate: number
+  masteryGrade: string
+}
+
+export type TacticalAbilitySkill = {
+  id: string
+  label: string
+  icon: string
+  grade: string
+  score: number
+  desc: string
+}
+
+export type TacticalDimension = {
+  key: string
+  label: string
+  value: number
+}
+
+export type TacticalWeapon = {
+  id: string
+  name: string
+  alias: string
+  methodName: string
+  killTime: number
+  killTimeGrade: string
+  kills: number
+  totalAttempts: number
+  sprayAccuracy: number
+  sprayGrade: string
+  headshotRate: number
+  headshotGrade: string
+  quickStopRate: number
+  quickStopGrade: string
+  avgKills: number
+  avgKillsGrade: string
+}
+
+export type TacticalDashboardData = {
+  profile: TacticalProfile
+  mapSubjects: TacticalMapSubject[]
+  dimensions: TacticalDimension[]
+  specialtySkills: TacticalAbilitySkill[]
+  weapons: TacticalWeapon[]
+  currentSeason: string
+}
+
 export type RatingBucket = { floor: number; count: number }
 
 export type DimensionAverages = {
@@ -520,3 +599,15 @@ export type GradingReport = {
 export type FontScaleMode = 'standard' | 'medium' | 'large'
 export type View = 'today' | 'library' | 'review' | 'mastery' | 'insights' | 'settings'
 export type AttemptMode = 'paper' | 'review'
+
+export type TodayAttemptItem = {
+  attemptId: number
+  questionId: number
+  outcome: 'correct' | 'wrong' | 'uncertain' | string
+  selfRating: number
+  durationSeconds: number
+  attemptedAt: string
+  sessionId: string | null
+  question: Question
+}
+

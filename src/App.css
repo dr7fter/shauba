@@ -877,11 +877,9 @@
 .entry-main { max-width: 850px; }
 .entry-meta { display: flex; align-items: center; gap: 14px; color: var(--quiet); font-size: var(--fs-xs); }
 .entry-meta span:first-child { color: var(--green-dark); font-weight: 700; }
-.entry-meta time { margin-left: auto; }
-.entry-main h3 { margin: 10px 0 14px; font-size: var(--fs-lg); line-height: 1.5; }
-.earliest-error { padding: 12px 14px; background: var(--coral-soft); border-left: 3px solid var(--coral); }
-.earliest-error span { color: var(--danger); font-size: var(--fs-xs); font-weight: 700; }
-.earliest-error p { margin: 5px 0 0; color: var(--danger-strong); font-size: var(--fs-base); line-height: 1.6; }
+.earliest-error { padding: 12px 14px; background: var(--coral-soft); border-left: 3px solid var(--coral); border-radius: 0 var(--r-sm) var(--r-sm) 0; }
+.earliest-error > strong, .earliest-error-title { display: block; color: var(--danger); font-size: var(--fs-xs); font-weight: 700; margin-bottom: 4px; }
+.earliest-error p { margin: 5px 0 0; color: var(--ink); font-size: var(--fs-base); line-height: 1.6; }
 .tag-line { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 12px; }
 .tag-line span { padding: 4px 7px; border-radius: var(--r-xs); font-size: var(--fs-xs); }
 .error-tag { color: var(--danger); background: var(--coral-soft); }
@@ -4813,12 +4811,13 @@
   margin-top: 10px;
 }
 
-.advice-box span {
+.advice-box > strong,
+.advice-box-title {
   display: block;
-  color: var(--warn);
+  color: var(--warn-strong, var(--warn));
   font-size: var(--fs-xs);
   font-weight: 700;
-  margin-bottom: 3px;
+  margin-bottom: 4px;
 }
 
 .advice-box p {

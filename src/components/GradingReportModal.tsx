@@ -483,7 +483,7 @@ export function PressureLearningReportView({
                     )}
                     {grade.earliestError && (
                       <div className="earliest-error">
-                        <span>⚠️ 最早错误断点定位 (BREAKPOINT)</span>
+                        <strong className="earliest-error-title">⚠️ 最早错误断点定位 (BREAKPOINT)</strong>
                         <p>
                           <MathText value={grade.earliestError} />
                         </p>
@@ -511,7 +511,7 @@ export function PressureLearningReportView({
                     )}
                     {grade.advice && (
                       <div className="advice-box">
-                        <span>🎯 专项修复执行动作 (ACTION)</span>
+                        <strong className="advice-box-title">🎯 专项修复执行动作 (ACTION)</strong>
                         <p>
                           <MathText value={grade.advice} />
                         </p>

@@ -29,6 +29,7 @@ import {
 } from '../data/friendsService'
 import { FriendVsRadarModal } from './FriendVsRadarModal'
 import { getEloStatus, getTacticalDashboardStats, testFriendSync } from '../api'
+import { getRankDescription } from '../utils'
 import type { BootstrapData, EloStatus, FriendProfile, FriendSyncConfig, TacticalDashboardData } from '../types'
 
 export function FriendsLadderView({
@@ -378,7 +379,10 @@ export function FriendsLadderView({
                 </div>
 
                 <div className="col-tier">
-                  <span className={`ladder-tier-badge ${getTierClass(player.rankLetter)}`}>
+                  <span
+                    className={`ladder-tier-badge ${getTierClass(player.rankLetter)}`}
+                    title={getRankDescription(player.currentElo)}
+                  >
                     {player.rankLetter === 'DONK' ? '👑 DONK' : player.rankLetter}
                   </span>
                 </div>
@@ -557,6 +561,7 @@ export function FriendsLadderView({
               <div className="form-field-group">
                 <label>共享文件夹路径</label>
                 <input className="profile-text-input" value={syncConfig.folder} onChange={(e) => setSyncConfig((prev) => ({ ...prev, folder: e.target.value }))} placeholder="shuaba-friends" />
+                <small className="form-field-help">请先在坚果云网页端创建并共享这个文件夹，再只填云端文件夹名，例如 <code>shuaba-friends</code>；不要填 <code>E:\刷吧</code>、本地路径或完整网址。</small>
               </div>
               <p className="sync-help-text">你和朋友需要对同一个共享文件夹有读写权限；朋友只需首次配置一次，之后刷题时无需手动导出。</p>
             </div>

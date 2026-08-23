@@ -167,12 +167,12 @@ export function buildMyFriendProfile(
   const predictedScore = predictedExamScore(ratingPro, 85)
 
   const dimsMap: Record<string, number> = {
-    rigor: 84,
-    computation: 86,
-    speed: 86,
-    modeling: 87,
-    methodUse: 84,
-    strategyInsight: 84,
+    rigor: 64,
+    computation: 65,
+    speed: 62,
+    modeling: 64,
+    methodUse: 63,
+    strategyInsight: 62,
   }
 
   if (tacticalData?.dimensions) {

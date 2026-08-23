@@ -73,10 +73,10 @@ import { TodayView } from './views/TodayView'
 const navItems: Array<{ id: View; label: string; icon: typeof BookOpen }> = [
   { id: 'today', label: '今日', icon: Zap },
   { id: 'insights', label: '数据', icon: BarChart3 },
+  { id: 'friends', label: '好友', icon: Users },
   { id: 'review', label: '复盘', icon: TimerReset },
   { id: 'mastery', label: '地图', icon: Compass },
   { id: 'library', label: '题库', icon: LibraryBig },
-  { id: 'friends', label: '好友', icon: Users },
 ]
 
 function LoadingScreen() {

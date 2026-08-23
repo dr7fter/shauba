@@ -208,6 +208,26 @@ export function csRankForElo(rating: number): CsRank {
   return { ...WANMEI_RANKS[index], next }
 }
 
+export const RANK_EXPLANATION_TEXT = `🏆 刷吧 · 数一天梯段位表 (ELO)
+───────────────────────────
+👑 S   ≥ 2401  (巅峰大师 · 考研领跑)
+⭐ A+  2201 - 2400  (顶尖名校 · 核心攻坚)
+⭐ A   2001 - 2200  (高分卓越 · 规范严密)
+🔷 B+  1801 - 2000  (实力进阶 · 解法熟练)
+🔷 B   1601 - 1800  (稳扎稳打 · 基础扎实)
+🔶 C+  1401 - 1600  (初战告捷 · 初始基准 1400)
+🔶 C   1201 - 1400  (初窥门径)
+⚪ D+  1000 - 1200  (起步阶段)
+⚠️ D   < 1000       (基础待巩固)
+───────────────────────────
+* 结算机制：每场模考/刷题由确定性内核实时结算 ELO；连续 3 场同向触发 1.15x 动量，升段享有 3 场负分保护。`
+
+export function getRankDescription(elo: number): string {
+  const current = csRankForElo(elo)
+  const nextTarget = current.next ? `距离下个段位还差 ${current.next - Math.round(elo)} 分` : '已达到巅峰段位 S'
+  return `当前段位：${current.name} (ELO ${Math.round(elo)})\n${nextTarget}\n\n${RANK_EXPLANATION_TEXT}`
+}
+
 /**
  * Returns verdict label and tone for AI grading diagnosis.
  */

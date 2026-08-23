@@ -19,7 +19,6 @@ import {
   Target,
   TrendingDown,
   TrendingUp,
-  Users,
   X,
   XCircle,
   Zap,
@@ -46,10 +45,10 @@ import {
   deriveGradeCsRating,
   formatElapsed,
   predictedExamScore,
+  getRankDescription,
 } from '../utils'
 import { MathText } from '../components/MathText'
 import { QuestionDetail } from '../components/QuestionDetailModal'
-import { FriendsLadderView } from '../components/FriendsLadderView'
 import { InboxView } from './InboxView'
 import type {
   BootstrapData,
@@ -65,7 +64,7 @@ import type {
   WeaknessRadar,
 } from '../types'
 
-type DataTab = 'overview' | 'friends' | 'matches' | 'mistakes' | 'inbox'
+type DataTab = 'overview' | 'matches' | 'mistakes' | 'inbox'
 type ScopeMode = 'ranked' | 'all' | 'solo'
 
 function averageReportRating(report: GradingReport | null): number | null {
@@ -268,38 +267,89 @@ export function InsightsView({
     [reports, sessions]
   )
   const averageRating = averageCsRating(ratedSessions)
-  const wins = sessions.filter((session) => resultFor(reports[session.sessionId], session) === 'win').length
-  const completed = sessions.filter((session) => ['graded', 'graded_partial'].includes(session.status)).length
+  // 过滤取消待批改的数据，仅保留已结算完成的胜负场次
+  const validSessions = useMemo(() => {
+    return sessions.filter((session) => {
+      const report = reports[session.sessionId] ?? null
+      const result = resultFor(report, session)
+      return result === 'win' || result === 'loss' || ['graded', 'graded_partial'].includes(session.status)
+    })
+  }, [sessions, reports])
+
+  const wins = validSessions.filter((session) => resultFor(reports[session.sessionId], session) === 'win').length
+  const completed = validSessions.length
   const winRate = completed ? Math.round((wins / completed) * 100) : null
   const heatmap = trend.slice(-21)
 
+  const [radarMode, setRadarMode] = useState<'base' | 'impact'>('base')
+
   const sixDimensions = useMemo(() => {
     if (tacticalData && tacticalData.dimensions.length === 6) {
-      return tacticalData.dimensions
+      return tacticalData.dimensions.map((d) => ({
+        key: d.key,
+        label: d.label,
+        enLabel: d.key.toUpperCase(),
+        value: d.value,
+        desc: '考研数学一基础学科六维硬实力',
+      }))
     }
     const dims = distribution?.dimensions ?? null
     return [
-      { key: 'rigor', label: '严谨性', value: dims?.rigor ?? 84 },
-      { key: 'computation', label: '计算力', value: dims?.computation ?? 86 },
-      { key: 'speed', label: '速度', value: dims?.speed ?? 86 },
-      { key: 'modeling', label: '审题建模', value: dims?.modeling ?? 87 },
-      { key: 'methodUse', label: '方法使用', value: dims?.methodUse ?? 84 },
-      { key: 'strategyInsight', label: '策略洞察力', value: dims?.strategyInsight ?? 84 },
+      { key: 'rigor', label: '严谨性', enLabel: 'RIGOR', value: dims?.rigor ?? 64, desc: '证明严密性与定理边界' },
+      { key: 'computation', label: '计算力', enLabel: 'COMPUTE', value: dims?.computation ?? 65, desc: '符号运算与积分代数硬实力' },
+      { key: 'speed', label: '敏捷度', enLabel: 'SPEED', value: dims?.speed ?? 62, desc: '秒杀与解题时间经济效率' },
+      { key: 'modeling', label: '审题建模', enLabel: 'MODEL', value: dims?.modeling ?? 64, desc: '题目结构洞察与等价转化' },
+      { key: 'methodUse', label: '方法熟练', enLabel: 'METHOD', value: dims?.methodUse ?? 63, desc: '典型考法题型解法迁移' },
+      { key: 'strategyInsight', label: '策略洞察', enLabel: 'INSIGHT', value: dims?.strategyInsight ?? 62, desc: '宏观题意把控与防出题陷阱' },
     ]
   }, [tacticalData, distribution])
 
   const profile = tacticalData?.profile
-  const weScore = profile?.weScore ?? 85.2
-  const ratingPro = profile?.ratingPro ?? 1.46
+  const weScore = profile?.weScore ?? 68.5
+  const ratingPro = profile?.ratingPro ?? 1.15
 
-  const radarPoint = (index: number, value: number, radius = 70) => {
+  // HLTV 2.0 战术与 Impact 影响力高维评估数据（敏感度增强，拉开长短板区分度）
+  const impactDimensions = useMemo(() => {
+    const baseFire = profile?.firepower ?? 60
+    const baseRating = profile?.ratingPro ?? 1.05
+    const winRate = profile?.winRate ?? 55
+    const baseRigor = sixDimensions.find((d) => d.key === 'rigor')?.value ?? 60
+    const baseSpeed = sixDimensions.find((d) => d.key === 'speed')?.value ?? 60
+    const baseInsight = sixDimensions.find((d) => d.key === 'strategyInsight')?.value ?? 60
+    const baseComputation = sixDimensions.find((d) => d.key === 'computation')?.value ?? 60
+    const baseMethod = sixDimensions.find((d) => d.key === 'methodUse')?.value ?? 60
+
+    // 扩张函数：让长板突破 85~95，短板沉降至 30~50，打破平庸均值
+    const spread = (val: number, multiplier = 1.48) => {
+      const center = 58
+      return Math.min(98, Math.max(20, Math.round(center + (val - center) * multiplier)))
+    }
+
+    const calcImpact = spread((baseRating - 0.70) * 72 + (baseFire - 50) * 0.5 + 20, 1.55)
+    const calcEntry = spread(baseInsight * 0.65 + baseSpeed * 0.55 - 12, 1.42)
+    const calcClutch = spread(baseRigor * 0.75 + baseComputation * 0.55 - 18, 1.48)
+    const calcUtility = spread(baseSpeed * 0.75 + baseMethod * 0.55 - 18, 1.52)
+    const calcKast = spread(winRate * 0.60 + (baseRigor + baseComputation) * 0.35 - 5, 1.38)
+    const calcOpening = spread(baseFire * 0.65 + baseInsight * 0.50 - 10, 1.42)
+
+    return [
+      { key: 'impact', label: '影响力', enLabel: 'IMPACT', value: calcImpact, desc: 'HLTV 2.0 核心决胜拉动权重，压轴题与关键局统治力' },
+      { key: 'entry', label: '破局突破', enLabel: 'ENTRY', value: calcEntry, desc: '陌生压轴难题第一破题步的洞察突击效率' },
+      { key: 'clutch', label: '残局攻坚', enLabel: 'CLUTCH', value: calcClutch, desc: '多步骤复杂证明与长计算的锁分硬实力' },
+      { key: 'utility', label: '巧解秒杀', enLabel: 'UTILITY', value: calcUtility, desc: 'King 变换、待定系数、特征方程等极简秒杀技巧' },
+      { key: 'kast', label: '防白给率', enLabel: 'KAST', value: calcKast, desc: '每题有效拿分率，步步有据杜绝低级计算笔误' },
+      { key: 'opening', label: '首战对决', enLabel: 'OPENING', value: calcOpening, desc: '第一考点对抗与选填首发秒杀拿分率' },
+    ]
+  }, [profile, sixDimensions])
+
+  const currentRadarDimensions = radarMode === 'base' ? sixDimensions : impactDimensions
+
+  const getRadarCoords = (index: number, value: number, radius = 75, cx = 155, cy = 130) => {
     const angle = -Math.PI / 2 + (Math.PI * 2 * index) / 6
-    const x = 120 + Math.cos(angle) * radius * (value / 100)
-    const y = 100 + Math.sin(angle) * radius * (value / 100)
-    return `${x.toFixed(1)},${y.toFixed(1)}`
+    const x = cx + Math.cos(angle) * radius * (value / 100)
+    const y = cy + Math.sin(angle) * radius * (value / 100)
+    return { x, y, str: `${x.toFixed(1)},${y.toFixed(1)}` }
   }
-
-  const radarShape = sixDimensions.map((item, idx) => radarPoint(idx, item.value)).join(' ')
   const mapSubjects = tacticalData?.mapSubjects ?? []
   const currentMap = mapSubjects[selectedMapIdx] ?? mapSubjects[0] ?? {
     id: 'single_calculus',
@@ -312,7 +362,7 @@ export function InsightsView({
     ratingPro: 1.13,
     adr: 108,
     avgKills: 17.2,
-    firepower: 96,
+    firepower: 68,
     ctWinRate: 58,
     tWinRate: 52,
     masteryGrade: 'B',
@@ -325,13 +375,13 @@ export function InsightsView({
     alias: '步枪之王',
     methodName: '泰勒展开与等价无穷小',
     killTime: 494,
-    killTimeGrade: 'A',
+    killTimeGrade: 'B',
     kills: 86,
     totalAttempts: 159,
     sprayAccuracy: 54.1,
-    sprayGrade: 'B',
+    sprayGrade: 'C',
     headshotRate: 62.4,
-    headshotGrade: 'A',
+    headshotGrade: 'C',
     quickStopRate: 83.5,
     quickStopGrade: 'A',
     avgKills: 6.6,
@@ -339,12 +389,12 @@ export function InsightsView({
   }
 
   const specialtySkills = tacticalData?.specialtySkills ?? [
-    { id: 'gunplay', label: '枪法', icon: 'Crosshair', grade: 'A', score: 86, desc: '基础计算与选填定性判断' },
-    { id: 'trade', label: '补枪', icon: 'Zap', grade: 'C', score: 55, desc: '错题订正复盘与二刷闭环率' },
-    { id: 'entry', label: '突破', icon: 'TrendingUp', grade: 'A', score: 86, desc: '新题快速破局与首刷秒杀率' },
-    { id: 'utility', label: '道具', icon: 'ShieldAlert', grade: 'B', score: 84, desc: '公式定理熟练度与秒杀技巧' },
-    { id: 'clutch', label: '残局', icon: 'Target', grade: 'S', score: 92, desc: '高分综合解答题攻坚抗压能力' },
-    { id: 'sniper', label: '狙击', icon: 'Crosshair', grade: 'S', score: 90, desc: '三星核心难点考题精准突破' },
+    { id: 'gunplay', label: '枪法', icon: 'Crosshair', grade: 'B', score: 72, desc: '基础计算与选填定性判断' },
+    { id: 'trade', label: '补枪', icon: 'Zap', grade: 'C', score: 58, desc: '错题订正复盘与二刷闭环率' },
+    { id: 'entry', label: '突破', icon: 'TrendingUp', grade: 'B', score: 70, desc: '新题快速破局与首刷秒杀率' },
+    { id: 'utility', label: '道具', icon: 'ShieldAlert', grade: 'B', score: 68, desc: '公式定理熟练度与秒杀技巧' },
+    { id: 'clutch', label: '残局', icon: 'Target', grade: 'A', score: 82, desc: '高分综合解答题攻坚抗压能力' },
+    { id: 'sniper', label: '狙击', icon: 'Crosshair', grade: 'A', score: 84, desc: '三星核心难点考题精准突破' },
   ]
 
   const getSkillIcon = (iconName: string) => {
@@ -368,9 +418,6 @@ export function InsightsView({
         <div className="segmented">
           <button className={tab === 'overview' ? 'active' : ''} onClick={() => setTab('overview')}>
             <BarChart3 size={16} /> 个人战绩
-          </button>
-          <button className={tab === 'friends' ? 'active' : ''} onClick={() => setTab('friends')}>
-            <Users size={16} /> 天梯好友
           </button>
           <button className={tab === 'matches' ? 'active' : ''} onClick={() => setTab('matches')}>
             <Clock3 size={16} /> 比赛记录
@@ -447,20 +494,6 @@ export function InsightsView({
               onOpenPressureReport={onOpenPressureReport}
             />
           </motion.div>
-        ) : tab === 'friends' ? (
-          <motion.div
-            key="friends"
-            initial={{ opacity: 0, y: 10 }}
-            animate={{ opacity: 1, y: 0 }}
-            exit={{ opacity: 0, y: -10 }}
-          >
-            <FriendsLadderView
-              tacticalData={tacticalData}
-              bootstrapData={data}
-              eloStatus={elo}
-              notify={notify}
-            />
-          </motion.div>
         ) : tab === 'overview' ? (
           <motion.div
             key={`overview-${scopeMode}`}
@@ -488,17 +521,23 @@ export function InsightsView({
                   </div>
                 </div>
                 <div className="combat-dual-badges">
-                  <div className="tactical-rank-badge" title="赛季历史最高段位">
+                  <div
+                    className="tactical-rank-badge rank-tooltip-target"
+                    title={getRankDescription(profile?.peakElo ?? elo?.current ?? 1400)}
+                  >
                     <div className="rank-shield">{profile?.peakRankLetter ?? 'A'}</div>
                     <div className="rank-info">
-                      <strong>{Math.round(profile?.peakElo ?? elo?.current ?? 1956)}</strong>
+                      <strong>{Math.round(profile?.peakElo ?? elo?.current ?? 1400)}</strong>
                       <span>赛季</span>
                     </div>
                   </div>
-                  <div className="tactical-rank-badge current" title="当前实时天梯段位">
+                  <div
+                    className="tactical-rank-badge current rank-tooltip-target"
+                    title={getRankDescription(profile?.currentElo ?? elo?.current ?? 1400)}
+                  >
                     <div className="rank-shield">{profile?.currentRankLetter ?? 'A'}</div>
                     <div className="rank-info">
-                      <strong>{Math.round(profile?.currentElo ?? elo?.current ?? 1956)}</strong>
+                      <strong>{Math.round(profile?.currentElo ?? elo?.current ?? 1400)}</strong>
                       <span>当前</span>
                     </div>
                   </div>
@@ -622,19 +661,33 @@ export function InsightsView({
               </div>
             </section>
 
-            {/* 2. 个人表现 */}
+            {/* 2. 个人表现与战术雷达 */}
             <section className="tactical-card ability-card">
               <header className="tactical-card-header">
                 <div className="ability-title-row">
-                  <h3>个人表现</h3>
+                  <h3>能力评估与战术雷达</h3>
                   <span title="六维战术能力综合评测与特化专精等级">
                     <HelpCircle size={14} className="help-icon" />
                   </span>
                   <span className="tactical-title-tag">{profile?.title ?? '一锤定音的战场收割者'}</span>
                 </div>
-                <div className="season-mini-selector" title="当前备考赛季">
-                  <span>赛季</span>
-                  <ChevronDown size={12} />
+                <div className="radar-mode-segmented">
+                  <button
+                    type="button"
+                    className={radarMode === 'base' ? 'active' : ''}
+                    onClick={() => setRadarMode('base')}
+                    title="考研数学一基础学科六维硬实力评级"
+                  >
+                    📐 基础六维
+                  </button>
+                  <button
+                    type="button"
+                    className={radarMode === 'impact' ? 'active' : ''}
+                    onClick={() => setRadarMode('impact')}
+                    title="HLTV 2.0 考场高压进阶战术与 Impact 影响力雷达"
+                  >
+                    ⚡ 战术 Impact
+                  </button>
                 </div>
               </header>
 
@@ -664,52 +717,86 @@ export function InsightsView({
 
                 <div className="six-dimension-wrap">
                   <div className="six-radar-svg-col">
-                    <svg viewBox="0 0 240 200" className="six-radar-svg">
-                      {[25, 50, 75, 100].map((scale) => (
+                    <svg viewBox="0 0 250 220" className="six-radar-svg">
+                      <defs>
+                        <radialGradient id="baseRadarGlow" cx="50%" cy="50%" r="50%">
+                          <stop offset="0%" stopColor="var(--success)" stopOpacity="0.45" />
+                          <stop offset="100%" stopColor="var(--success)" stopOpacity="0.08" />
+                        </radialGradient>
+                        <radialGradient id="impactRadarGlow" cx="50%" cy="50%" r="50%">
+                          <stop offset="0%" stopColor="var(--warn)" stopOpacity="0.45" />
+                          <stop offset="100%" stopColor="var(--warn)" stopOpacity="0.08" />
+                        </radialGradient>
+                      </defs>
+
+                      {/* 背景同心多边形网格 */}
+                      {[0.25, 0.5, 0.75, 1.0].map((scale) => (
                         <polygon
                           key={scale}
-                          points={sixDimensions.map((_, i) => radarPoint(i, scale)).join(' ')}
+                          points={currentRadarDimensions.map((_, i) => getRadarCoords(i, scale * 100, 58, 125, 110).str).join(' ')}
                           fill="none"
                           stroke="var(--line)"
-                          strokeWidth="1"
+                          strokeWidth={scale === 1.0 ? '1.5' : '1'}
+                          strokeDasharray={scale === 1.0 ? 'none' : '3 3'}
+                          opacity={scale === 1.0 ? 0.9 : 0.6}
                         />
                       ))}
-                      {sixDimensions.map((_, i) => (
-                        <line
-                          key={i}
-                          x1="120"
-                          y1="100"
-                          x2={radarPoint(i, 100).split(',')[0]}
-                          y2={radarPoint(i, 100).split(',')[1]}
-                          stroke="var(--line)"
-                          strokeWidth="1"
-                        />
-                      ))}
+
+                      {/* 坐标轴辐射线 */}
+                      {currentRadarDimensions.map((_, i) => {
+                        const endPt = getRadarCoords(i, 100, 58, 125, 110)
+                        return (
+                          <line
+                            key={i}
+                            x1="125"
+                            y1="110"
+                            x2={endPt.x}
+                            y2={endPt.y}
+                            stroke="var(--line)"
+                            strokeWidth="1"
+                            opacity={0.65}
+                          />
+                        )
+                      })}
+
+                      {/* 动态能力雷达多边形 */}
                       <polygon
-                        points={radarShape}
-                        fill="color-mix(in srgb, var(--green) 22%, transparent)"
-                        stroke="var(--green)"
-                        strokeWidth="2.2"
+                        points={currentRadarDimensions.map((item, idx) => getRadarCoords(idx, item.value, 58, 125, 110).str).join(' ')}
+                        fill={radarMode === 'base' ? 'url(#baseRadarGlow)' : 'url(#impactRadarGlow)'}
+                        stroke={radarMode === 'base' ? 'var(--success)' : 'var(--warn)'}
+                        strokeWidth="2.5"
+                        strokeLinejoin="round"
                       />
-                      {sixDimensions.map((dim, i) => (
-                        <circle
-                          key={dim.key}
-                          cx={radarPoint(i, dim.value).split(',')[0]}
-                          cy={radarPoint(i, dim.value).split(',')[1]}
-                          r="3"
-                          fill="var(--green)"
-                        />
-                      ))}
-                      {sixDimensions.map((dim, i) => {
-                        const [tx, ty] = radarPoint(i, 118).split(',')
+
+                      {/* 顶点数据指示光点 */}
+                      {currentRadarDimensions.map((dim, i) => {
+                        const pt = getRadarCoords(i, dim.value, 58, 125, 110)
+                        const color = radarMode === 'base' ? 'var(--success)' : 'var(--warn)'
+                        return (
+                          <g key={dim.key}>
+                            <circle cx={pt.x} cy={pt.y} r="4.5" fill="var(--surface)" stroke={color} strokeWidth="2" />
+                            <circle cx={pt.x} cy={pt.y} r="2" fill={color} />
+                          </g>
+                        )
+                      })}
+
+                      {/* 顶点文本标签 */}
+                      {currentRadarDimensions.map((dim, i) => {
+                        const pt = getRadarCoords(i, 100, 82, 125, 110)
+                        const isTop = i === 0
+                        const isBottom = i === 3
+                        const isRight = i === 1 || i === 2
+                        const anchor = isTop || isBottom ? 'middle' : isRight ? 'start' : 'end'
+                        const xOffset = isTop || isBottom ? 0 : isRight ? 2 : -2
                         return (
                           <text
                             key={dim.key}
-                            x={tx}
-                            y={Number(ty) + 4}
-                            textAnchor="middle"
+                            x={pt.x + xOffset}
+                            y={pt.y}
+                            textAnchor={anchor}
+                            dominantBaseline="central"
                             fontSize="11"
-                            fontWeight="600"
+                            fontWeight="800"
                             fill="var(--ink)"
                           >
                             {dim.label}
@@ -720,15 +807,29 @@ export function InsightsView({
                   </div>
 
                   <div className="six-bars-list">
-                    {sixDimensions.map((dim) => (
-                      <div className="six-bar-row" key={dim.key}>
-                        <span className="six-bar-label">{dim.label}</span>
-                        <strong className="six-bar-val">{Math.round(dim.value)}</strong>
-                        <div className="six-bar-track">
-                          <div className="six-bar-fill" style={{ width: `${Math.min(100, Math.max(8, dim.value))}%` }} />
+                    {currentRadarDimensions.map((dim) => {
+                      const val = Math.round(dim.value)
+                      const grade = val >= 85 ? 'S' : val >= 75 ? 'A' : val >= 62 ? 'B' : val >= 48 ? 'C' : 'D'
+                      const gradeClass = grade.toLowerCase()
+                      return (
+                        <div className="six-bar-card-row" key={dim.key} title={dim.desc}>
+                          <div className="six-bar-meta">
+                            <span className="six-bar-name">{dim.label}</span>
+                            <span className="six-bar-code">{dim.enLabel}</span>
+                          </div>
+                          <div className="six-bar-progress-container">
+                            <div
+                              className={`six-bar-fill-bar ${radarMode === 'base' ? 'base-theme' : 'impact-theme'}`}
+                              style={{ width: `${Math.min(100, Math.max(12, val))}%` }}
+                            />
+                          </div>
+                          <div className="six-bar-score-group">
+                            <strong className="six-bar-score-num">{val}</strong>
+                            <span className={`six-bar-grade-pill grade-${gradeClass}`}>{grade}</span>
+                          </div>
                         </div>
-                      </div>
-                    ))}
+                      )
+                    })}
                   </div>
                 </div>
               </div>
@@ -1009,28 +1110,28 @@ export function InsightsView({
               <header className="match-history-header">
                 <div>
                   <h3>历史战绩</h3>
-                  <p>共 {sessions.length} 场测试 · 已完成 {completed} 场</p>
+                  <p>共 {validSessions.length} 场已批改对决 · 胜率 {winRate === null ? '等待首场' : `${winRate}%`}</p>
                 </div>
-                <span className="match-filter">全部模式⌄</span>
+                <span className="match-filter">全部已结算⌄</span>
               </header>
-              {sessions.length === 0 ? (
+              {validSessions.length === 0 ? (
                 <div className="empty-state match-empty">
                   <BarChart3 size={32} />
-                  <h3>还没有测试记录</h3>
-                  <p>完成一次高压演练后，这里会像 CS 历史战绩一样记录你的表现。</p>
+                  <h3>暂无已批改对决记录</h3>
+                  <p>完成高压演练并经 Codex 批改结算后，这里会像 CS 历史战绩一样记录你的真实表现。</p>
                 </div>
               ) : (
                 <div className="match-table" role="table" aria-label="历史测试记录">
                   <div className="match-table-head" role="row">
                     <span>时间</span><span>测试类型</span><span>题组</span><span>题数</span><span>正确率</span><span>结果</span><span>用时</span><span>Rating</span><span>报告</span>
                   </div>
-                  {sessions.map((session) => {
+                  {validSessions.map((session) => {
                     const report = reports[session.sessionId] ?? null
                     const result = resultFor(report, session)
                     const rating = averageReportRating(report)
                     const accuracy = accuracyPercent(report)
                     const questionCount = session.questionIds?.length ?? session.questions?.length ?? 0
-                    const isClickable = Boolean(report) || ['awaiting_codex', 'graded', 'graded_partial'].includes(session.status)
+                    const isClickable = Boolean(report) || ['graded', 'graded_partial'].includes(session.status)
                     return (
                       <button
                         type="button"

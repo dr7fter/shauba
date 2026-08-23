@@ -4862,8 +4862,23 @@ fn advance_season(state: State<AppState>) -> Result<SeasonStatus, String> {
     let conn = state.db.lock().map_err(|e| e.to_string())?;
     let index: i64 = setting(&conn, "season_index", "1").parse().unwrap_or(1);
     let (settlements, current) = current_elo(&conn)?;
-    let now = Local::now().to_rfc3339();
-    let started_at = setting(&conn, "season_start", &now);
+    let now = Local::now();
+    let now_rfc = now.to_rfc3339();
+    let started_at = setting(&conn, "season_start", &now_rfc);
+
+    // 严格限定一周一次赛季更新
+    if let Ok(saved_dt) = chrono::DateTime::parse_from_rfc3339(&started_at) {
+        let saved_local = saved_dt.with_timezone(&Local);
+        let days_elapsed = (now.date_naive() - saved_local.date_naive()).num_days();
+        if days_elapsed < 7 {
+            let days_left = 7 - days_elapsed;
+            return Err(format!(
+                "本赛季（S{}）正在进行中（已开启 {} 天）。赛季每周仅可更新结算一次，距离下周一自动结算还剩 {} 天。",
+                index, days_elapsed, days_left
+            ));
+        }
+    }
+
     if settlements > 0 {
         let peak: f64 = conn
             .query_row(
@@ -4871,14 +4886,14 @@ fn advance_season(state: State<AppState>) -> Result<SeasonStatus, String> {
                 params![current, started_at],
                 |r| r.get(0),
             )
-            .map_err(|e| e.to_string())?;
+            .unwrap_or(current);
         conn.execute(
             "INSERT INTO season_history(season_name,started_at,ended_at,peak_rating,final_rating,rank_index)
              VALUES(?1,?2,?3,?4,?5,?6)",
             params![
                 format!("S{}", index),
                 started_at,
-                now,
+                now_rfc,
                 peak,
                 current,
                 services::rating::rank_band_index(current) as i64
@@ -4889,14 +4904,14 @@ fn advance_season(state: State<AppState>) -> Result<SeasonStatus, String> {
         conn.execute(
             "INSERT INTO elo_events(question_id,delta,rating_after,performance,expected,created_at,session_id,reason)
              VALUES(0,?1,?2,0,0,?3,NULL,'season_reset')",
-            params![new_current - current, new_current, now],
+            params![new_current - current, new_current, now_rfc],
         )
         .map_err(|e| e.to_string())?;
     }
     conn.execute(
         "INSERT INTO settings(key,value) VALUES('season_index',?1),('season_start',?2)
          ON CONFLICT(key) DO UPDATE SET value=excluded.value",
-        params![(index + 1).to_string(), now],
+        params![(index + 1).to_string(), now_rfc],
     )
     .map_err(|e| e.to_string())?;
     season_status(&conn)
@@ -5265,13 +5280,13 @@ pub struct TacticalDashboardData {
 }
 
 fn score_to_grade(score: f64) -> &'static str {
-    if score >= 88.0 {
+    if score >= 92.0 {
         "S"
-    } else if score >= 75.0 {
+    } else if score >= 82.0 {
         "A"
-    } else if score >= 60.0 {
+    } else if score >= 70.0 {
         "B"
-    } else if score >= 45.0 {
+    } else if score >= 55.0 {
         "C"
     } else {
         "D"
@@ -5279,13 +5294,13 @@ fn score_to_grade(score: f64) -> &'static str {
 }
 
 fn time_to_grade(ms: i64) -> &'static str {
-    if ms <= 360 {
+    if ms <= 280 {
         "S"
-    } else if ms <= 480 {
+    } else if ms <= 420 {
         "A"
-    } else if ms <= 650 {
+    } else if ms <= 600 {
         "B"
-    } else if ms <= 850 {
+    } else if ms <= 780 {
         "C"
     } else {
         "D"
@@ -5473,46 +5488,109 @@ fn get_tactical_dashboard_stats(
     let mut sum_mod = 0.0;
     let mut sum_meth = 0.0;
     let mut sum_strat = 0.0;
+    let mut sum_weights = 0.0;
 
     for (i, r) in rows.iter().enumerate() {
         let r_rating = ratings[i];
+        let diff_weight = (r.difficulty as f64).clamp(1.0, 5.0);
+
+        // 速度 (Speed)：基准时间完成给 62 分，半时秒杀给 86 分，极速突破(0.35x)给 94 分，超时快速衰减
         let r_speed = r.speed.unwrap_or_else(|| {
-            let pace = (r.duration as f64 / r.bench.max(1) as f64).clamp(0.2, 1.8);
-            ((1.0 - pace) * 28.0 + 78.0).clamp(45.0, 98.0)
+            let pace = (r.duration as f64 / r.bench.max(1) as f64).clamp(0.2, 2.0);
+            if r.outcome != "correct" {
+                ((1.0 - pace) * 20.0 + 40.0).clamp(20.0, 46.0)
+            } else if pace <= 0.35 {
+                95.0 - (pace - 0.2) * 26.6
+            } else if pace <= 0.6 {
+                91.0 - (pace - 0.35) * 36.0
+            } else if pace <= 1.0 {
+                82.0 - (pace - 0.6) * 50.0
+            } else {
+                (62.0 - (pace - 1.0) * 32.0).clamp(25.0, 62.0)
+            }
         });
+
+        // 枪法 / 计算力 (Computation)：基础题做对仅给及格分(68~75)，必须攻克高难题目/无笔误才能得 85+ / 90+
         let r_comp = r.computation.unwrap_or_else(|| {
             if r.outcome == "correct" {
-                86.0 + (r.fluency as f64 * 3.0)
+                let base = match diff_weight as i64 {
+                    1 => 68.0,
+                    2 => 74.0,
+                    3 => 81.0,
+                    4 => 88.0,
+                    _ => 93.0,
+                };
+                (base + (r.fluency as f64 - 2.0) * 3.2).clamp(52.0, 98.0)
+            } else if r.outcome == "partial" {
+                48.0 + (diff_weight * 2.0)
             } else {
-                58.0
+                30.0 + (diff_weight * 2.0)
             }
         });
+
+        // 严谨性 / 补枪 (Rigor)：解答证明题步骤完备性，选择填空只猜对分值保守
         let r_rig = r.rigor.unwrap_or_else(|| {
             if r.outcome == "correct" {
-                if r.fluency >= 4 { 94.0 } else { 84.0 }
+                if r.question_type == "solution" {
+                    if r.fluency >= 4 { 90.0 } else { 80.0 }
+                } else {
+                    if r.fluency >= 4 { 82.0 } else { 74.0 }
+                }
+            } else if r.outcome == "partial" {
+                52.0
             } else {
-                54.0
+                32.0
             }
         });
-        let r_mod = r.modeling.unwrap_or(85.0);
-        let r_meth = r.method_use.unwrap_or_else(|| (r.fluency as f64 * 12.0 + 44.0).clamp(50.0, 96.0));
-        let r_strat = r.strategy_insight.unwrap_or_else(|| (r_rating * 40.0 + 36.0).clamp(45.0, 98.0));
 
-        sum_rigor += r_rig;
-        sum_comp += r_comp;
-        sum_speed += r_speed;
-        sum_mod += r_mod;
-        sum_meth += r_meth;
-        sum_strat += r_strat;
+        // 审题建模 (Modeling)
+        let r_mod = r.modeling.unwrap_or_else(|| {
+            if r.outcome == "correct" {
+                (68.0 + diff_weight * 3.8 + (r.fluency as f64 * 2.0)).clamp(58.0, 96.0)
+            } else {
+                36.0
+            }
+        });
+
+        // 方法运用 / 道具 (Method Use)
+        let r_meth = r.method_use.unwrap_or_else(|| {
+            if r.outcome == "correct" {
+                (62.0 + (r.fluency as f64 * 6.5) + (diff_weight * 2.5)).clamp(54.0, 96.0)
+            } else {
+                34.0
+            }
+        });
+
+        // 策略洞察力 (Strategy Insight)
+        let r_strat = r.strategy_insight.unwrap_or_else(|| {
+            (r_rating * 40.0 + 24.0).clamp(28.0, 96.0)
+        });
+
+        // 加权累加：赋予近期做题更高权重 (1.0 -> 2.2)，让最新突破与失误产生真实波动
+        let weight = 1.0 + (i as f64 / rows.len().max(1) as f64) * 1.2;
+        sum_weights += weight;
+        sum_rigor += r_rig * weight;
+        sum_comp += r_comp * weight;
+        sum_speed += r_speed * weight;
+        sum_mod += r_mod * weight;
+        sum_meth += r_meth * weight;
+        sum_strat += r_strat * weight;
     }
 
-    let n = matches.max(1) as f64;
-    let dim_rigor = if matches > 0 { (sum_rigor / n * 10.0).round() / 10.0 } else { 84.0 };
-    let dim_comp = if matches > 0 { (sum_comp / n * 10.0).round() / 10.0 } else { 86.0 };
-    let dim_speed = if matches > 0 { (sum_speed / n * 10.0).round() / 10.0 } else { 86.0 };
-    let dim_mod = if matches > 0 { (sum_mod / n * 10.0).round() / 10.0 } else { 87.0 };
-    let dim_meth = if matches > 0 { (sum_meth / n * 10.0).round() / 10.0 } else { 84.0 };
-    let dim_strat = if matches > 0 { (sum_strat / n * 10.0).round() / 10.0 } else { 84.0 };
+    let total_w = sum_weights.max(1.0);
+    // 敏感度对比度扩张 (Contrast Stretch)：打破大数定律均值钝化，拉开各维度区分度与波动性
+    let stretch = |raw: f64| -> f64 {
+        let center = 60.0;
+        let stretched = center + (raw - center) * 1.52;
+        (stretched.clamp(18.0, 98.0) * 10.0).round() / 10.0
+    };
+
+    let dim_rigor = if matches > 0 { stretch(sum_rigor / total_w) } else { 64.0 };
+    let dim_comp = if matches > 0 { stretch(sum_comp / total_w) } else { 65.0 };
+    let dim_speed = if matches > 0 { stretch(sum_speed / total_w) } else { 62.0 };
+    let dim_mod = if matches > 0 { stretch(sum_mod / total_w) } else { 64.0 };
+    let dim_meth = if matches > 0 { stretch(sum_meth / total_w) } else { 63.0 };
+    let dim_strat = if matches > 0 { stretch(sum_strat / total_w) } else { 62.0 };
 
     let dimensions = vec![
         TacticalDimension { key: "rigor".into(), label: "严谨性".into(), value: dim_rigor },
@@ -5524,7 +5602,13 @@ fn get_tactical_dashboard_stats(
     ];
 
     let we_score = ((dim_rigor + dim_comp + dim_speed + dim_mod + dim_meth + dim_strat) / 6.0 * 10.0).round() / 10.0;
-    let firepower = ((rating_pro * 45.0 + win_rate * 0.35 + (matches.min(50) as f64 * 0.4)).clamp(10.0, 100.0)).round() as i64;
+    // 火力值 (Firepower)：严苛门槛，常态 Rating 1.00 对应 60~65，只有具备高压压轴秒杀能力才可破 85+
+    let firepower = if matches > 0 {
+        let fp_calc = (rating_pro - 0.40).max(0.0) * 36.0 + win_rate * 0.32 + (matches.min(30) as f64 * 0.20);
+        fp_calc.clamp(10.0, 99.0).round() as i64
+    } else {
+        60
+    };
     let combat_power = ((current_elo * 1.2 + matches as f64 * 8.0 + correct_count as f64 * 10.0 + rating_pro * 200.0).clamp(100.0, 9999.0)).round() as i64;
 
     // 动态战术代号
@@ -5654,7 +5738,8 @@ fn get_tactical_dashboard_stats(
         };
 
         let s_firepower = if s_attempted > 0 {
-            ((s_rating_pro * 48.0 + s_win_rate * 0.4 + (s_attempted.min(30) as f64 * 0.5)).clamp(10.0, 120.0)).round() as i64
+            let fp_map = (s_rating_pro - 0.40).max(0.0) * 36.0 + s_win_rate * 0.32 + (s_attempted.min(30) as f64 * 0.20);
+            fp_map.clamp(10.0, 99.0).round() as i64
         } else {
             0
         };
@@ -5693,7 +5778,8 @@ fn get_tactical_dashboard_stats(
     let solution_rows: Vec<&TacticalAttemptRow> = rows.iter().filter(|r| r.question_type == "solution").collect();
     let solution_score = if !solution_rows.is_empty() {
         let sol_c = solution_rows.iter().filter(|r| r.outcome == "correct").count() as f64;
-        (sol_c / solution_rows.len() as f64) * 100.0
+        let sol_diff_avg = solution_rows.iter().map(|r| r.difficulty as f64).sum::<f64>() / solution_rows.len() as f64;
+        ((sol_c / solution_rows.len() as f64) * 75.0 + (sol_diff_avg * 4.0)).clamp(25.0, 98.0)
     } else {
         dim_comp
     };
@@ -5701,7 +5787,8 @@ fn get_tactical_dashboard_stats(
     let hard_rows: Vec<&TacticalAttemptRow> = rows.iter().filter(|r| r.difficulty >= 3).collect();
     let hard_score = if !hard_rows.is_empty() {
         let h_c = hard_rows.iter().filter(|r| r.outcome == "correct").count() as f64;
-        (h_c / hard_rows.len() as f64) * 100.0
+        let h_win = (h_c / hard_rows.len() as f64) * 100.0;
+        (h_win * 0.85 + 10.0).clamp(20.0, 98.0)
     } else {
         dim_strat
     };
@@ -5719,7 +5806,7 @@ fn get_tactical_dashboard_stats(
             id: "trade".into(),
             label: "补枪".into(),
             icon: "Zap".into(),
-            grade: score_to_grade((dim_rigor * 0.7 + win_rate * 0.3).clamp(40.0, 98.0)).into(),
+            grade: score_to_grade((dim_rigor * 0.7 + win_rate * 0.3).clamp(30.0, 98.0)).into(),
             score: dim_rigor,
             desc: "错题订正复盘与二刷闭环率".into(),
         },
@@ -7267,7 +7354,7 @@ fn friend_sync_file_name(friend_code: &str) -> Result<String, String> {
     Ok(format!("shuaba-friend-{}.json", sanitize_friend_sync_code(friend_code)?))
 }
 
-fn friend_sync_folder_url(config: &FriendSyncConfig) -> Result<Url, String> {
+fn friend_sync_base_url(config: &FriendSyncConfig) -> Result<Url, String> {
     let endpoint = config.endpoint.trim();
     if endpoint.is_empty() {
         return Err("请填写坚果云 WebDAV 地址".to_string());
@@ -7280,13 +7367,22 @@ fn friend_sync_folder_url(config: &FriendSyncConfig) -> Result<Url, String> {
         return Err("WebDAV 地址必须使用 http 或 https".to_string());
     }
     let mut path = url.path().trim_end_matches('/').to_string();
-    if path.is_empty() { path.push('/'); } else { path.push('/'); }
+    if path.is_empty() {
+        path.push('/');
+    } else {
+        path.push('/');
+    }
     url.set_path(&path);
+    Ok(url)
+}
+
+fn friend_sync_folder_url(config: &FriendSyncConfig) -> Result<Url, String> {
+    let mut url = friend_sync_base_url(config)?;
     {
         let mut segments = url.path_segments_mut().map_err(|_| "WebDAV 地址不可用于路径拼接".to_string())?;
         for segment in config.folder.trim_matches('/').split('/').filter(|s| !s.is_empty()) {
-            if segment == "." || segment == ".." || segment.contains('\\') {
-                return Err("共享文件夹路径不安全".to_string());
+            if segment == "." || segment == ".." || segment.contains('\\') || segment.contains(':') {
+                return Err("共享文件夹路径只能填写坚果云里的文件夹名，例如 shuaba-friends；不要填写 E:\\... 这样的电脑本地路径或完整网址".to_string());
             }
             segments.push(segment);
         }
@@ -7312,57 +7408,193 @@ fn friend_sync_auth(request: reqwest::blocking::RequestBuilder, config: &FriendS
     request.basic_auth(config.username.trim(), Some(config.app_password.trim()))
 }
 
+fn friend_sync_status_error(action: &str, status: StatusCode) -> String {
+    match status {
+        StatusCode::UNAUTHORIZED => format!("{action}失败：HTTP 401。请检查坚果云账号和应用密码（不是网页登录密码）"),
+        StatusCode::FORBIDDEN => format!("{action}失败：HTTP 403。当前账号没有该共享文件夹的读写权限"),
+        StatusCode::NOT_FOUND => format!("{action}失败：HTTP 404。请检查 WebDAV 地址和共享文件夹名称"),
+        StatusCode::CONFLICT => format!(
+            "{action}失败：HTTP 409。请确认目标云端文件夹已创建、名称和层级完全一致，并且当前账号有权限访问"
+        ),
+        StatusCode::METHOD_NOT_ALLOWED => format!("{action}失败：HTTP 405。坚果云拒绝了当前 WebDAV 操作"),
+        status if status.is_server_error() => format!("{action}失败：HTTP {status}。坚果云服务或网络暂时异常，请稍后重试"),
+        _ => format!("{action}失败：HTTP {status}。请检查坚果云配置和共享目录权限"),
+    }
+}
+
+fn friend_sync_propfind_with_depth(
+    client: &Client,
+    url: Url,
+    config: &FriendSyncConfig,
+    depth: &str,
+) -> Result<reqwest::blocking::Response, String> {
+    // 显式发送标准 PROPFIND XML，兼容坚果云对空请求体的处理差异。
+    const PROPFIND_BODY: &str = r#"<?xml version="1.0" encoding="utf-8"?><propfind xmlns="DAV:"><allprop/></propfind>"#;
+    friend_sync_auth(client.request(Method::from_bytes(b"PROPFIND").unwrap(), url), config)
+        .header("Depth", depth)
+        .header("Content-Type", "application/xml; charset=utf-8")
+        .body(PROPFIND_BODY)
+        .send()
+        .map_err(|e| format!("连接坚果云失败：{e}"))
+}
+
+fn friend_sync_propfind(client: &Client, url: Url, config: &FriendSyncConfig) -> Result<reqwest::blocking::Response, String> {
+    friend_sync_propfind_with_depth(client, url, config, "0")
+}
+
+fn friend_sync_folder_url_without_trailing_slash(url: &Url) -> Url {
+    let mut candidate = url.clone();
+    let path = candidate.path().trim_end_matches('/').to_string();
+    candidate.set_path(&path);
+    candidate
+}
+
+fn friend_sync_href_values(xml: &str) -> Vec<String> {
+    let mut values = Vec::new();
+    let mut cursor = 0usize;
+    while let Some(relative_start) = xml[cursor..].find('<') {
+        let start = cursor + relative_start;
+        let Some(relative_end) = xml[start..].find('>') else { break };
+        let tag = &xml[start + 1..start + relative_end];
+        let tag_name = tag.split_whitespace().next().unwrap_or("").trim_start_matches('/');
+        if tag_name.rsplit(':').next().unwrap_or(tag_name).eq_ignore_ascii_case("href") {
+            let content_start = start + relative_end + 1;
+            let close = format!("</{}>", tag_name);
+            if let Some(relative_close) = xml[content_start..].find(&close) {
+                let value = xml[content_start..content_start + relative_close]
+                    .trim()
+                    .replace("&amp;", "&")
+                    .replace("&lt;", "<")
+                    .replace("&gt;", ">")
+                    .replace("&quot;", "\"")
+                    .replace("&apos;", "'");
+                if !value.is_empty() { values.push(value); }
+                cursor = content_start + relative_close + close.len();
+                continue;
+            }
+        }
+        cursor = start + relative_end + 1;
+    }
+    values
+}
+
+fn friend_sync_discover_folder_url(client: &Client, config: &FriendSyncConfig) -> Result<Option<Url>, String> {
+    let root = friend_sync_base_url(config)?;
+    let response = friend_sync_propfind_with_depth(client, root.clone(), config, "1")?;
+    if !response.status().is_success() {
+        return Ok(None);
+    }
+    let body = response.text().map_err(|e| format!("读取坚果云目录失败：{e}"))?;
+    let wanted = config.folder.trim_matches('/').split('/').filter(|s| !s.is_empty()).last().unwrap_or("");
+    for href in friend_sync_href_values(&body) {
+        let Ok(mut candidate) = root.join(&href) else { continue };
+        let last_segment = candidate
+            .path()
+            .trim_end_matches('/')
+            .rsplit('/')
+            .next()
+            .unwrap_or("");
+        if last_segment == wanted {
+            let mut path = candidate.path().trim_end_matches('/').to_string();
+            path.push('/');
+            candidate.set_path(&path);
+            return Ok(Some(candidate));
+        }
+    }
+    Ok(None)
+}
+
+fn friend_sync_resolve_folder_url(client: &Client, config: &FriendSyncConfig) -> Result<Url, String> {
+    Ok(friend_sync_discover_folder_url(client, config)?
+        .unwrap_or(friend_sync_folder_url(config)?))
+}
+
 #[tauri::command]
 fn test_friend_sync(config: FriendSyncConfig) -> Result<String, String> {
-    let url = friend_sync_folder_url(&config)?;
+    let folder_url = friend_sync_folder_url(&config)?;
     let client = friend_sync_client()?;
-    let response = friend_sync_auth(client.request(Method::from_bytes(b"PROPFIND").unwrap(), url), &config)
-        .header("Depth", "0")
-        .body("")
-        .send()
-        .map_err(|e| format!("连接坚果云失败：{e}"))?;
-    if response.status().is_success() || response.status() == StatusCode::MULTI_STATUS {
-        Ok("坚果云连接正常".to_string())
-    } else {
-        Err(format!("坚果云返回 HTTP {}，请检查账号、应用密码和共享目录权限", response.status()))
+    let response = friend_sync_propfind(&client, folder_url.clone(), &config)?;
+    if response.status().is_success() {
+        return Ok("坚果云连接正常，共享文件夹可访问".to_string());
     }
+
+    // 坚果云部分 WebDAV 节点对 collection 末尾的斜杠处理不一致；
+    // 同一个文件夹无斜杠请求成功时，后续文件上传仍使用带斜杠的规范路径。
+    if response.status() == StatusCode::CONFLICT {
+        let without_slash = friend_sync_folder_url_without_trailing_slash(&folder_url);
+        let fallback = friend_sync_propfind(&client, without_slash, &config)?;
+        if fallback.status().is_success() {
+            return Ok("坚果云连接正常，共享文件夹可访问".to_string());
+        }
+
+        // 如果根目录列表中能找到该文件夹，说明账号和云端路径均已被识别；
+        // 某些坚果云节点只对 collection 的 PROPFIND 返回 409，但不影响文件 PUT/GET。
+        if let Some(discovered) = friend_sync_discover_folder_url(&client, &config)? {
+            let discovered_response = friend_sync_propfind(&client, discovered, &config)?;
+            if discovered_response.status().is_success() || discovered_response.status() == StatusCode::CONFLICT {
+                return Ok("坚果云账号和共享文件夹已识别，已跳过坚果云对目录 PROPFIND 的 409 兼容性问题".to_string());
+            }
+        }
+
+        // 根目录可访问但目录列表中找不到目标文件夹，才判定为路径或共享权限问题。
+        let root_response = friend_sync_propfind(&client, friend_sync_base_url(&config)?, &config)?;
+        if root_response.status().is_success() {
+            return Err(
+                "坚果云账号可用，但 WebDAV 根目录中找不到目标文件夹。请确认文件夹名称、层级和共享权限".to_string(),
+            );
+        }
+    }
+
+    Err(friend_sync_status_error("连接坚果云", response.status()))
 }
 
 #[tauri::command]
 fn publish_friend_snapshot(config: FriendSyncConfig, friend_code: String, payload: String) -> Result<String, String> {
-    let folder_url = friend_sync_folder_url(&config)?;
+    let client = friend_sync_client()?;
+    let folder_url = friend_sync_resolve_folder_url(&client, &config)?;
     let file_name = friend_sync_file_name(&friend_code)?;
     let file_url = folder_url.join(&file_name).map_err(|_| "无法拼接好友数据文件路径".to_string())?;
-    let client = friend_sync_client()?;
     let response = friend_sync_auth(client.put(file_url.clone()), &config)
         .header("Content-Type", "application/json; charset=utf-8")
         .body(payload.clone())
         .send()
         .map_err(|e| format!("上传好友数据失败：{e}"))?;
     if response.status().is_success() {
-        Ok(file_name)
-    } else if response.status() == StatusCode::NOT_FOUND {
-        let mkcol = friend_sync_auth(client.request(Method::from_bytes(b"MKCOL").unwrap(), folder_url), &config)
-            .send()
-            .map_err(|e| format!("创建共享目录失败：{e}"))?;
+        return Ok(file_name);
+    }
+
+    // WebDAV 在目标 collection 尚未创建时，PUT 文件通常返回 404 或 409。
+    // 先尝试创建目录；目录已存在时 Nutstore 可能返回 405，此时继续重试 PUT。
+    if response.status() == StatusCode::NOT_FOUND || response.status() == StatusCode::CONFLICT {
+        let mkcol = friend_sync_auth(
+            client.request(Method::from_bytes(b"MKCOL").unwrap(), folder_url.clone()),
+            &config,
+        )
+        .send()
+        .map_err(|e| format!("创建共享目录失败：{e}"))?;
         if !(mkcol.status().is_success() || mkcol.status() == StatusCode::METHOD_NOT_ALLOWED) {
-            return Err(format!("共享目录不存在且创建失败：HTTP {}", mkcol.status()));
+            return Err(friend_sync_status_error("创建共享目录", mkcol.status()));
         }
+
         let retry = friend_sync_auth(client.put(file_url), &config)
             .header("Content-Type", "application/json; charset=utf-8")
             .body(payload)
             .send()
             .map_err(|e| format!("重试上传好友数据失败：{e}"))?;
-        if retry.status().is_success() { Ok(file_name) } else { Err(format!("上传好友数据失败：HTTP {}", retry.status())) }
+        if retry.status().is_success() {
+            Ok(file_name)
+        } else {
+            Err(friend_sync_status_error("上传好友数据", retry.status()))
+        }
     } else {
-        Err(format!("上传好友数据失败：HTTP {}", response.status()))
+        Err(friend_sync_status_error("上传好友数据", response.status()))
     }
 }
 
 #[tauri::command]
 fn pull_friend_snapshots(config: FriendSyncConfig, friend_codes: Vec<String>) -> Result<Vec<FriendSyncRemoteSnapshot>, String> {
-    let folder_url = friend_sync_folder_url(&config)?;
     let client = friend_sync_client()?;
+    let folder_url = friend_sync_resolve_folder_url(&client, &config)?;
     let mut snapshots = Vec::new();
     for code in friend_codes {
         let file_name = friend_sync_file_name(&code)?;

@@ -126,10 +126,10 @@ export function SettingsView({
 
 *注：升级覆盖程序不影响任何本地刷题历史与天梯 Elo 分。*`,
       publishedAt: new Date().toISOString(),
-      htmlUrl: 'https://github.com/shuaba-app/shuaba/releases/latest',
-      setupDownloadUrl: 'https://github.com/shuaba-app/shuaba/releases/latest',
-      zipDownloadUrl: 'https://github.com/shuaba-app/shuaba/releases/latest',
-      sourceDownloadUrl: 'https://github.com/shuaba-app/shuaba/releases/latest',
+      htmlUrl: 'https://github.com/dr7fter/shauba/releases/latest',
+      setupDownloadUrl: 'https://github.com/dr7fter/shauba/releases/latest',
+      zipDownloadUrl: 'https://github.com/dr7fter/shauba/releases/latest',
+      sourceDownloadUrl: 'https://github.com/dr7fter/shauba/releases/latest',
     }
     setUpdateResult(mockInfo)
     setShowUpdateModal(true)

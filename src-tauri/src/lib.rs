@@ -7198,7 +7198,7 @@ fn get_app_version() -> String {
 #[tauri::command]
 fn check_app_update(repo: Option<String>) -> Result<AppUpdateInfo, String> {
     let current_version = env!("CARGO_PKG_VERSION").to_string();
-    let repo_slug = repo.unwrap_or_else(|| "shuaba-app/shuaba".to_string());
+    let repo_slug = repo.unwrap_or_else(|| "dr7fter/shauba".to_string());
 
     let info = AppUpdateInfo {
         current_version: current_version.clone(),

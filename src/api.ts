@@ -463,7 +463,7 @@ export async function getAppVersion(): Promise<string> {
   return '1.3.1'
 }
 
-export async function checkAppUpdate(repo = 'shuaba-app/shuaba'): Promise<AppUpdateInfo> {
+export async function checkAppUpdate(repo = 'dr7fter/shauba'): Promise<AppUpdateInfo> {
   const currentVersion = await getAppVersion()
   
   // 1. Try remote GitHub API if network available

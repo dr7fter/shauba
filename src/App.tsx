@@ -112,15 +112,21 @@ function Sidebar({ view, setView }: { view: View; setView: (v: View) => void }) 
         <button
           className={view === 'settings' ? 'nav-item active' : 'nav-item'}
           onClick={() => setView('settings')}
-          aria-label="打开设置"
+          aria-label="打开设置与在线更新"
         >
           <Settings size={18} strokeWidth={1.8} />
           <span>设置</span>
+          <span className="sidebar-version-tag">v1.3.1</span>
         </button>
-        <div className="status-info">
+        <div
+          className="status-info"
+          onClick={() => setView('settings')}
+          style={{ cursor: 'pointer' }}
+          title="点击查看版本与在线更新"
+        >
           <span className="status-dot" />
           <div>
-            <strong>题库已就绪</strong>
+            <strong>题库已就绪 · v1.3.1</strong>
             <small>数据仅保存在本机</small>
           </div>
         </div>

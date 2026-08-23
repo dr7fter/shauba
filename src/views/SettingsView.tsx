@@ -202,6 +202,69 @@ export function SettingsView({
     <div className="settings-view">
       <section>
         <div>
+          <h2>🚀 版本与在线更新</h2>
+          <p>
+            检测最新发布的「刷吧」版本与题库升级，在线获取更新说明并一键升级。
+          </p>
+        </div>
+
+        <div className="update-check-card">
+          <div className="update-check-info">
+            <div className="update-current-version">
+              <span className="version-pill">当前版本 v{currentVersion}</span>
+              {updateResult && (
+                <span className={`status-tag ${updateResult.hasUpdate ? 'has-update' : 'is-latest'}`}>
+                  {updateResult.hasUpdate ? `🎉 发现新版 v${updateResult.latestVersion}` : '已是最新版本'}
+                </span>
+              )}
+            </div>
+            <p className="update-desc-text">
+              {updateResult?.hasUpdate
+                ? `最新版本包含战术分析优化与题库更新，点击查看详情。`
+                : '定期检测可获取最新数一题库、Rating 算法与秒杀诊断功能。'}
+            </p>
+          </div>
+
+          <div className="update-actions-group">
+            <button
+              className="primary-button compact"
+              disabled={checkingUpdate}
+              onClick={() => void handleCheckUpdate()}
+            >
+              {checkingUpdate ? (
+                <>
+                  <LoaderCircle className="spin" size={14} /> 正在检测...
+                </>
+              ) : (
+                <>
+                  <RefreshCw size={14} /> 检查新版本
+                </>
+              )}
+            </button>
+
+            <button
+              type="button"
+              className="secondary-button compact"
+              onClick={handleSimulateUpdate}
+              title="预览并体验新版本发布弹窗效果"
+            >
+              <Sparkles size={14} /> 演示升级弹窗
+            </button>
+
+            {updateResult?.hasUpdate && (
+              <button
+                className="secondary-button compact accent"
+                onClick={() => setShowUpdateModal(true)}
+              >
+                <Sparkles size={14} /> 查看更新详情
+              </button>
+            )}
+          </div>
+        </div>
+      </section>
+
+      <section>
+        <div>
           <h2>题库目录</h2>
           <p>
             {data.libraryReady ? '当前题库目录有效。' : '⚠ 未在当前目录找到题库 JSON，请检查路径。'}
@@ -596,68 +659,6 @@ export function SettingsView({
         )}
       </section>
 
-      <section>
-        <div>
-          <h2>版本与在线更新</h2>
-          <p>
-            检测最新发布的「刷吧」版本与题库升级，在线获取更新说明并一键升级。
-          </p>
-        </div>
-
-        <div className="update-check-card">
-          <div className="update-check-info">
-            <div className="update-current-version">
-              <span className="version-pill">当前版本 v{currentVersion}</span>
-              {updateResult && (
-                <span className={`status-tag ${updateResult.hasUpdate ? 'has-update' : 'is-latest'}`}>
-                  {updateResult.hasUpdate ? `🎉 发现新版 v${updateResult.latestVersion}` : '已是最新版本'}
-                </span>
-              )}
-            </div>
-            <p className="update-desc-text">
-              {updateResult?.hasUpdate
-                ? `最新版本包含战术分析优化与题库更新，点击查看详情。`
-                : '定期检测可获取最新数一题库、Rating 算法与秒杀诊断功能。'}
-            </p>
-          </div>
-
-          <div className="update-actions-group">
-            <button
-              className="primary-button compact"
-              disabled={checkingUpdate}
-              onClick={() => void handleCheckUpdate()}
-            >
-              {checkingUpdate ? (
-                <>
-                  <LoaderCircle className="spin" size={14} /> 正在检测...
-                </>
-              ) : (
-                <>
-                  <RefreshCw size={14} /> 检查新版本
-                </>
-              )}
-            </button>
-
-            <button
-              type="button"
-              className="secondary-button compact"
-              onClick={handleSimulateUpdate}
-              title="预览并体验新版本发布弹窗效果"
-            >
-              <Sparkles size={14} /> 演示升级弹窗
-            </button>
-
-            {updateResult?.hasUpdate && (
-              <button
-                className="secondary-button compact accent"
-                onClick={() => setShowUpdateModal(true)}
-              >
-                <Sparkles size={14} /> 查看更新详情
-              </button>
-            )}
-          </div>
-        </div>
-      </section>
 
       <section>
         <div>

@@ -6936,4 +6936,18 @@
   background: color-mix(in srgb, var(--green) 15%, transparent);
 }
 
+.sidebar-version-tag {
+  margin-left: auto;
+  font-size: 10px;
+  font-family: var(--font-mono, monospace);
+  font-weight: 700;
+  color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 12%, transparent);
+  border: 1px solid color-mix(in srgb, var(--accent) 25%, transparent);
+  padding: 1px 6px;
+  border-radius: 999px;
+  letter-spacing: 0.02em;
+}
+
+
 

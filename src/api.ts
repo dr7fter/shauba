@@ -476,11 +476,17 @@ export async function getSystemProxy(): Promise<string | null> {
   }
 }
 
-/** 用官方 updater 插件检查更新：优先走系统代理，下载复用同一代理客户端 */
+/** 用官方 updater 插件检查更新：优先走系统代理，失败降级直连 */
 export async function checkAppUpdate(): Promise<Update | null> {
   if (!isTauri()) return null
   const proxy = await getSystemProxy()
-  return check(proxy ? { proxy } : undefined)
+  if (!proxy) return check()
+  try {
+    return await check({ proxy })
+  } catch {
+    // 代理工具异常退出未还原设置时端口已死，降级直连重试一次
+    return check()
+  }
 }
 
 /** 应用内下载并安装更新，进度透传给回调 */

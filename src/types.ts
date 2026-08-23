@@ -611,3 +611,16 @@ export type TodayAttemptItem = {
   question: Question
 }
 
+export type AppUpdateInfo = {
+  currentVersion: string
+  latestVersion: string
+  hasUpdate: boolean
+  releaseName?: string | null
+  releaseNotes?: string | null
+  publishedAt?: string | null
+  htmlUrl?: string | null
+  setupDownloadUrl?: string | null
+  zipDownloadUrl?: string | null
+  sourceDownloadUrl?: string | null
+}
+

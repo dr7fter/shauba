@@ -5,6 +5,7 @@ import {
   createPracticeSessionPayload,
   determineAttemptEvidence,
 } from '../src/domain/evidence.ts'
+import { compareSemver } from '../src/utils.ts'
 
 test('paper objective without a screen selection is not inferred as wrong', () => {
   assert.deepEqual(
@@ -56,3 +57,14 @@ test('session persistence stores IDs and position instead of question snapshots'
   assert.equal(payload.attemptMode, 'review')
   assert.equal('queue' in payload, false)
 })
+
+test('semver comparison correctly determines upgrade availability', () => {
+  assert.equal(compareSemver('1.3.0', '1.3.1'), true)
+  assert.equal(compareSemver('1.3.0', '1.4.0'), true)
+  assert.equal(compareSemver('1.3.0', '2.0.0'), true)
+  assert.equal(compareSemver('v1.3.0', 'v1.3.1'), true)
+  assert.equal(compareSemver('1.3.0', '1.3.0'), false)
+  assert.equal(compareSemver('1.4.0', '1.3.0'), false)
+  assert.equal(compareSemver('1.3.1', '1.3.0'), false)
+})
+

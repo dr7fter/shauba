@@ -242,3 +242,21 @@ export function predictedExamScore(rating: number, kast = 75): number {
   return Math.max(0, Math.min(150, finalScore))
 }
 
+export function compareSemver(current: string, latest: string): boolean {
+  const parse = (v: string) =>
+    v
+      .trim()
+      .replace(/^v/, '')
+      .split('.')
+      .map((n) => parseInt(n, 10) || 0)
+  const c = parse(current)
+  const l = parse(latest)
+  for (let i = 0; i < Math.max(c.length, l.length); i++) {
+    const cv = c[i] ?? 0
+    const lv = l[i] ?? 0
+    if (lv > cv) return true
+    if (lv < cv) return false
+  }
+  return false
+}
+

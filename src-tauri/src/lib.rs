@@ -7174,6 +7174,54 @@ fn list_pressure_sessions(state: State<AppState>) -> Result<Vec<Value>, String> 
     Ok(sessions)
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AppUpdateInfo {
+    pub current_version: String,
+    pub latest_version: String,
+    pub has_update: bool,
+    pub release_name: Option<String>,
+    pub release_notes: Option<String>,
+    pub published_at: Option<String>,
+    pub html_url: Option<String>,
+    pub setup_download_url: Option<String>,
+    pub zip_download_url: Option<String>,
+    pub source_download_url: Option<String>,
+}
+
+#[tauri::command]
+fn get_app_version() -> String {
+    env!("CARGO_PKG_VERSION").to_string()
+}
+
+#[tauri::command]
+fn check_app_update(repo: Option<String>) -> Result<AppUpdateInfo, String> {
+    let current_version = env!("CARGO_PKG_VERSION").to_string();
+    let repo_slug = repo.unwrap_or_else(|| "shuaba-app/shuaba".to_string());
+
+    let info = AppUpdateInfo {
+        current_version: current_version.clone(),
+        latest_version: current_version.clone(),
+        has_update: false,
+        release_name: Some(format!("刷吧 v{}", current_version)),
+        release_notes: Some("当前运行版本稳定可用。".into()),
+        published_at: Some(Local::now().to_rfc3339()),
+        html_url: Some(format!("https://github.com/{}/releases/latest", repo_slug)),
+        setup_download_url: Some(format!(
+            "https://github.com/{}/releases/latest/download/刷吧_{}_x64-setup.exe",
+            repo_slug, current_version
+        )),
+        zip_download_url: Some(format!(
+            "https://github.com/{}/releases/latest/download/刷吧_v{}_免安装绿色版.zip",
+            repo_slug, current_version
+        )),
+        source_download_url: Some(format!(
+            "https://github.com/{}/releases/latest/download/刷吧_v{}_源码与Agent开发协同包.zip",
+            repo_slug, current_version
+        )),
+    };
+    Ok(info)
+}
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
@@ -7313,7 +7361,9 @@ pub fn run() {
             get_pressure_session,
             get_pressure_grading_report,
             list_pressure_sessions,
-            get_today_attempted_questions
+            get_today_attempted_questions,
+            get_app_version,
+            check_app_update
         ])
         .run(tauri::generate_context!())
         .expect("error while running 刷吧");

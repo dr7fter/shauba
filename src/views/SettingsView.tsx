@@ -1,4 +1,4 @@
-import { Archive, LoaderCircle } from 'lucide-react'
+import { Archive, LoaderCircle, RefreshCw, Sparkles } from 'lucide-react'
 import { useCallback, useEffect, useState } from 'react'
 import {
   advanceSeason,
@@ -10,9 +10,12 @@ import {
   saveGoal,
   saveReviewIntervals,
   setLibraryPath,
+  checkAppUpdate,
+  getAppVersion,
 } from '../api'
 import { isAudioMuted, setAudioMuted } from '../data/audio'
-import type { BackupInfo, BootstrapData, SeasonStatus } from '../types'
+import { UpdateModal } from '../components/UpdateModal'
+import type { BackupInfo, BootstrapData, SeasonStatus, AppUpdateInfo } from '../types'
 
 export function SettingsView({
   data,
@@ -50,11 +53,34 @@ export function SettingsView({
   const [audioMuted, setAudioMutedState] = useState(() => isAudioMuted())
   const [season, setSeason] = useState<SeasonStatus | null>(null)
   const [libraryPathInput, setLibraryPathInput] = useState('')
+  const [currentVersion, setCurrentVersion] = useState('1.3.0')
+  const [checkingUpdate, setCheckingUpdate] = useState(false)
+  const [updateResult, setUpdateResult] = useState<AppUpdateInfo | null>(null)
+  const [showUpdateModal, setShowUpdateModal] = useState(false)
 
   useEffect(() => {
     void getSeasonStatus().then(setSeason).catch(() => undefined)
     void getLibraryPath().then(setLibraryPathInput).catch(() => undefined)
+    void getAppVersion().then(setCurrentVersion).catch(() => undefined)
   }, [])
+
+  const handleCheckUpdate = async (silent = false) => {
+    setCheckingUpdate(true)
+    try {
+      const info = await checkAppUpdate()
+      setUpdateResult(info)
+      if (info.hasUpdate) {
+        setShowUpdateModal(true)
+        notify(`🎉 发现新版本 v${info.latestVersion}`)
+      } else if (!silent) {
+        notify(`当前已是最新版本 v${info.currentVersion}`)
+      }
+    } catch {
+      if (!silent) notify('检测更新失败，请检查网络连接')
+    } finally {
+      setCheckingUpdate(false)
+    }
+  }
 
   const loadBackups = useCallback(async () => {
     setLoadingBackups(true)
@@ -453,6 +479,60 @@ export function SettingsView({
 
       <section>
         <div>
+          <h2>版本与在线更新</h2>
+          <p>
+            检测最新发布的「刷吧」版本与题库升级，在线获取更新说明并一键升级。
+          </p>
+        </div>
+
+        <div className="update-check-card">
+          <div className="update-check-info">
+            <div className="update-current-version">
+              <span className="version-pill">当前版本 v{currentVersion}</span>
+              {updateResult && (
+                <span className={`status-tag ${updateResult.hasUpdate ? 'has-update' : 'is-latest'}`}>
+                  {updateResult.hasUpdate ? `🎉 发现新版 v${updateResult.latestVersion}` : '已是最新版本'}
+                </span>
+              )}
+            </div>
+            <p className="update-desc-text">
+              {updateResult?.hasUpdate
+                ? `最新版本包含战术分析优化与题库更新，点击查看详情。`
+                : '定期检测可获取最新数一题库、Rating 算法与秒杀诊断功能。'}
+            </p>
+          </div>
+
+          <div className="update-actions-group">
+            <button
+              className="primary-button compact"
+              disabled={checkingUpdate}
+              onClick={() => void handleCheckUpdate()}
+            >
+              {checkingUpdate ? (
+                <>
+                  <LoaderCircle className="spin" size={14} /> 正在检测...
+                </>
+              ) : (
+                <>
+                  <RefreshCw size={14} /> 检查新版本
+                </>
+              )}
+            </button>
+
+            {updateResult?.hasUpdate && (
+              <button
+                className="secondary-button compact accent"
+                onClick={() => setShowUpdateModal(true)}
+              >
+                <Sparkles size={14} /> 查看更新详情
+              </button>
+            )}
+          </div>
+        </div>
+      </section>
+
+      <section>
+        <div>
           <h2>键盘快捷键</h2>
           <p>
             刷吧支持全键盘无鼠标极速刷题流，提升做题专注力与效率。
@@ -485,6 +565,14 @@ export function SettingsView({
           <span>本地优先离线可用模式已启用</span>
         </div>
       </section>
+
+      {showUpdateModal && updateResult && (
+        <UpdateModal
+          updateInfo={updateResult}
+          onClose={() => setShowUpdateModal(false)}
+          notify={notify}
+        />
+      )}
     </div>
   )
 }

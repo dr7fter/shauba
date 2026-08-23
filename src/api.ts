@@ -1,7 +1,8 @@
 import { invoke } from '@tauri-apps/api/core'
 import { mockBootstrap, mockCategories, mockInbox, mockMastery, mockQuestions, mockRecommendations } from './mock'
-import type { BootstrapData, CategoryNode, CodexTask, DailyLog, DailyTrendPoint, EloStatus, TagClosure, ExportResult, FailedInboxItem, InboxItem, InboxSummary, InsightPoint, MasteryChapter, MasteryNode, PracticeSessionState, Question, QuestionPage, RatingDistribution, RecommendationBatch, RecommendedQuestion, ReviewHistory, ReviewPlan, SeasonStatus, SessionScoreboard, UserStreak, WeaknessRadar, PressureSession, GradingReport, TacticalDashboardData } from './types'
+import type { BootstrapData, CategoryNode, CodexTask, DailyLog, DailyTrendPoint, EloStatus, TagClosure, ExportResult, FailedInboxItem, InboxItem, InboxSummary, InsightPoint, MasteryChapter, MasteryNode, PracticeSessionState, Question, QuestionPage, RatingDistribution, RecommendationBatch, RecommendedQuestion, ReviewHistory, ReviewPlan, SeasonStatus, SessionScoreboard, UserStreak, WeaknessRadar, PressureSession, GradingReport, TacticalDashboardData, AppUpdateInfo } from './types'
 import { createPracticeSessionPayload } from './domain/evidence'
+import { compareSemver } from './utils'
 
 const isTauri = () => '__TAURI_INTERNALS__' in window
 
@@ -450,3 +451,71 @@ export async function listPressureSessions(): Promise<PressureSession[]> {
   if (isTauri()) return invoke('list_pressure_sessions')
   return []
 }
+
+export async function getAppVersion(): Promise<string> {
+  if (isTauri()) {
+    try {
+      return await invoke<string>('get_app_version')
+    } catch {
+      return '1.3.0'
+    }
+  }
+  return '1.3.0'
+}
+
+export async function checkAppUpdate(repo = 'shuaba-app/shuaba'): Promise<AppUpdateInfo> {
+  const currentVersion = await getAppVersion()
+  
+  // 1. Try remote GitHub API if network available
+  try {
+    const res = await fetch(`https://api.github.com/repos/${repo}/releases/latest`, {
+      headers: { Accept: 'application/vnd.github.v3+json' },
+      signal: AbortSignal.timeout(5000),
+    })
+    if (res.ok) {
+      const data = await res.json()
+      const rawTag = (data.tag_name || '').replace(/^v/, '')
+      const isNewer = compareSemver(currentVersion, rawTag)
+      
+      const assets = Array.isArray(data.assets) ? data.assets : []
+      const setupAsset = assets.find((a: { name: string }) => a.name.endsWith('-setup.exe'))
+      const zipAsset = assets.find((a: { name: string }) => a.name.includes('免安装绿色版') || a.name.endsWith('.zip'))
+      const srcAsset = assets.find((a: { name: string }) => a.name.includes('源码与Agent开发协同包'))
+
+      return {
+        currentVersion,
+        latestVersion: rawTag || currentVersion,
+        hasUpdate: isNewer,
+        releaseName: data.name || `刷吧 v${rawTag}`,
+        releaseNotes: data.body || '包含性能优化与全新功能升级。',
+        publishedAt: data.published_at || new Date().toISOString(),
+        htmlUrl: data.html_url || `https://github.com/${repo}/releases/latest`,
+        setupDownloadUrl: setupAsset?.browser_download_url || `https://github.com/${repo}/releases/latest/download/刷吧_${rawTag}_x64-setup.exe`,
+        zipDownloadUrl: zipAsset?.browser_download_url || `https://github.com/${repo}/releases/latest/download/刷吧_v${rawTag}_免安装绿色版.zip`,
+        sourceDownloadUrl: srcAsset?.browser_download_url || `https://github.com/${repo}/releases/latest/download/刷吧_v${rawTag}_源码与Agent开发协同包.zip`,
+      }
+    }
+  } catch {
+    // Network / offline fallback to local Rust check
+  }
+
+  // 2. Rust fallback
+  if (isTauri()) {
+    try {
+      return await invoke<AppUpdateInfo>('check_app_update', { repo })
+    } catch {
+      // fallback
+    }
+  }
+
+  return {
+    currentVersion,
+    latestVersion: currentVersion,
+    hasUpdate: false,
+    releaseName: `刷吧 v${currentVersion}`,
+    releaseNotes: '当前运行版本稳定可用，已是最新版。',
+    publishedAt: new Date().toISOString(),
+    htmlUrl: `https://github.com/${repo}/releases`,
+  }
+}
+

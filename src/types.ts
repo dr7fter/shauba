@@ -597,7 +597,7 @@ export type GradingReport = {
   createdAt: number
 }
 export type FontScaleMode = 'standard' | 'medium' | 'large'
-export type View = 'today' | 'library' | 'review' | 'mastery' | 'insights' | 'settings'
+export type View = 'today' | 'library' | 'review' | 'mastery' | 'insights' | 'friends' | 'settings'
 export type AttemptMode = 'paper' | 'review'
 
 export type TodayAttemptItem = {
@@ -678,6 +678,25 @@ export type FriendsSystemData = {
   myProfile: FriendProfile
   friends: FriendProfile[]
   activities: FriendActivity[]
+}
+
+export type FriendShareSnapshot = {
+  schemaVersion: 1
+  kind: 'shuaba-friend-profile'
+  exportedAt: string
+  profile: FriendProfile
+}
+
+export type FriendSyncConfig = {
+  endpoint: string
+  username: string
+  appPassword: string
+  folder: string
+}
+
+export type FriendSyncRemoteSnapshot = {
+  fileName: string
+  payload: string
 }
 
 

@@ -4,6 +4,7 @@ mod services;    // Business Logic Layer（评分内核等）
 use base64::{engine::general_purpose::STANDARD, Engine};
 use chrono::{Datelike, Duration, Local, TimeZone};
 use rand::Rng;
+use reqwest::{blocking::Client, Method, StatusCode, Url};
 use rusqlite::{params, Connection, OptionalExtension};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
@@ -7237,6 +7238,148 @@ pub struct UserProfileSettings {
     pub avatar: Option<String>,
 }
 
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct FriendSyncConfig {
+    pub endpoint: String,
+    pub username: String,
+    pub app_password: String,
+    pub folder: String,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct FriendSyncRemoteSnapshot {
+    pub file_name: String,
+    pub payload: String,
+}
+
+fn sanitize_friend_sync_code(value: &str) -> Result<String, String> {
+    let code = value.trim().to_uppercase();
+    if code.is_empty() || code.len() > 64 || !code.chars().all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_') {
+        return Err("好友码包含不安全字符".to_string());
+    }
+    Ok(code)
+}
+
+fn friend_sync_file_name(friend_code: &str) -> Result<String, String> {
+    Ok(format!("shuaba-friend-{}.json", sanitize_friend_sync_code(friend_code)?))
+}
+
+fn friend_sync_folder_url(config: &FriendSyncConfig) -> Result<Url, String> {
+    let endpoint = config.endpoint.trim();
+    if endpoint.is_empty() {
+        return Err("请填写坚果云 WebDAV 地址".to_string());
+    }
+    if config.username.trim().is_empty() || config.app_password.trim().is_empty() {
+        return Err("请填写坚果云账号和应用密码".to_string());
+    }
+    let mut url = Url::parse(endpoint).map_err(|_| "WebDAV 地址格式不正确".to_string())?;
+    if url.scheme() != "https" && url.scheme() != "http" {
+        return Err("WebDAV 地址必须使用 http 或 https".to_string());
+    }
+    let mut path = url.path().trim_end_matches('/').to_string();
+    if path.is_empty() { path.push('/'); } else { path.push('/'); }
+    url.set_path(&path);
+    {
+        let mut segments = url.path_segments_mut().map_err(|_| "WebDAV 地址不可用于路径拼接".to_string())?;
+        for segment in config.folder.trim_matches('/').split('/').filter(|s| !s.is_empty()) {
+            if segment == "." || segment == ".." || segment.contains('\\') {
+                return Err("共享文件夹路径不安全".to_string());
+            }
+            segments.push(segment);
+        }
+    }
+    if !url.path().ends_with('/') {
+        let mut path = url.path().to_string();
+        path.push('/');
+        url.set_path(&path);
+    }
+    Ok(url)
+}
+
+fn friend_sync_client() -> Result<Client, String> {
+    Client::builder()
+        .connect_timeout(std::time::Duration::from_secs(4))
+        .timeout(std::time::Duration::from_secs(8))
+        .user_agent("Shuaba-Friends/1")
+        .build()
+        .map_err(|e| format!("创建同步连接失败：{e}"))
+}
+
+fn friend_sync_auth(request: reqwest::blocking::RequestBuilder, config: &FriendSyncConfig) -> reqwest::blocking::RequestBuilder {
+    request.basic_auth(config.username.trim(), Some(config.app_password.trim()))
+}
+
+#[tauri::command]
+fn test_friend_sync(config: FriendSyncConfig) -> Result<String, String> {
+    let url = friend_sync_folder_url(&config)?;
+    let client = friend_sync_client()?;
+    let response = friend_sync_auth(client.request(Method::from_bytes(b"PROPFIND").unwrap(), url), &config)
+        .header("Depth", "0")
+        .body("")
+        .send()
+        .map_err(|e| format!("连接坚果云失败：{e}"))?;
+    if response.status().is_success() || response.status() == StatusCode::MULTI_STATUS {
+        Ok("坚果云连接正常".to_string())
+    } else {
+        Err(format!("坚果云返回 HTTP {}，请检查账号、应用密码和共享目录权限", response.status()))
+    }
+}
+
+#[tauri::command]
+fn publish_friend_snapshot(config: FriendSyncConfig, friend_code: String, payload: String) -> Result<String, String> {
+    let folder_url = friend_sync_folder_url(&config)?;
+    let file_name = friend_sync_file_name(&friend_code)?;
+    let file_url = folder_url.join(&file_name).map_err(|_| "无法拼接好友数据文件路径".to_string())?;
+    let client = friend_sync_client()?;
+    let response = friend_sync_auth(client.put(file_url.clone()), &config)
+        .header("Content-Type", "application/json; charset=utf-8")
+        .body(payload.clone())
+        .send()
+        .map_err(|e| format!("上传好友数据失败：{e}"))?;
+    if response.status().is_success() {
+        Ok(file_name)
+    } else if response.status() == StatusCode::NOT_FOUND {
+        let mkcol = friend_sync_auth(client.request(Method::from_bytes(b"MKCOL").unwrap(), folder_url), &config)
+            .send()
+            .map_err(|e| format!("创建共享目录失败：{e}"))?;
+        if !(mkcol.status().is_success() || mkcol.status() == StatusCode::METHOD_NOT_ALLOWED) {
+            return Err(format!("共享目录不存在且创建失败：HTTP {}", mkcol.status()));
+        }
+        let retry = friend_sync_auth(client.put(file_url), &config)
+            .header("Content-Type", "application/json; charset=utf-8")
+            .body(payload)
+            .send()
+            .map_err(|e| format!("重试上传好友数据失败：{e}"))?;
+        if retry.status().is_success() { Ok(file_name) } else { Err(format!("上传好友数据失败：HTTP {}", retry.status())) }
+    } else {
+        Err(format!("上传好友数据失败：HTTP {}", response.status()))
+    }
+}
+
+#[tauri::command]
+fn pull_friend_snapshots(config: FriendSyncConfig, friend_codes: Vec<String>) -> Result<Vec<FriendSyncRemoteSnapshot>, String> {
+    let folder_url = friend_sync_folder_url(&config)?;
+    let client = friend_sync_client()?;
+    let mut snapshots = Vec::new();
+    for code in friend_codes {
+        let file_name = friend_sync_file_name(&code)?;
+        let file_url = folder_url.join(&file_name).map_err(|_| "无法拼接好友数据文件路径".to_string())?;
+        let response = friend_sync_auth(client.get(file_url), &config)
+            .send()
+            .map_err(|e| format!("读取好友数据失败：{e}"))?;
+        if response.status() == StatusCode::NOT_FOUND { continue; }
+        if !response.status().is_success() {
+            return Err(format!("读取好友数据失败：HTTP {}", response.status()));
+        }
+        let payload = response.text().map_err(|e| format!("读取好友数据内容失败：{e}"))?;
+        snapshots.push(FriendSyncRemoteSnapshot { file_name, payload });
+    }
+    Ok(snapshots)
+}
+
 #[tauri::command]
 fn get_user_profile(state: State<AppState>) -> Result<UserProfileSettings, String> {
     let conn = state.db.lock().map_err(|e| e.to_string())?;
@@ -7433,7 +7576,10 @@ pub fn run() {
             get_app_version,
             get_system_proxy,
             get_user_profile,
-            set_user_profile
+            set_user_profile,
+            test_friend_sync,
+            publish_friend_snapshot,
+            pull_friend_snapshots
         ])
         .run(tauri::generate_context!())
         .expect("error while running 刷吧");

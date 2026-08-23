@@ -49,17 +49,19 @@ export function usePressureMode({
   const [pressureDurations, setPressureDurations] = useState<Record<number, number>>({})
   const [pressureClock, setPressureClock] = useState(Date.now())
   const [batchTask, setBatchTask] = useState<CodexTask | null>(null)
+  const [isPressurePaused, setIsPressurePaused] = useState(false)
 
   const pressureRecoveryAttemptedRef = useRef(false)
   const pressureResumeElapsedRef = useRef<number | null>(null)
   const pressureQuestionStartedAtRef = useRef<number>(Date.now())
+  const pressurePauseStartedAtRef = useRef<number | null>(null)
 
-  // Clock ticker for overall session elapsed time
+  // Clock ticker for overall session elapsed time (freezes when paused)
   useEffect(() => {
-    if (!pressureMode || pressureSession?.status !== 'ongoing') return
+    if (!pressureMode || pressureSession?.status !== 'ongoing' || isPressurePaused) return
     const id = window.setInterval(() => setPressureClock(Date.now()), 1000)
     return () => window.clearInterval(id)
-  }, [pressureMode, pressureSession?.status])
+  }, [pressureMode, pressureSession?.status, isPressurePaused])
 
   // Rehydrate an unfinished pressure session after an app restart
   useEffect(() => {
@@ -134,6 +136,24 @@ export function usePressureMode({
     setShowPressurePrompt(true)
   }, [queue.length, notify])
 
+  const togglePressurePause = useCallback(() => {
+    if (!pressureMode || pressureSession?.status !== 'ongoing') return
+    if (!isPressurePaused) {
+      pressurePauseStartedAtRef.current = Date.now()
+      setIsPressurePaused(true)
+      notify('高压模考已暂停，计时已冻结')
+    } else {
+      if (pressurePauseStartedAtRef.current) {
+        const pauseDurationMs = Date.now() - pressurePauseStartedAtRef.current
+        pressureQuestionStartedAtRef.current += pauseDurationMs
+        setPressureSessionStartTime((prev) => prev + pauseDurationMs)
+        pressurePauseStartedAtRef.current = null
+      }
+      setIsPressurePaused(false)
+      notify('高压模考已恢复，继续作答')
+    }
+  }, [pressureMode, pressureSession?.status, isPressurePaused, notify])
+
   const confirmPressureMode = useCallback(async () => {
     const questionIds = queue.map((q) => q.question.id)
     try {
@@ -141,6 +161,8 @@ export function usePressureMode({
       setPressureSession(session)
       setPressureDurations({})
       setPressureMode(true)
+      setIsPressurePaused(false)
+      pressurePauseStartedAtRef.current = null
       setShowPressurePrompt(false)
       setPressureSessionStartTime(session.startTime)
       setPressureClock(Date.now())
@@ -157,6 +179,15 @@ export function usePressureMode({
   const submitPressureQuestion = useCallback(
     async (currentQuestion: Question | undefined, questionElapsedSec: number) => {
       if (!currentQuestion || !pressureSession) return
+
+      // If paused, account for the pause interval before calculating final duration
+      if (isPressurePaused && pressurePauseStartedAtRef.current) {
+        const pauseDurationMs = Date.now() - pressurePauseStartedAtRef.current
+        pressureQuestionStartedAtRef.current += pauseDurationMs
+        setPressureSessionStartTime((prev) => prev + pauseDurationMs)
+        pressurePauseStartedAtRef.current = null
+        setIsPressurePaused(false)
+      }
 
       const duration = clampAttemptDuration(
         Math.floor((Date.now() - pressureQuestionStartedAtRef.current) / 1000) ||
@@ -179,6 +210,7 @@ export function usePressureMode({
           const finalDurations = { ...pressureDurations, [currentQuestion.id]: duration }
           setPressureSession(completed)
           setPressureMode(false)
+          setIsPressurePaused(false)
           setShowPressureResult(true)
           try {
             const created = await createCodexBatchTask(
@@ -200,6 +232,7 @@ export function usePressureMode({
     },
     [
       pressureSession,
+      isPressurePaused,
       index,
       queue,
       pressureDurations,
@@ -254,6 +287,8 @@ export function usePressureMode({
       return
     }
     setPressureMode(false)
+    setIsPressurePaused(false)
+    pressurePauseStartedAtRef.current = null
     setPressureSession(null)
     setShowPressureResult(false)
     if (isZenMode) onToggleZen()
@@ -263,6 +298,8 @@ export function usePressureMode({
   const closePressureResult = useCallback(async () => {
     setShowPressureResult(false)
     setPressureSession(null)
+    setIsPressurePaused(false)
+    pressurePauseStartedAtRef.current = null
     try {
       const nextRecs = await getRecommendations(12)
       replaceQueue(nextRecs)
@@ -274,6 +311,7 @@ export function usePressureMode({
 
   return {
     pressureMode,
+    isPressurePaused,
     pressureSession,
     showPressurePrompt,
     setShowPressurePrompt,
@@ -287,6 +325,7 @@ export function usePressureMode({
     pressureQuestionStartedAtRef,
     startPressureMode,
     confirmPressureMode,
+    togglePressurePause,
     submitPressureQuestion,
     retryPressureBatchTask,
     exitPressureFocus,

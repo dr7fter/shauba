@@ -233,6 +233,7 @@ export function TodayView({
   // Hook 2: Pressure Simulation Mode
   const {
     pressureMode,
+    isPressurePaused,
     pressureSession,
     showPressurePrompt,
     setShowPressurePrompt,
@@ -244,6 +245,7 @@ export function TodayView({
     pressureQuestionStartedAtRef,
     startPressureMode,
     confirmPressureMode,
+    togglePressurePause,
     submitPressureQuestion,
     retryPressureBatchTask,
     exitPressureFocus,
@@ -331,6 +333,7 @@ export function TodayView({
 
   useEffect(() => {
     if (pressureMode) {
+      if (isPressurePaused) return
       const updatePressureClock = () => {
         const elapsed = Math.floor((Date.now() - pressureQuestionStartedAtRef.current) / 1000)
         setQuestionElapsedSec(Math.min(1800, Math.max(0, elapsed)))
@@ -353,7 +356,25 @@ export function TodayView({
       }
     }, 1000)
     return () => window.clearInterval(id)
-  }, [revealed, isQuestionTimerStarted, isQuestionTimerPaused, pressureMode, isBlitzMode, currentQuestionId, pressureQuestionStartedAtRef])
+  }, [revealed, isQuestionTimerStarted, isQuestionTimerPaused, pressureMode, isPressurePaused, isBlitzMode, currentQuestionId, pressureQuestionStartedAtRef])
+
+  // Keyboard shortcut for Pressure Mode Pause (P / Space)
+  useEffect(() => {
+    if (!pressureMode) return
+    const onKey = (e: KeyboardEvent) => {
+      const tag = (e.target as HTMLElement)?.tagName?.toLowerCase()
+      if (tag === 'input' || tag === 'textarea') return
+      if (e.key === 'p' || e.key === 'P') {
+        e.preventDefault()
+        togglePressurePause()
+      } else if (isPressurePaused && (e.key === ' ' || e.key === 'Enter')) {
+        e.preventDefault()
+        togglePressurePause()
+      }
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [pressureMode, isPressurePaused, togglePressurePause])
 
   useEffect(() => {
     onActiveQuestionChange(current ?? null)
@@ -1112,7 +1133,11 @@ export function TodayView({
             className={`question-timer-widget ${
               revealed
                 ? 'settled'
-                : !isQuestionTimerStarted && !pressureMode && !isBlitzMode
+                : pressureMode
+                ? isPressurePaused
+                  ? 'paused'
+                  : 'running'
+                : !isQuestionTimerStarted && !isBlitzMode
                 ? 'idle'
                 : isQuestionTimerPaused
                 ? 'paused'
@@ -1124,7 +1149,11 @@ export function TodayView({
                 <Clock3
                   size={15}
                   className={
-                    !revealed && isQuestionTimerStarted && !isQuestionTimerPaused ? 'ticking' : ''
+                    !revealed &&
+                    ((pressureMode && !isPressurePaused) ||
+                      (isQuestionTimerStarted && !isQuestionTimerPaused))
+                      ? 'ticking'
+                      : ''
                   }
                 />
                 <span className="question-timer-digits">
@@ -1135,9 +1164,25 @@ export function TodayView({
                 <span className="question-timer-bench">
                   / 建议基准 {formatTimer(benchmarkSec)} ({benchmarkLabel})
                 </span>
+                {pressureMode && isPressurePaused && (
+                  <span className="pressure-paused-pill">已暂停</span>
+                )}
               </div>
 
-              {!revealed && !pressureMode ? (
+              {pressureMode ? (
+                <div className="question-timer-actions">
+                  <button
+                    type="button"
+                    className={`qtimer-btn ${isPressurePaused ? 'qtimer-paused-active' : ''}`}
+                    onClick={togglePressurePause}
+                    title={isPressurePaused ? '恢复高压模考计时 (P / 空格)' : '暂停高压模考计时 (P)'}
+                    aria-label={isPressurePaused ? '恢复高压模考计时' : '暂停高压模考计时'}
+                  >
+                    {isPressurePaused ? <Play size={12} /> : <Pause size={12} />}
+                    <span>{isPressurePaused ? '继续作答' : '暂停模考'}</span>
+                  </button>
+                </div>
+              ) : !revealed ? (
                 <div className="question-timer-actions">
                   {!isQuestionTimerStarted && !isBlitzMode ? (
                     <button
@@ -1284,17 +1329,47 @@ export function TodayView({
               )}
             </div>
           )}
+
+          {/* Frosted Tactical Pause Overlay */}
+          {pressureMode && isPressurePaused && (
+            <div className="pressure-pause-overlay">
+              <div className="pressure-pause-card">
+                <div className="pause-icon-pulse">
+                  <Pause size={28} />
+                </div>
+                <h3>高压演练 · 战术暂停中</h3>
+                <p>做题计时与模考总用时已全面冻结，随时可恢复作答</p>
+                <div className="pause-stats-summary">
+                  <span>当前进度：第 <b>{index + 1}</b> / {queue.length} 题</span>
+                  <span>本题已用时：<b>{formatTimer(questionElapsedSec)}</b></span>
+                </div>
+                <button className="primary-button large" onClick={togglePressurePause}>
+                  <Play size={16} /> 继续作答 (按 P 或 空格)
+                </button>
+              </div>
+            </div>
+          )}
         </article>
         <div className="question-footer">
           <span>
             <Clock3 size={15} />{' '}
             {pressureMode
-              ? '压力模拟中 · 完成后直接下一题'
+              ? isPressurePaused
+                ? '高压模考已暂停 · 计时已冻结'
+                : '压力模拟中 · 完成后直接下一题'
               : '在纸上完成后，再查看答案和自评'}
           </span>
           <div className="footer-actions">
             {pressureMode ? (
               <>
+                <button
+                  className={`secondary-button quiet ${isPressurePaused ? 'accent-warn' : ''}`}
+                  onClick={togglePressurePause}
+                  title={isPressurePaused ? '恢复高压模考计时 (P / 空格)' : '暂停高压模考计时 (P)'}
+                >
+                  {isPressurePaused ? <Play size={15} /> : <Pause size={15} />}
+                  {isPressurePaused ? '继续作答' : '暂停模考'}
+                </button>
                 <button
                   className="secondary-button quiet"
                   onClick={exitPressureFocus}
@@ -1341,7 +1416,9 @@ export function TodayView({
               <span>作答与分析</span>
               <small>
                 {pressureMode
-                  ? '压力模拟 · 全部完成后批改'
+                  ? isPressurePaused
+                    ? '压力模拟 · 已暂停'
+                    : '压力模拟 · 全部完成后批改'
                   : '纸笔优先 · 独立判定与自评'}
               </small>
             </div>
@@ -1388,6 +1465,7 @@ export function TodayView({
                     <span>总用时</span>
                     <strong>
                       {formatElapsed(Math.max(0, pressureClock - pressureSessionStartTime))}
+                      {isPressurePaused ? <small className="paused-badge"> (暂停中)</small> : null}
                     </strong>
                   </div>
                 </div>

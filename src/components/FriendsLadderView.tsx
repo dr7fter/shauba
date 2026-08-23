@@ -2,6 +2,8 @@ import {
   Check,
   Copy,
   Edit3,
+  FileDown,
+  FileUp,
   Flame,
   RefreshCw,
   Swords,
@@ -9,14 +11,16 @@ import {
   Trophy,
   UserPlus,
 } from 'lucide-react'
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState, type ChangeEvent } from 'react'
 import {
-  addFriendByCode,
+  addFriendSnapshot,
+  createFriendShareSnapshot,
   loadFriendsSystemData,
   removeFriendById,
   saveMyCustomProfile,
 } from '../data/friendsService'
 import { FriendVsRadarModal } from './FriendVsRadarModal'
+import { getEloStatus, getTacticalDashboardStats } from '../api'
 import type { BootstrapData, EloStatus, FriendProfile, TacticalDashboardData } from '../types'
 
 export function FriendsLadderView({
@@ -39,12 +43,25 @@ export function FriendsLadderView({
   const [inputFriendCode, setInputFriendCode] = useState('')
   const [copiedCode, setCopiedCode] = useState(false)
   const [refreshing, setRefreshing] = useState(false)
+  const importFileRef = useRef<HTMLInputElement>(null)
 
   // Edit My Profile state
   const [editNickname, setEditNickname] = useState(data.myProfile.nickname)
   const [editFriendCode, setEditFriendCode] = useState(data.myProfile.friendCode)
   const [editSchool, setEditSchool] = useState(data.myProfile.targetSchool)
   const [editAvatar, setEditAvatar] = useState(data.myProfile.avatar)
+
+  useEffect(() => {
+    let cancelled = false
+    void Promise.all([getTacticalDashboardStats(), getEloStatus()])
+      .then(([nextTacticalData, nextEloStatus]) => {
+        if (!cancelled) setData(loadFriendsSystemData(nextTacticalData, bootstrapData, nextEloStatus))
+      })
+      .catch(() => undefined)
+    return () => {
+      cancelled = true
+    }
+  }, [bootstrapData])
 
   // Sort combined ladder roster by Elo descending
   const sortedRoster = useMemo(() => {
@@ -59,12 +76,40 @@ export function FriendsLadderView({
     setTimeout(() => setCopiedCode(false), 2000)
   }
 
+  const handleExportSnapshot = () => {
+    const blob = new Blob([createFriendShareSnapshot(data.myProfile)], { type: 'application/json' })
+    const url = URL.createObjectURL(blob)
+    const link = document.createElement('a')
+    link.href = url
+    link.download = `shuaba-friend-${data.myProfile.friendCode}.json`
+    link.click()
+    URL.revokeObjectURL(url)
+    notify('好友卡片已导出，把这个 JSON 文件发给你的朋友即可')
+  }
+
+  const handleImportSnapshot = (raw: string) => {
+    const result = addFriendSnapshot(raw)
+    notify(result.message)
+    if (result.success) {
+      setData(loadFriendsSystemData(tacticalData, bootstrapData, eloStatus))
+      setInputFriendCode('')
+      setShowAddModal(false)
+    }
+  }
+
+  const handleImportFile = (event: ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0]
+    event.target.value = ''
+    if (!file) return
+    void file.text().then(handleImportSnapshot)
+  }
+
   const handleRefresh = () => {
     setRefreshing(true)
     setTimeout(() => {
       setData(loadFriendsSystemData(tacticalData, bootstrapData, eloStatus))
       setRefreshing(false)
-      notify('好友在线状态与战报已同步！')
+      notify('好友列表已刷新')
     }, 400)
   }
 
@@ -73,13 +118,7 @@ export function FriendsLadderView({
       notify('请输入有效的好友码')
       return
     }
-    const res = addFriendByCode(inputFriendCode)
-    notify(res.message)
-    if (res.success) {
-      setData(loadFriendsSystemData(tacticalData, bootstrapData, eloStatus))
-      setInputFriendCode('')
-      setShowAddModal(false)
-    }
+    handleImportSnapshot(inputFriendCode)
   }
 
   const handleRemoveFriend = (id: string, name: string) => {
@@ -120,14 +159,14 @@ export function FriendsLadderView({
     if (status === 'in_match') {
       return (
         <span className="live-status-pill in-match" title={activity}>
-          <span className="live-pulse-dot match" /> 高压模考中
+          <span className="live-pulse-dot match" /> 快照：高压模考
         </span>
       )
     }
     if (status === 'online') {
       return (
         <span className="live-status-pill online" title={activity}>
-          <span className="live-pulse-dot online" /> 在线刷题
+          <span className="live-pulse-dot online" /> 快照：刷题中
         </span>
       )
     }
@@ -154,21 +193,24 @@ export function FriendsLadderView({
             <span className="trophy-gold-icon">
               <Trophy size={20} />
             </span>
-            <h2>完美对战平台 · 数一天梯好友榜</h2>
+            <h2>好友数据看板</h2>
           </div>
           <p>
-            2026S2 赛季实时排位 · 考场 150 预估分对决 · 共 {data.friends.length + 1} 位选手在榜
+            好友主动分享的数据快照 · 只展示汇总数据，不暴露题目明细 · 共 {data.friends.length + 1} 位选手
           </p>
         </div>
 
         <div className="friends-header-actions">
           <button className="secondary-button compact" onClick={handleRefresh} disabled={refreshing}>
             <RefreshCw size={14} className={refreshing ? 'spin' : ''} />
-            刷新动态
+            刷新本地列表
           </button>
           <button className="secondary-button compact" onClick={handleCopyMyCode}>
             {copiedCode ? <Check size={14} /> : <Copy size={14} />}
             {copiedCode ? '已复制好友码' : '我的好友码'}
+          </button>
+          <button className="secondary-button compact" onClick={handleExportSnapshot}>
+            <FileDown size={14} /> 导出我的数据
           </button>
           <button className="primary-button compact" onClick={() => setShowAddModal(true)}>
             <UserPlus size={14} />
@@ -194,6 +236,11 @@ export function FriendsLadderView({
           </div>
 
           <div className="ladder-table-body">
+            {sortedRoster.length === 1 && (
+              <div className="friends-empty-row">
+                还没有好友数据。点击「导出我的数据」发给朋友，也可以导入朋友发来的好友 JSON 文件。
+              </div>
+            )}
             {sortedRoster.map((player, index) => (
               <div
                 key={player.id}
@@ -345,7 +392,7 @@ export function FriendsLadderView({
             <div className="feed-header">
               <div className="feed-title-row">
                 <Flame size={16} className="accent-gold" />
-                <strong>好友战术高光动态</strong>
+                <strong>好友最近动态（来自快照）</strong>
               </div>
               <span className="live-dot-ticker" />
             </div>
@@ -393,15 +440,24 @@ export function FriendsLadderView({
                 输入研友发给你的专属好友码（例如 <code>SHUABA-8891</code>），即可实时同步好友的天梯排位与战术雷达！
               </p>
               <div className="input-with-button-row">
-                <input
-                  type="text"
-                  className="friend-code-input"
-                  placeholder="例如: SHUABA-8891"
+                <textarea
+                  className="friend-snapshot-input"
+                  placeholder="把朋友发来的 shuaba-friend-*.json 内容粘贴到这里"
                   value={inputFriendCode}
                   onChange={(e) => setInputFriendCode(e.target.value)}
-                  onKeyDown={(e) => e.key === 'Enter' && handleAddFriend()}
                   autoFocus
+                  rows={6}
                 />
+                <input
+                  ref={importFileRef}
+                  type="file"
+                  accept="application/json,.json"
+                  hidden
+                  onChange={handleImportFile}
+                />
+                <button className="secondary-button compact" onClick={() => importFileRef.current?.click()}>
+                  <FileUp size={14} /> 选择好友 JSON 文件
+                </button>
               </div>
             </div>
             <div className="modal-footer">

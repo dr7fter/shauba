@@ -21,6 +21,7 @@ import {
   Target,
   TimerReset,
   Trash2,
+  Users,
   X,
   Zap,
 } from 'lucide-react'
@@ -46,6 +47,7 @@ import {
 } from './api'
 import { BlitzExamModal } from './components/BlitzExamModal'
 import { FormulaDrawer } from './components/FormulaDrawer'
+import { FriendsLadderView } from './components/FriendsLadderView'
 import { PressureLearningReportView } from './components/GradingReportModal'
 import { KeyboardHelpModal } from './components/KeyboardHelpModal'
 import { formatElapsed } from './utils'
@@ -74,6 +76,7 @@ const navItems: Array<{ id: View; label: string; icon: typeof BookOpen }> = [
   { id: 'review', label: '复盘', icon: TimerReset },
   { id: 'mastery', label: '地图', icon: Compass },
   { id: 'library', label: '题库', icon: LibraryBig },
+  { id: 'friends', label: '好友', icon: Users },
 ]
 
 function LoadingScreen() {
@@ -782,6 +785,13 @@ export default function App() {
         run: () => setView('insights'),
       },
       {
+        id: 'view-friends',
+        label: '查看好友数据',
+        hint: '视图',
+        icon: Users,
+        run: () => setView('friends'),
+      },
+      {
         id: 'view-settings',
         label: '跳转到设置',
         hint: '视图',
@@ -1007,6 +1017,14 @@ export default function App() {
                     setNotice(`加入队列失败: ${String(e)}`)
                   }
                 }}
+              />
+            )}
+            {data && view === 'friends' && (
+              <FriendsLadderView
+                tacticalData={null}
+                bootstrapData={data}
+                eloStatus={null}
+                notify={setNotice}
               />
             )}
             {data && view === 'insights' && (

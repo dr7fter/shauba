@@ -2,7 +2,7 @@ import { invoke } from '@tauri-apps/api/core'
 import { check, type Update } from '@tauri-apps/plugin-updater'
 import { relaunch } from '@tauri-apps/plugin-process'
 import { mockBootstrap, mockCategories, mockInbox, mockMastery, mockQuestions, mockRecommendations } from './mock'
-import type { BootstrapData, CategoryNode, CodexTask, DailyLog, DailyTrendPoint, EloStatus, TagClosure, ExportResult, FailedInboxItem, InboxItem, InboxSummary, InsightPoint, MasteryChapter, MasteryNode, PracticeSessionState, Question, QuestionPage, RatingDistribution, RecommendationBatch, RecommendedQuestion, ReviewHistory, ReviewPlan, SeasonStatus, SessionScoreboard, UserStreak, WeaknessRadar, PressureSession, GradingReport, TacticalDashboardData, UserProfileSettings } from './types'
+import type { BootstrapData, CategoryNode, CodexTask, DailyLog, DailyTrendPoint, EloStatus, TagClosure, ExportResult, FailedInboxItem, InboxItem, InboxSummary, InsightPoint, MasteryChapter, MasteryNode, PracticeSessionState, Question, QuestionPage, RatingDistribution, RecommendationBatch, RecommendedQuestion, ReviewHistory, ReviewPlan, SeasonStatus, SessionScoreboard, UserStreak, WeaknessRadar, PressureSession, GradingReport, TacticalDashboardData, UserProfileSettings, FriendSyncConfig, FriendSyncRemoteSnapshot } from './types'
 import { createPracticeSessionPayload } from './domain/evidence'
 
 const isTauri = () => '__TAURI_INTERNALS__' in window
@@ -555,3 +555,26 @@ export async function setUserProfile(profile: UserProfileSettings): Promise<void
 }
 
 
+
+
+export async function testFriendSync(config: FriendSyncConfig): Promise<string> {
+  if (!isTauri()) return '浏览器预览不执行坚果云连接'
+  return invoke('test_friend_sync', { config })
+}
+
+export async function publishFriendSnapshot(
+  config: FriendSyncConfig,
+  friendCode: string,
+  payload: string,
+): Promise<string> {
+  if (!isTauri()) return `shuaba-friend-${friendCode}.json`
+  return invoke('publish_friend_snapshot', { config, friendCode, payload })
+}
+
+export async function pullFriendSnapshots(
+  config: FriendSyncConfig,
+  friendCodes: string[],
+): Promise<FriendSyncRemoteSnapshot[]> {
+  if (!isTauri()) return []
+  return invoke('pull_friend_snapshots', { config, friendCodes })
+}

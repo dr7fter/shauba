@@ -1,196 +1,16 @@
-import type { FriendProfile, FriendActivity, FriendsSystemData, TacticalDashboardData, BootstrapData, EloStatus } from '../types'
+import type { FriendProfile, FriendActivity, FriendShareSnapshot, FriendsSystemData, TacticalDashboardData, BootstrapData, EloStatus, FriendSyncConfig } from '../types'
 import { predictedExamScore, rankLetterForElo } from '../utils'
-import { setUserProfile } from '../api'
+import { pullFriendSnapshots, publishFriendSnapshot, setUserProfile } from '../api'
 
 const STORAGE_KEY_FRIENDS = 'shuaba_friends_roster_v1'
 const STORAGE_KEY_MY_PROFILE = 'shuaba_my_profile_v1'
 const STORAGE_KEY_ACTIVITIES = 'shuaba_friends_activities_v1'
+const STORAGE_KEY_FRIEND_CODES = 'shuaba_friend_codes_v1'
+const STORAGE_KEY_SYNC_CONFIG = 'shuaba_friend_sync_config_v1'
 
-const DEFAULT_FRIENDS: FriendProfile[] = [
-  {
-    id: 'friend-1',
-    friendCode: 'SHUABA-8891',
-    nickname: '考研必上岸_985',
-    avatar: '🎓',
-    title: '定积分极速突破大师',
-    targetSchool: '浙江大学 · 计算机',
-    currentElo: 1885,
-    peakElo: 1910,
-    rankLetter: 'S',
-    ratingPro: 1.38,
-    predictedExamScore: 124,
-    todayProblems: 14,
-    totalMatches: 142,
-    winRate: 62.5,
-    status: 'online',
-    currentActivity: '正在刷题：二重积分极坐标对称性',
-    lastActiveAt: new Date(Date.now() - 3 * 60 * 1000).toISOString(),
-    eloChangeToday: 18,
-    dimensions: {
-      rigor: 88,
-      computation: 91,
-      speed: 84,
-      modeling: 86,
-      methodUse: 89,
-      strategyInsight: 87,
-    },
-  },
-  {
-    id: 'friend-2',
-    friendCode: 'SHUABA-7723',
-    nickname: '张宇汤家凤合体',
-    avatar: '⚡',
-    title: '矩阵特征值秒杀猎手',
-    targetSchool: '清华大学 · 自动化',
-    currentElo: 1760,
-    peakElo: 1785,
-    rankLetter: 'A+',
-    ratingPro: 1.25,
-    predictedExamScore: 116,
-    todayProblems: 18,
-    totalMatches: 198,
-    winRate: 58.0,
-    status: 'in_match',
-    currentActivity: '高压演练中：2024数一全真模考 (第12题)',
-    lastActiveAt: new Date(Date.now() - 1 * 60 * 1000).toISOString(),
-    eloChangeToday: 25,
-    dimensions: {
-      rigor: 82,
-      computation: 86,
-      speed: 92,
-      modeling: 81,
-      methodUse: 85,
-      strategyInsight: 83,
-    },
-  },
-  {
-    id: 'friend-3',
-    friendCode: 'SHUABA-6612',
-    nickname: '不考130不改名',
-    avatar: '🔥',
-    title: '微分方程降维打击者',
-    targetSchool: '复旦大学 · 软件',
-    currentElo: 1640,
-    peakElo: 1690,
-    rankLetter: 'A',
-    ratingPro: 1.18,
-    predictedExamScore: 112,
-    todayProblems: 8,
-    totalMatches: 110,
-    winRate: 53.2,
-    status: 'offline',
-    currentActivity: '35分钟前完成今日复盘打卡',
-    lastActiveAt: new Date(Date.now() - 35 * 60 * 1000).toISOString(),
-    eloChangeToday: -5,
-    dimensions: {
-      rigor: 79,
-      computation: 82,
-      speed: 78,
-      modeling: 84,
-      methodUse: 80,
-      strategyInsight: 79,
-    },
-  },
-  {
-    id: 'friend-4',
-    friendCode: 'SHUABA-5509',
-    nickname: '高数秒杀王',
-    avatar: '👑',
-    title: 'Taylor展开无解压制',
-    targetSchool: '上海交大 · 电子信息',
-    currentElo: 1980,
-    peakElo: 2010,
-    rankLetter: 'DONK',
-    ratingPro: 1.58,
-    predictedExamScore: 136,
-    todayProblems: 22,
-    totalMatches: 240,
-    winRate: 68.0,
-    status: 'online',
-    currentActivity: '正在复盘：微分中值定理辅助函数构造',
-    lastActiveAt: new Date(Date.now() - 8 * 60 * 1000).toISOString(),
-    eloChangeToday: 32,
-    dimensions: {
-      rigor: 94,
-      computation: 96,
-      speed: 95,
-      modeling: 93,
-      methodUse: 97,
-      strategyInsight: 95,
-    },
-  },
-  {
-    id: 'friend-5',
-    friendCode: 'SHUABA-4418',
-    nickname: '线代满分怪',
-    avatar: '📐',
-    title: '实对称正交对角化推土机',
-    targetSchool: '同济大学 · 土木/智能工程',
-    currentElo: 1550,
-    peakElo: 1590,
-    rankLetter: 'B+',
-    ratingPro: 1.09,
-    predictedExamScore: 98,
-    todayProblems: 6,
-    totalMatches: 85,
-    winRate: 49.5,
-    status: 'offline',
-    currentActivity: '2小时前活跃',
-    lastActiveAt: new Date(Date.now() - 120 * 60 * 1000).toISOString(),
-    eloChangeToday: 0,
-    dimensions: {
-      rigor: 76,
-      computation: 75,
-      speed: 72,
-      modeling: 77,
-      methodUse: 78,
-      strategyInsight: 74,
-    },
-  },
-]
+const DEFAULT_FRIENDS: FriendProfile[] = []
 
-const DEFAULT_ACTIVITIES: FriendActivity[] = [
-  {
-    id: 'act-1',
-    friendCode: 'SHUABA-5509',
-    nickname: '高数秒杀王',
-    avatar: '👑',
-    type: 'donk_burst',
-    title: '打出 👑 DONK 级神仙秒杀',
-    content: '在「反常积分收敛性与比值判别法」解答题仅用 110 秒击破，斩获 Rating 2.24！',
-    timestamp: '10分钟前',
-  },
-  {
-    id: 'act-2',
-    friendCode: 'SHUABA-8891',
-    nickname: '考研必上岸_985',
-    avatar: '🎓',
-    type: 'rank_up',
-    title: '晋升 S 极境段位',
-    content: '天梯 Elo 达到 1885 分，成功晋升「S 极境」天梯段位！',
-    timestamp: '25分钟前',
-  },
-  {
-    id: 'act-3',
-    friendCode: 'SHUABA-7723',
-    nickname: '张宇汤家凤合体',
-    avatar: '⚡',
-    type: 'exam_finish',
-    title: '完成全真高压模考',
-    content: '耗时 160 分钟完成 2024 数一演练，考场预估分 116 分，KAST 82%！',
-    timestamp: '1小时前',
-  },
-  {
-    id: 'act-4',
-    friendCode: 'SHUABA-6612',
-    nickname: '不考130不改名',
-    avatar: '🔥',
-    type: 'daily_streak',
-    title: '连续 14 天打卡里程碑',
-    content: '坚持每日数一刷题与错题深度复盘，达成 14 天火热连胜标记！',
-    timestamp: '2小时前',
-  },
-]
+const DEFAULT_ACTIVITIES: FriendActivity[] = []
 
 function generateRandomFriendCode(): string {
   const letters = 'ABCDEFGHJKLMNPQRSTUVWXYZ'
@@ -263,6 +83,62 @@ export function getSavedFriends(): FriendProfile[] {
 
 export function saveFriends(friends: FriendProfile[]) {
   localStorage.setItem(STORAGE_KEY_FRIENDS, JSON.stringify(friends))
+}
+
+export function getSavedFriendCodes(): string[] {
+  try {
+    const raw = localStorage.getItem(STORAGE_KEY_FRIEND_CODES)
+    const list = raw ? JSON.parse(raw) : []
+    if (Array.isArray(list)) return list.filter((item): item is string => typeof item === 'string')
+  } catch {
+    // fallback
+  }
+  return getSavedFriends().map((friend) => friend.friendCode)
+}
+
+export function addFriendCode(codeInput: string): { success: boolean; message: string } {
+  const code = codeInput.trim().toUpperCase()
+  const ownCode = getSavedMyCustomProfile().friendCode.toUpperCase()
+  if (!code || !/^[A-Z0-9_-]{2,64}$/.test(code)) return { success: false, message: '好友码格式不正确' }
+  if (code === ownCode) return { success: false, message: '不能添加自己' }
+  const codes = getSavedFriendCodes()
+  if (!codes.includes(code)) {
+    localStorage.setItem(STORAGE_KEY_FRIEND_CODES, JSON.stringify([code, ...codes]))
+  }
+  return { success: true, message: `已记录好友码 ${code}，等待好友首次发布数据` }
+}
+
+export function getSavedFriendSyncConfig(): FriendSyncConfig | null {
+  try {
+    const raw = localStorage.getItem(STORAGE_KEY_SYNC_CONFIG)
+    if (!raw) return null
+    const config = JSON.parse(raw) as Partial<FriendSyncConfig>
+    if (typeof config.endpoint !== 'string' || typeof config.username !== 'string' || typeof config.appPassword !== 'string' || typeof config.folder !== 'string') return null
+    return { endpoint: config.endpoint, username: config.username, appPassword: config.appPassword, folder: config.folder }
+  } catch {
+    return null
+  }
+}
+
+export function saveFriendSyncConfig(config: FriendSyncConfig) {
+  // MVP 只保存坚果云“应用密码”，不保存主账号密码；后续可接系统凭据库。
+  localStorage.setItem(STORAGE_KEY_SYNC_CONFIG, JSON.stringify(config))
+}
+
+export async function publishMyFriendSnapshot(profile: FriendProfile, config: FriendSyncConfig): Promise<string> {
+  return publishFriendSnapshot(config, profile.friendCode, createFriendShareSnapshot(profile))
+}
+
+export async function syncFriendSnapshots(config: FriendSyncConfig): Promise<{ updated: number; checked: number }> {
+  const codes = getSavedFriendCodes()
+  if (codes.length === 0) return { updated: 0, checked: 0 }
+  const remote = await pullFriendSnapshots(config, codes)
+  let updated = 0
+  for (const item of remote) {
+    const result = addFriendSnapshot(item.payload)
+    if (result.success) updated += 1
+  }
+  return { updated, checked: codes.length }
 }
 
 export function getSavedActivities(): FriendActivity[] {
@@ -354,62 +230,73 @@ export function loadFriendsSystemData(
   }
 }
 
-export function addFriendByCode(code: string): { success: boolean; message: string; friend?: FriendProfile } {
-  const cleanCode = code.trim().toUpperCase()
-  if (!cleanCode) {
-    return { success: false, message: '好友码不能为空' }
-  }
-
-  const myProfile = getSavedMyCustomProfile()
-  if (cleanCode === myProfile.friendCode.toUpperCase()) {
-    return { success: false, message: '不能添加自己的专属好友码' }
-  }
-
-  const friends = getSavedFriends()
-  if (friends.some((f) => f.friendCode.toUpperCase() === cleanCode)) {
-    return { success: false, message: '该好友已在你的天梯好友列表中' }
-  }
-
-  // Generate a realistic peer profile for the friend code
-  const mockNames = ['汤家凤亲传弟子', '李林六套卷战神', '高数重积分推土机', '宇哥真题秒杀手', '复试直通车']
-  const mockAvatars = ['🎯', '✨', '🏆', '🌟', '📚']
-  const randomName = mockNames[Math.floor(Math.random() * mockNames.length)]
-  const randomAvatar = mockAvatars[Math.floor(Math.random() * mockAvatars.length)]
-  const randomElo = 1500 + Math.floor(Math.random() * 450)
-  const randomRating = 1.05 + Math.random() * 0.45
-
-  const newFriend: FriendProfile = {
-    id: `friend-${Date.now()}`,
-    friendCode: cleanCode,
-    nickname: randomName,
-    avatar: randomAvatar,
-    title: '战术研讨新队友',
-    targetSchool: '考研数一目标 125+',
-    currentElo: randomElo,
-    peakElo: randomElo + 25,
-    rankLetter: rankLetterForElo(randomElo),
-    ratingPro: Math.round(randomRating * 100) / 100,
-    predictedExamScore: predictedExamScore(randomRating, 80),
-    todayProblems: Math.floor(Math.random() * 15) + 1,
-    totalMatches: 60 + Math.floor(Math.random() * 80),
-    winRate: 50 + Math.floor(Math.random() * 18),
-    status: 'online',
-    currentActivity: '刚刚上线，正在复习错题',
-    lastActiveAt: new Date().toISOString(),
-    eloChangeToday: Math.floor(Math.random() * 30) - 10,
-    dimensions: {
-      rigor: 75 + Math.floor(Math.random() * 20),
-      computation: 75 + Math.floor(Math.random() * 20),
-      speed: 75 + Math.floor(Math.random() * 20),
-      modeling: 75 + Math.floor(Math.random() * 20),
-      methodUse: 75 + Math.floor(Math.random() * 20),
-      strategyInsight: 75 + Math.floor(Math.random() * 20),
+export function createFriendShareSnapshot(profile: FriendProfile): string {
+  const snapshot: FriendShareSnapshot = {
+    schemaVersion: 1,
+    kind: 'shuaba-friend-profile',
+    exportedAt: new Date().toISOString(),
+    profile: {
+      ...profile,
+      isSelf: false,
     },
   }
+  return JSON.stringify(snapshot, null, 2)
+}
 
-  const updated = [newFriend, ...friends]
-  saveFriends(updated)
-  return { success: true, message: `成功添加好友「${newFriend.nickname}」！`, friend: newFriend }
+export function addFriendSnapshot(raw: string): {
+  success: boolean
+  message: string
+  friend?: FriendProfile
+} {
+  try {
+    const parsed = JSON.parse(raw) as Partial<FriendShareSnapshot>
+    const profile = parsed.profile
+    if (
+      parsed.schemaVersion !== 1 ||
+      parsed.kind !== 'shuaba-friend-profile' ||
+      !profile ||
+      typeof profile.friendCode !== 'string' ||
+      typeof profile.nickname !== 'string' ||
+      typeof profile.currentElo !== 'number' ||
+      !profile.dimensions
+    ) {
+      return { success: false, message: '这不是有效的刷吧好友卡片' }
+    }
+
+    const cleanCode = profile.friendCode.trim().toUpperCase()
+    const myProfile = getSavedMyCustomProfile()
+    if (!cleanCode || cleanCode === myProfile.friendCode.toUpperCase()) {
+      return { success: false, message: '不能添加自己的好友卡片' }
+    }
+
+    const friends = getSavedFriends()
+    const existing = friends.find((friend) => friend.friendCode.toUpperCase() === cleanCode)
+
+    const friend: FriendProfile = {
+      ...profile,
+      id: `friend-${cleanCode}`,
+      friendCode: cleanCode,
+      nickname: profile.nickname.trim(),
+      avatar: profile.avatar || '🙂',
+      title: profile.title || '刷吧研友',
+      targetSchool: profile.targetSchool || '暂未填写目标院校',
+      status: profile.status === 'online' || profile.status === 'in_match' ? profile.status : 'offline',
+      isSelf: false,
+    }
+    saveFriends(existing ? friends.map((item) => item.friendCode.toUpperCase() === cleanCode ? friend : item) : [friend, ...friends])
+    const codes = getSavedFriendCodes()
+    if (!codes.includes(cleanCode)) localStorage.setItem(STORAGE_KEY_FRIEND_CODES, JSON.stringify([cleanCode, ...codes]))
+    return { success: true, message: existing ? `已更新好友「${friend.nickname}」的数据` : `已添加好友「${friend.nickname}」`, friend }
+  } catch {
+    return { success: false, message: '好友卡片内容无法读取，请重新导出后再试' }
+  }
+}
+
+export function addFriendByCode(_code: string): { success: boolean; message: string } {
+  return {
+    success: false,
+    message: '好友码只能用于识别好友；请让对方导出好友卡片，再在这里导入，避免伪造数据',
+  }
 }
 
 export function removeFriendById(friendId: string): FriendProfile[] {

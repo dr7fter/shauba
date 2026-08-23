@@ -1,6 +1,8 @@
 import {
   Check,
   Copy,
+  Cloud,
+  Settings2,
   Edit3,
   FileDown,
   FileUp,
@@ -13,15 +15,21 @@ import {
 } from 'lucide-react'
 import { useEffect, useMemo, useRef, useState, type ChangeEvent } from 'react'
 import {
+  addFriendCode,
   addFriendSnapshot,
   createFriendShareSnapshot,
+  getSavedFriendSyncConfig,
+  getSavedFriends,
   loadFriendsSystemData,
+  publishMyFriendSnapshot,
+  saveFriendSyncConfig,
+  syncFriendSnapshots,
   removeFriendById,
   saveMyCustomProfile,
 } from '../data/friendsService'
 import { FriendVsRadarModal } from './FriendVsRadarModal'
-import { getEloStatus, getTacticalDashboardStats } from '../api'
-import type { BootstrapData, EloStatus, FriendProfile, TacticalDashboardData } from '../types'
+import { getEloStatus, getTacticalDashboardStats, testFriendSync } from '../api'
+import type { BootstrapData, EloStatus, FriendProfile, FriendSyncConfig, TacticalDashboardData } from '../types'
 
 export function FriendsLadderView({
   tacticalData,
@@ -41,15 +49,31 @@ export function FriendsLadderView({
   const [showAddModal, setShowAddModal] = useState(false)
   const [showEditProfileModal, setShowEditProfileModal] = useState(false)
   const [inputFriendCode, setInputFriendCode] = useState('')
+  const [showSyncModal, setShowSyncModal] = useState(false)
+  const [syncConfig, setSyncConfig] = useState<FriendSyncConfig>(() => getSavedFriendSyncConfig() ?? {
+    endpoint: 'https://dav.jianguoyun.com/dav/',
+    username: '',
+    appPassword: '',
+    folder: 'shuaba-friends',
+  })
+  const [syncing, setSyncing] = useState(false)
+  const [testingSync, setTestingSync] = useState(false)
+  const [lastSyncAt, setLastSyncAt] = useState<string | null>(null)
   const [copiedCode, setCopiedCode] = useState(false)
   const [refreshing, setRefreshing] = useState(false)
   const importFileRef = useRef<HTMLInputElement>(null)
+  const dataRef = useRef(data)
+  const syncBusyRef = useRef(false)
 
   // Edit My Profile state
   const [editNickname, setEditNickname] = useState(data.myProfile.nickname)
   const [editFriendCode, setEditFriendCode] = useState(data.myProfile.friendCode)
   const [editSchool, setEditSchool] = useState(data.myProfile.targetSchool)
   const [editAvatar, setEditAvatar] = useState(data.myProfile.avatar)
+
+  useEffect(() => {
+    dataRef.current = data
+  }, [data])
 
   useEffect(() => {
     let cancelled = false
@@ -62,6 +86,45 @@ export function FriendsLadderView({
       cancelled = true
     }
   }, [bootstrapData])
+
+  const syncConfigured = Boolean(
+    syncConfig.endpoint.trim() && syncConfig.username.trim() && syncConfig.appPassword.trim(),
+  )
+
+  const runSync = async (silent = false) => {
+    if (!syncConfigured || syncBusyRef.current) return
+    syncBusyRef.current = true
+    if (!silent) setSyncing(true)
+    try {
+      await publishMyFriendSnapshot(dataRef.current.myProfile, syncConfig)
+      const result = await syncFriendSnapshots(syncConfig)
+      setData((prev) => ({ ...prev, friends: getSavedFriends() }))
+      const now = new Date().toISOString()
+      setLastSyncAt(now)
+      if (!silent) notify(`坚果云已同步：更新 ${result.updated} 位好友`)
+    } catch (error) {
+      if (!silent) notify(`坚果云同步失败：${String(error)}`)
+    } finally {
+      syncBusyRef.current = false
+      if (!silent) setSyncing(false)
+    }
+  }
+
+  useEffect(() => {
+    if (!syncConfigured) return
+    let cancelled = false
+    const syncWhenVisible = () => {
+      if (!cancelled && document.visibilityState === 'visible') void runSync(true)
+    }
+    syncWhenVisible()
+    const timer = window.setInterval(syncWhenVisible, 60_000)
+    document.addEventListener('visibilitychange', syncWhenVisible)
+    return () => {
+      cancelled = true
+      window.clearInterval(timer)
+      document.removeEventListener('visibilitychange', syncWhenVisible)
+    }
+  }, [syncConfig])
 
   // Sort combined ladder roster by Elo descending
   const sortedRoster = useMemo(() => {
@@ -77,6 +140,7 @@ export function FriendsLadderView({
   }
 
   const handleExportSnapshot = () => {
+    if (syncConfigured) void publishMyFriendSnapshot(data.myProfile, syncConfig).catch(() => undefined)
     const blob = new Blob([createFriendShareSnapshot(data.myProfile)], { type: 'application/json' })
     const url = URL.createObjectURL(blob)
     const link = document.createElement('a')
@@ -106,19 +170,56 @@ export function FriendsLadderView({
 
   const handleRefresh = () => {
     setRefreshing(true)
-    setTimeout(() => {
+    if (syncConfigured) {
+      void runSync(false).finally(() => setRefreshing(false))
+      return
+    }
+    window.setTimeout(() => {
       setData(loadFriendsSystemData(tacticalData, bootstrapData, eloStatus))
       setRefreshing(false)
-      notify('好友列表已刷新')
-    }, 400)
+      notify('好友列表已刷新（本地数据）')
+    }, 120)
   }
 
   const handleAddFriend = () => {
-    if (!inputFriendCode.trim()) {
-      notify('请输入有效的好友码')
+    const text = inputFriendCode.trim()
+    if (!text) {
+      notify('请输入好友码，或粘贴朋友导出的 JSON')
       return
     }
-    handleImportSnapshot(inputFriendCode)
+    if (text.startsWith('{')) {
+      handleImportSnapshot(text)
+      return
+    }
+    const result = addFriendCode(text)
+    notify(result.message)
+    if (result.success) {
+      setData(loadFriendsSystemData(tacticalData, bootstrapData, eloStatus))
+      setInputFriendCode('')
+      setShowAddModal(false)
+      if (syncConfigured) void runSync(false)
+    }
+  }
+
+  const handleSaveSyncConfig = () => {
+    if (!syncConfig.endpoint.trim() || !syncConfig.username.trim() || !syncConfig.appPassword.trim()) {
+      notify('请填写 WebDAV 地址、账号和应用密码')
+      return
+    }
+    const normalized = { ...syncConfig, endpoint: syncConfig.endpoint.trim(), folder: syncConfig.folder.trim() || 'shuaba-friends' }
+    saveFriendSyncConfig(normalized)
+    setSyncConfig(normalized)
+    setShowSyncModal(false)
+    notify('坚果云同步已保存；应用会在后台每 60 秒安静同步一次')
+    void runSync(false)
+  }
+
+  const handleTestSync = () => {
+    setTestingSync(true)
+    void testFriendSync(syncConfig)
+      .then((message) => notify(message))
+      .catch((error) => notify(`连接测试失败：${String(error)}`))
+      .finally(() => setTestingSync(false))
   }
 
   const handleRemoveFriend = (id: string, name: string) => {
@@ -196,7 +297,7 @@ export function FriendsLadderView({
             <h2>好友数据看板</h2>
           </div>
           <p>
-            好友主动分享的数据快照 · 只展示汇总数据，不暴露题目明细 · 共 {data.friends.length + 1} 位选手
+            好友主动分享的数据快照 · 只展示汇总数据，不暴露题目明细 · 共 {data.friends.length + 1} 位选手{lastSyncAt ? ` · 上次同步 ${new Date(lastSyncAt).toLocaleTimeString()}` : ""}
           </p>
         </div>
 
@@ -204,6 +305,10 @@ export function FriendsLadderView({
           <button className="secondary-button compact" onClick={handleRefresh} disabled={refreshing}>
             <RefreshCw size={14} className={refreshing ? 'spin' : ''} />
             刷新本地列表
+          </button>
+          <button className="secondary-button compact" onClick={() => setShowSyncModal(true)}>
+            {syncing ? <RefreshCw size={14} className="spin" /> : <Cloud size={14} />}
+            {syncConfigured ? '坚果云同步' : '设置自动同步'}
           </button>
           <button className="secondary-button compact" onClick={handleCopyMyCode}>
             {copiedCode ? <Check size={14} /> : <Copy size={14} />}
@@ -425,6 +530,47 @@ export function FriendsLadderView({
         />
       )}
 
+      {/* Nutstore WebDAV Sync Modal */}
+      {showSyncModal && (
+        <div className="modal-backdrop" onClick={() => setShowSyncModal(false)}>
+          <div className="modal friend-sync-modal" onClick={(e) => e.stopPropagation()}>
+            <div className="modal-header">
+              <h2><Settings2 size={18} /> 坚果云自动同步</h2>
+              <button className="icon-button" onClick={() => setShowSyncModal(false)}>×</button>
+            </div>
+            <div className="modal-body">
+              <p className="sync-help-text">
+                只同步好友公开汇总 JSON，不上传题目、草稿或数据库。配置一次后，打开好友页立即同步，后台每 60 秒检查一次，不会阻塞刷题。
+              </p>
+              <div className="form-field-group">
+                <label>WebDAV 地址</label>
+                <input className="profile-text-input" value={syncConfig.endpoint} onChange={(e) => setSyncConfig((prev) => ({ ...prev, endpoint: e.target.value }))} placeholder="https://dav.jianguoyun.com/dav/" />
+              </div>
+              <div className="form-field-group">
+                <label>坚果云账号</label>
+                <input className="profile-text-input" value={syncConfig.username} onChange={(e) => setSyncConfig((prev) => ({ ...prev, username: e.target.value }))} placeholder="邮箱账号" autoComplete="username" />
+              </div>
+              <div className="form-field-group">
+                <label>应用密码（不要填网页登录密码）</label>
+                <input className="profile-text-input" type="password" value={syncConfig.appPassword} onChange={(e) => setSyncConfig((prev) => ({ ...prev, appPassword: e.target.value }))} placeholder="坚果云安全设置中生成的应用密码" autoComplete="current-password" />
+              </div>
+              <div className="form-field-group">
+                <label>共享文件夹路径</label>
+                <input className="profile-text-input" value={syncConfig.folder} onChange={(e) => setSyncConfig((prev) => ({ ...prev, folder: e.target.value }))} placeholder="shuaba-friends" />
+              </div>
+              <p className="sync-help-text">你和朋友需要对同一个共享文件夹有读写权限；朋友只需首次配置一次，之后刷题时无需手动导出。</p>
+            </div>
+            <div className="modal-footer">
+              <button className="secondary-button compact" onClick={handleTestSync} disabled={testingSync}>
+                <Cloud size={14} /> {testingSync ? '测试中…' : '测试连接'}
+              </button>
+              <button className="secondary-button compact" onClick={() => setShowSyncModal(false)}>取消</button>
+              <button className="primary-button compact" onClick={handleSaveSyncConfig}>保存并同步</button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* Add Friend Modal */}
       {showAddModal && (
         <div className="modal-backdrop" onClick={() => setShowAddModal(false)}>
@@ -437,12 +583,12 @@ export function FriendsLadderView({
             </div>
             <div className="modal-body">
               <p style={{ fontSize: 'var(--fs-sm)', color: 'var(--muted)', marginBottom: '14px' }}>
-                输入研友发给你的专属好友码（例如 <code>SHUABA-8891</code>），即可实时同步好友的天梯排位与战术雷达！
+                输入好友码即可先建立关注；配置坚果云后会自动拉取，或者直接粘贴朋友导出的 JSON（无需朋友配置坚果云）。
               </p>
               <div className="input-with-button-row">
                 <textarea
                   className="friend-snapshot-input"
-                  placeholder="把朋友发来的 shuaba-friend-*.json 内容粘贴到这里"
+                  placeholder="好友码（如 SB-A1234），或粘贴 shuaba-friend-*.json 内容"
                   value={inputFriendCode}
                   onChange={(e) => setInputFriendCode(e.target.value)}
                   autoFocus

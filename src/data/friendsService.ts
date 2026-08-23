@@ -300,7 +300,13 @@ export function addFriendByCode(_code: string): { success: boolean; message: str
 }
 
 export function removeFriendById(friendId: string): FriendProfile[] {
-  const friends = getSavedFriends().filter((f) => f.id !== friendId)
+  const existing = getSavedFriends()
+  const removed = existing.find((f) => f.id === friendId)
+  const friends = existing.filter((f) => f.id !== friendId)
   saveFriends(friends)
+  if (removed) {
+    const codes = getSavedFriendCodes().filter((code) => code.toUpperCase() !== removed.friendCode.toUpperCase())
+    localStorage.setItem(STORAGE_KEY_FRIEND_CODES, JSON.stringify(codes))
+  }
   return friends
 }

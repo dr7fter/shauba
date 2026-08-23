@@ -120,7 +120,7 @@ function Sidebar({ view, setView }: { view: View; setView: (v: View) => void }) 
         >
           <Settings size={18} strokeWidth={1.8} />
           <span>设置</span>
-          <span className="sidebar-version-tag">v1.3.1</span>
+          <span className="sidebar-version-tag">v1.4.0</span>
         </button>
         <div
           className="status-info"
@@ -130,7 +130,7 @@ function Sidebar({ view, setView }: { view: View; setView: (v: View) => void }) 
         >
           <span className="status-dot" />
           <div>
-            <strong>题库已就绪 · v1.3.1</strong>
+            <strong>题库已就绪 · v1.4.0</strong>
             <small>数据仅保存在本机</small>
           </div>
         </div>

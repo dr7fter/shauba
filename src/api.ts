@@ -458,10 +458,10 @@ export async function getAppVersion(): Promise<string> {
     try {
       return await invoke<string>('get_app_version')
     } catch {
-      return '1.3.1'
+      return '1.4.0'
     }
   }
-  return '1.3.1'
+  return '1.4.0'
 }
 
 export type UpdateProgress = { downloaded: number; total: number | null }

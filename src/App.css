@@ -6899,7 +6899,8 @@
 
 /* 表单模态弹窗 */
 .add-friend-modal,
-.edit-profile-modal {
+.edit-profile-modal,
+.friend-sync-modal {
   max-width: 440px;
   width: 90vw;
 }
@@ -6920,6 +6921,23 @@
 .friend-code-input:focus,
 .profile-text-input:focus {
   border-color: var(--green);
+}
+
+.friend-sync-modal {
+  max-width: 520px;
+}
+
+.friend-sync-modal .modal-header h2 {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.sync-help-text {
+  margin: 0 0 14px;
+  color: var(--muted);
+  font-size: var(--fs-sm);
+  line-height: 1.6;
 }
 
 .friend-snapshot-input {

@@ -137,10 +137,10 @@ export function SettingsView({
   const handleSimulateUpdate = () => {
     const mockInfo: AppUpdateInfo = {
       currentVersion: currentVersion,
-      latestVersion: '1.4.0',
+      latestVersion: '1.4.1',
       hasUpdate: true,
-      releaseName: '刷吧 v1.4.0 战术突击升级',
-      releaseNotes: `### 🌟 v1.4.0 更新亮点
+      releaseName: '刷吧 v1.4.1 战术突击升级',
+      releaseNotes: `### 🌟 v1.4.1 更新亮点
 1. **数一天梯排位赛季深化**：新增赛季专属段位奖励与巅峰排位勋章；
 2. **HLTV Rating 3.0 秒杀算法升级**：增强泰勒展开与反常积分判别法的秒杀识别权重；
 3. **1v1 战力对决雷达优化**：支持与好友实时对比六维战术优势；
@@ -155,7 +155,7 @@ export function SettingsView({
     }
     setUpdateResult(mockInfo)
     setShowUpdateModal(true)
-    notify('🎉 模拟检测到新版本 v1.4.0！')
+    notify('🎉 模拟检测到新版本 v1.4.1！')
   }
 
   const loadBackups = useCallback(async () => {

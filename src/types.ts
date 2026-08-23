@@ -626,6 +626,7 @@ export type AppUpdateInfo = {
 
 export type UserProfileSettings = {
   nickname: string
+  friendCode?: string | null
   targetSchool?: string | null
   avatar?: string | null
 }

@@ -42,6 +42,7 @@ export function FriendsLadderView({
 
   // Edit My Profile state
   const [editNickname, setEditNickname] = useState(data.myProfile.nickname)
+  const [editFriendCode, setEditFriendCode] = useState(data.myProfile.friendCode)
   const [editSchool, setEditSchool] = useState(data.myProfile.targetSchool)
   const [editAvatar, setEditAvatar] = useState(data.myProfile.avatar)
 
@@ -92,14 +93,20 @@ export function FriendsLadderView({
       notify('昵称不能为空')
       return
     }
+    const customCode = editFriendCode.trim().toUpperCase()
+    if (!customCode) {
+      notify('好友码不能为空')
+      return
+    }
     saveMyCustomProfile({
       nickname: editNickname.trim(),
+      friendCode: customCode,
       targetSchool: editSchool.trim(),
       avatar: editAvatar,
     })
     setData(loadFriendsSystemData(tacticalData, bootstrapData, eloStatus))
     setShowEditProfileModal(false)
-    notify('个人战术名片已更新！')
+    notify(`个人战术名片已更新！专属好友码：${customCode}`)
   }
 
   const getRankEmblem = (index: number) => {
@@ -443,6 +450,17 @@ export function FriendsLadderView({
                   value={editNickname}
                   onChange={(e) => setEditNickname(e.target.value)}
                   placeholder="例如: dr7fter"
+                />
+              </div>
+
+              <div className="form-field-group">
+                <label>专属好友码 (可自定义)</label>
+                <input
+                  type="text"
+                  className="profile-text-input"
+                  value={editFriendCode}
+                  onChange={(e) => setEditFriendCode(e.target.value)}
+                  placeholder="例如: SB-9527 或 KAYAN-2026"
                 />
               </div>
 

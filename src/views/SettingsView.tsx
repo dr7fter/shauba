@@ -61,6 +61,7 @@ export function SettingsView({
   const [showUpdateModal, setShowUpdateModal] = useState(false)
 
   const [userNickname, setUserNickname] = useState('dr7fter')
+  const [userFriendCode, setUserFriendCode] = useState('')
   const [userSchool, setUserSchool] = useState('考研数学一 · 目标985')
   const [userAvatar, setUserAvatar] = useState('🚀')
 
@@ -70,6 +71,7 @@ export function SettingsView({
     void getAppVersion().then(setCurrentVersion).catch(() => undefined)
     void getUserProfile().then((p) => {
       if (p.nickname) setUserNickname(p.nickname)
+      if (p.friendCode) setUserFriendCode(p.friendCode)
       if (p.targetSchool) setUserSchool(p.targetSchool)
       if (p.avatar) setUserAvatar(p.avatar)
     }).catch(() => undefined)
@@ -80,13 +82,15 @@ export function SettingsView({
       notify('战术昵称不能为空')
       return
     }
+    const cleanCode = userFriendCode.trim().toUpperCase()
     const profile: UserProfileSettings = {
       nickname: userNickname.trim(),
+      friendCode: cleanCode || undefined,
       targetSchool: userSchool.trim(),
       avatar: userAvatar,
     }
     await setUserProfile(profile)
-    notify(`战术名片已更新：选手「${profile.nickname}」`)
+    notify(`战术名片已更新：选手「${profile.nickname}」${cleanCode ? `(好友码: ${cleanCode})` : ''}`)
     refresh()
   }
 
@@ -264,6 +268,17 @@ export function SettingsView({
             value={userNickname}
             onChange={(e) => setUserNickname(e.target.value)}
             placeholder="例如: dr7fter"
+          />
+        </div>
+
+        <div className="setting-control" style={{ marginTop: '16px' }}>
+          <label>专属好友码 (可自定义)</label>
+          <input
+            type="text"
+            className="profile-text-input"
+            value={userFriendCode}
+            onChange={(e) => setUserFriendCode(e.target.value)}
+            placeholder="例如: SB-9527 或 KAYAN-2026"
           />
         </div>
 

@@ -192,31 +192,60 @@ const DEFAULT_ACTIVITIES: FriendActivity[] = [
   },
 ]
 
+function generateRandomFriendCode(): string {
+  const letters = 'ABCDEFGHJKLMNPQRSTUVWXYZ'
+  const letter = letters[Math.floor(Math.random() * letters.length)]
+  const num = Math.floor(1000 + Math.random() * 9000)
+  return `SB-${letter}${num}`
+}
+
 export function getSavedMyCustomProfile(): {
   nickname: string
+  friendCode: string
   targetSchool: string
   avatar: string
 } {
   try {
     const raw = localStorage.getItem(STORAGE_KEY_MY_PROFILE)
-    if (raw) return JSON.parse(raw)
+    if (raw) {
+      const parsed = JSON.parse(raw)
+      if (!parsed.friendCode || parsed.friendCode === 'SHUABA-9527') {
+        parsed.friendCode = generateRandomFriendCode()
+        localStorage.setItem(STORAGE_KEY_MY_PROFILE, JSON.stringify(parsed))
+      }
+      return parsed
+    }
   } catch {
     // fallback
   }
-  return {
+  const defaultProfile = {
     nickname: 'dr7fter',
+    friendCode: generateRandomFriendCode(),
     targetSchool: '考研数学一 · 目标985',
     avatar: '🚀',
   }
+  try {
+    localStorage.setItem(STORAGE_KEY_MY_PROFILE, JSON.stringify(defaultProfile))
+  } catch {
+    // ignore
+  }
+  return defaultProfile
 }
 
 export function saveMyCustomProfile(custom: {
   nickname: string
+  friendCode?: string
   targetSchool: string
   avatar: string
 }) {
-  localStorage.setItem(STORAGE_KEY_MY_PROFILE, JSON.stringify(custom))
-  void setUserProfile(custom)
+  const existing = getSavedMyCustomProfile()
+  const toSave = {
+    ...existing,
+    ...custom,
+    friendCode: custom.friendCode ? custom.friendCode.trim().toUpperCase() : existing.friendCode,
+  }
+  localStorage.setItem(STORAGE_KEY_MY_PROFILE, JSON.stringify(toSave))
+  void setUserProfile(toSave)
 }
 
 export function getSavedFriends(): FriendProfile[] {
@@ -280,7 +309,7 @@ export function buildMyFriendProfile(
 
   return {
     id: 'my-self-profile',
-    friendCode: 'SHUABA-9527',
+    friendCode: custom.friendCode,
     nickname: custom.nickname || tacticalData?.profile.nickname || 'dr7fter',
     avatar: custom.avatar || '🚀',
     title: tacticalData?.profile.title || '一锤定音的战场收割者',
@@ -331,8 +360,9 @@ export function addFriendByCode(code: string): { success: boolean; message: stri
     return { success: false, message: '好友码不能为空' }
   }
 
-  if (cleanCode === 'SHUABA-9527') {
-    return { success: false, message: '不能添加自己的好友码' }
+  const myProfile = getSavedMyCustomProfile()
+  if (cleanCode === myProfile.friendCode.toUpperCase()) {
+    return { success: false, message: '不能添加自己的专属好友码' }
   }
 
   const friends = getSavedFriends()

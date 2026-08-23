@@ -7228,6 +7228,7 @@ fn check_app_update(repo: Option<String>) -> Result<AppUpdateInfo, String> {
 #[serde(rename_all = "camelCase")]
 pub struct UserProfileSettings {
     pub nickname: String,
+    pub friend_code: Option<String>,
     pub target_school: Option<String>,
     pub avatar: Option<String>,
 }
@@ -7236,10 +7237,12 @@ pub struct UserProfileSettings {
 fn get_user_profile(state: State<AppState>) -> Result<UserProfileSettings, String> {
     let conn = state.db.lock().map_err(|e| e.to_string())?;
     let nickname = setting(&conn, "user_nickname", "dr7fter");
+    let friend_code = setting(&conn, "user_friend_code", "");
     let target_school = setting(&conn, "target_school", "考研数学一 · 目标985");
     let avatar = setting(&conn, "user_avatar", "🚀");
     Ok(UserProfileSettings {
         nickname,
+        friend_code: if friend_code.is_empty() { None } else { Some(friend_code) },
         target_school: Some(target_school),
         avatar: Some(avatar),
     })
@@ -7254,6 +7257,14 @@ fn set_user_profile(profile: UserProfileSettings, state: State<AppState>) -> Res
         [&profile.nickname],
     )
     .map_err(|e| e.to_string())?;
+    if let Some(friend_code) = profile.friend_code {
+        conn.execute(
+            "INSERT INTO settings(key,value) VALUES('user_friend_code',?1)
+             ON CONFLICT(key) DO UPDATE SET value=excluded.value",
+            [&friend_code],
+        )
+        .map_err(|e| e.to_string())?;
+    }
     if let Some(target_school) = profile.target_school {
         conn.execute(
             "INSERT INTO settings(key,value) VALUES('target_school',?1)

@@ -55,7 +55,7 @@ export function SettingsView({
   const [audioMuted, setAudioMutedState] = useState(() => isAudioMuted())
   const [season, setSeason] = useState<SeasonStatus | null>(null)
   const [libraryPathInput, setLibraryPathInput] = useState('')
-  const [currentVersion, setCurrentVersion] = useState('1.3.0')
+  const [currentVersion, setCurrentVersion] = useState('1.3.1')
   const [checkingUpdate, setCheckingUpdate] = useState(false)
   const [updateResult, setUpdateResult] = useState<AppUpdateInfo | null>(null)
   const [showUpdateModal, setShowUpdateModal] = useState(false)

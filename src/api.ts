@@ -457,10 +457,10 @@ export async function getAppVersion(): Promise<string> {
     try {
       return await invoke<string>('get_app_version')
     } catch {
-      return '1.3.0'
+      return '1.3.1'
     }
   }
-  return '1.3.0'
+  return '1.3.1'
 }
 
 export async function checkAppUpdate(repo = 'shuaba-app/shuaba'): Promise<AppUpdateInfo> {

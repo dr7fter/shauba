@@ -2383,8 +2383,25 @@ fn bootstrap(state: State<AppState>) -> Result<BootstrapData, String> {
     let mut count: i64 = conn
         .query_row("SELECT COUNT(*) FROM questions", [], |r| r.get(0))
         .unwrap_or(0);
-    let library = state.library_dir.lock().map_err(|e| e.to_string())?.clone();
-    let ready = library.join("all_questions_20260813.json").exists();
+    let mut library = state.library_dir.lock().map_err(|e| e.to_string())?.clone();
+    let mut ready = library.join("all_questions_20260813.json").exists();
+    if !ready {
+        let candidate_adjacent = std::env::current_exe().ok().and_then(|p| p.parent().map(|d| d.to_path_buf()));
+        let candidate_cwd = std::env::current_dir().ok();
+        if let Some(detected) = [
+            candidate_adjacent.as_ref().map(|d| d.join("题库-大观园")),
+            candidate_adjacent.as_ref().map(|d| d.join("library")),
+            candidate_cwd.as_ref().map(|d| d.join("题库-大观园")),
+            candidate_cwd.as_ref().map(|d| d.join("library")),
+        ]
+        .into_iter()
+        .flatten()
+        .find(|p| p.join("all_questions_20260813.json").exists()) {
+            library = detected.clone();
+            ready = true;
+            *state.library_dir.lock().map_err(|e| e.to_string())? = detected;
+        }
+    }
     if ready {
         // 每次启动按 content_hash 增量同步，题库内容更新时不会继续使用旧题面。
         count = import_library(&mut conn, &library)?;
@@ -7182,7 +7199,31 @@ pub fn run() {
             backfill_confirmed_analysis_signals(&conn).map_err(std::io::Error::other)?;
             let supplemental_conn = Connection::open(data_dir.join("supplemental.db"))?;
             init_supplemental_schema(&supplemental_conn)?;
-            let library_path = setting(&conn, "library_path", DEFAULT_LIBRARY);
+            let candidate_adjacent = std::env::current_exe().ok().and_then(|p| p.parent().map(|d| d.to_path_buf()));
+            let candidate_cwd = std::env::current_dir().ok();
+            let detected_library = [
+                candidate_adjacent.as_ref().map(|d| d.join("题库-大观园")),
+                candidate_adjacent.as_ref().map(|d| d.join("library")),
+                candidate_cwd.as_ref().map(|d| d.join("题库-大观园")),
+                candidate_cwd.as_ref().map(|d| d.join("library")),
+            ]
+            .into_iter()
+            .flatten()
+            .find(|p| p.join("all_questions_20260813.json").exists())
+            .map(|p| p.to_string_lossy().into_owned());
+
+            let library_path = if let Some(detected) = detected_library {
+                detected
+            } else {
+                let saved = setting(&conn, "library_path", DEFAULT_LIBRARY);
+                if Path::new(&saved).exists() {
+                    saved
+                } else if Path::new(DEFAULT_LIBRARY).exists() {
+                    DEFAULT_LIBRARY.to_string()
+                } else {
+                    saved
+                }
+            };
             let integrity: String = conn
                 .query_row("PRAGMA integrity_check", [], |r| r.get(0))
                 .unwrap_or_else(|_| "error".into());

@@ -112,6 +112,30 @@ export function SettingsView({
     }
   }
 
+  const handleSimulateUpdate = () => {
+    const mockInfo: AppUpdateInfo = {
+      currentVersion: currentVersion,
+      latestVersion: '1.4.0',
+      hasUpdate: true,
+      releaseName: '刷吧 v1.4.0 战术突击升级',
+      releaseNotes: `### 🌟 v1.4.0 更新亮点
+1. **数一天梯排位赛季深化**：新增赛季专属段位奖励与巅峰排位勋章；
+2. **HLTV Rating 3.0 秒杀算法升级**：增强泰勒展开与反常积分判别法的秒杀识别权重；
+3. **1v1 战力对决雷达优化**：支持与好友实时对比六维战术优势；
+4. **考研几何大题高清配图增量**：补充 50+ 道高频几何大题精准图谱。
+
+*注：升级覆盖程序不影响任何本地刷题历史与天梯 Elo 分。*`,
+      publishedAt: new Date().toISOString(),
+      htmlUrl: 'https://github.com/shuaba-app/shuaba/releases/latest',
+      setupDownloadUrl: 'https://github.com/shuaba-app/shuaba/releases/latest',
+      zipDownloadUrl: 'https://github.com/shuaba-app/shuaba/releases/latest',
+      sourceDownloadUrl: 'https://github.com/shuaba-app/shuaba/releases/latest',
+    }
+    setUpdateResult(mockInfo)
+    setShowUpdateModal(true)
+    notify('🎉 模拟检测到新版本 v1.4.0！')
+  }
+
   const loadBackups = useCallback(async () => {
     setLoadingBackups(true)
     try {
@@ -612,6 +636,15 @@ export function SettingsView({
                   <RefreshCw size={14} /> 检查新版本
                 </>
               )}
+            </button>
+
+            <button
+              type="button"
+              className="secondary-button compact"
+              onClick={handleSimulateUpdate}
+              title="预览并体验新版本发布弹窗效果"
+            >
+              <Sparkles size={14} /> 演示升级弹窗
             </button>
 
             {updateResult?.hasUpdate && (

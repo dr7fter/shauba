@@ -2,7 +2,7 @@
 // 用法：node scripts/release.mjs
 // 前提：私钥在 %USERPROFILE%/.tauri/shuaba_updater.key（可用 TAURI_SIGNING_PRIVATE_KEY_PATH 覆盖）
 import { execSync } from 'node:child_process'
-import { existsSync, readFileSync, writeFileSync } from 'node:fs'
+import { copyFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { createHash } from 'node:crypto'
 import { join, resolve } from 'node:path'
 import { homedir } from 'node:os'
@@ -56,6 +56,9 @@ const notes = existsSync(notesPath)
   ? readFileSync(notesPath, 'utf8').trim()
   : `刷吧 v${version} 更新。`
 
+// GitHub 会剥掉资产名里的非 ASCII 字符，统一用 ASCII 名上传并在 latest.json 中引用，
+// 避免「本地中文名 → 远端名被剥 → latest.json 的 URL 404」
+const remoteSetupName = `shuaba_${version}_x64-setup.exe`
 const latest = {
   version,
   notes,
@@ -63,7 +66,7 @@ const latest = {
   platforms: {
     'windows-x86_64': {
       signature,
-      url: `https://github.com/${REPO}/releases/download/v${version}/${encodeURIComponent(setupName)}`,
+      url: `https://github.com/${REPO}/releases/download/v${version}/${remoteSetupName}`,
     },
   },
 }
@@ -73,10 +76,18 @@ writeFileSync(latestPath, JSON.stringify(latest, null, 2))
 const sha256 = createHash('sha256').update(readFileSync(setupPath)).digest('hex')
 writeFileSync(join(nsisDir, 'SHA256SUMS.txt'), `${sha256} *${setupName}\n`)
 
+// 本地归档（releases/ 已 gitignore，仅留档）
+const archiveDir = join(root, 'releases', `v${version}`)
+mkdirSync(archiveDir, { recursive: true })
+for (const f of [setupName, `${setupName}.sig`, 'latest.json', 'SHA256SUMS.txt']) {
+  copyFileSync(join(nsisDir, f), join(archiveDir, f))
+}
+
 console.log('\n✔ 构建完成，更新三件套：')
 console.log(`  1. ${setupPath}`)
 console.log(`  2. ${sigPath}`)
 console.log(`  3. ${latestPath}`)
-console.log('\n>> 上传到 GitHub Releases（latest.json 文件名不能改，updater 端点按这个名字找）：\n')
-console.log(`gh release create v${version} --title "刷吧 v${version}" --latest --notes-file RELEASE_NOTES.md "${setupPath}" "${latestPath}"`)
+console.log(`  （已归档到 releases/v${version}/）`)
+console.log('\n>> 上传到 GitHub Releases（latest.json 文件名不能改；exe 用 # 指定 ASCII 资产名）：\n')
+console.log(`gh release create v${version} --title "刷吧 v${version}" --latest --notes-file RELEASE_NOTES.md "${setupPath}#${remoteSetupName}" "${latestPath}"`)
 console.log('\n上传后应用内「检查更新」即可收到该版本（仅对已带 updater 的版本生效）。')

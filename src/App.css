@@ -3384,11 +3384,13 @@
 .rating-num-row { display: flex; align-items: baseline; justify-content: flex-end; gap: 8px; }
 .report-rating-total strong { font-size: clamp(38px, 5vw, 58px); line-height: 1; letter-spacing: -.04em; }
 .tier-capsule { font-size: 13px; font-weight: 900; padding: 2px 8px; border-radius: var(--r-sm); background: var(--surface); border: 1px solid var(--line); color: var(--ink); }
+.tier-capsule.donk-tier { background: linear-gradient(135deg, var(--warn), color-mix(in srgb, var(--coral) 80%, black)); color: var(--on-color); border-color: var(--warn); }
 .rating-exam-subtext { display: block; margin-top: 4px; font-size: 12px; font-weight: 800; color: var(--green-dark); }
 .report-rating-chart { min-height: 150px; display: flex; align-items: flex-end; gap: 10px; padding: 16px 2px 0; border-bottom: 1px solid var(--line); }
 .report-rating-column { flex: 1; min-width: 28px; display: flex; flex-direction: column; align-items: center; gap: 5px; }
 .report-rating-value { color: var(--green-dark); font-size: var(--fs-xs); line-height: 1; display: inline-flex; align-items: center; gap: 2px; }
 .clutch-spark-tag { font-size: 11px; filter: drop-shadow(0 0 4px var(--warn)); }
+.donk-spark-tag { font-size: 13px; filter: drop-shadow(0 0 6px var(--warn)); }
 .report-rating-track { width: min(34px, 100%); height: 108px; display: flex; align-items: flex-end; background: color-mix(in srgb, var(--line) 65%, transparent); border-radius: var(--r-xs) var(--r-xs) 0 0; overflow: hidden; }
 .report-rating-track i { display: block; width: 100%; min-height: 3px; background: linear-gradient(180deg, var(--success), var(--green)); border-radius: var(--r-xs) var(--r-xs) 0 0; }
 .report-rating-track.rating-low i { background: linear-gradient(180deg, var(--danger), var(--danger)); }

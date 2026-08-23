@@ -12,7 +12,7 @@ use chrono::NaiveDate;
 use rusqlite::Connection;
 
 pub const RATING_MIN: f64 = 0.0;
-pub const RATING_MAX: f64 = 2.0;
+pub const RATING_MAX: f64 = 2.50;
 pub const RATING_AVERAGE: f64 = 1.0;
 
 const DIFFICULTY_MULTIPLIER_MIN: f64 = 0.94;
@@ -405,21 +405,37 @@ pub fn hltv_rating(
         + HLTV3_W_PACING * pacing
         - eco_drag;
 
-    round2(((HLTV3_INTERCEPT + HLTV3_SLOPE * composite) * diff).clamp(RATING_MIN, RATING_MAX))
+    let base_raw = HLTV3_INTERCEPT + HLTV3_SLOPE * composite;
+    // Donk-tier 极端高光爆发：当且仅当高技巧等级 (technique_level >= 4) + 极速秒杀 (pacing >= 125) + 严密作答无明显失误时，允许向上突破 2.00 达到 2.05 ~ 2.45
+    let rating = if outcome == "correct"
+        && base_raw > 1.40
+        && dims.technique_level.unwrap_or(0) >= 4
+        && pacing >= 125.0
+    {
+        let burst = (base_raw - 1.40).powf(0.82) * 1.55;
+        (1.40 + burst) * diff
+    } else {
+        base_raw * diff
+    };
+
+    round2(rating.clamp(RATING_MIN, RATING_MAX))
 }
 
-/// 考场 150 分预测分映射算法 (单调分段函数)
+/// 考场 150 分预测分映射算法 (单调平滑分段函数)
 pub fn predicted_exam_score(rating: f64, kast: Option<f64>) -> i32 {
-    let k = kast.unwrap_or(75.0).clamp(30.0, 100.0) / 100.0;
-    let r = rating.clamp(0.0, 2.0);
+    let k = kast.unwrap_or(75.0).clamp(40.0, 100.0) / 100.0;
+    let r = rating.clamp(0.0, RATING_MAX);
     let base = if r <= 0.80 {
-        45.0 * (r / 0.80)
+        (r / 0.80) * 65.0
     } else if r <= 1.20 {
-        45.0 + ((r - 0.80) / 0.40) * 70.0 // 0.80 -> 45, 1.00 -> 80, 1.20 -> 115
+        65.0 + ((r - 0.80) / 0.40) * 50.0 // 0.80 -> 65, 1.00 -> 90, 1.17 -> 111.3, 1.20 -> 115
+    } else if r <= 1.50 {
+        115.0 + ((r - 1.20) / 0.30) * 28.0 // 1.20 -> 115, 1.35 -> 129, 1.50 -> 143
     } else {
-        115.0 + ((r - 1.20) / 0.40).clamp(0.0, 1.0) * 32.0 // 1.30 -> 123, 1.60 -> 147
+        143.0 + ((r - 1.50) / 0.20).clamp(0.0, 1.0) * 7.0 // 1.50 -> 143, 1.70+ -> 150
     };
-    let score = base * k.powf(0.12);
+    let stability = (k / 0.75).powf(0.12);
+    let score = base * stability;
     score.round().clamp(0.0, 150.0) as i32
 }
 
@@ -543,14 +559,37 @@ mod tests {
     }
 
     #[test]
+    fn donk_burst_reaches_two_plus_under_god_mode() {
+        // Donk 级神仙表现：压轴难题 + 极速秒杀 + 5级技巧降维打击 + 0笔误
+        let donk = hltv_rating(
+            "correct",
+            &DimensionEvidence {
+                rigor: Some(100.0),
+                computation: Some(100.0),
+                strategy_insight: Some(98.0),
+                method_use: Some(95.0),
+                technique_level: Some(5),
+                speed: Some(150.0),
+                ..Default::default()
+            },
+            180,
+            600,
+            Some(1.10),
+        );
+        assert!(donk >= 2.00, "donk mode should breakthrough 2.00+: {donk}");
+    }
+
+    #[test]
     fn predicted_exam_score_maps_realistically() {
-        assert!(predicted_exam_score(0.60, Some(50.0)) <= 45);
+        assert!(predicted_exam_score(0.60, Some(50.0)) <= 52);
         let average = predicted_exam_score(1.00, Some(75.0));
-        assert!((70..=95).contains(&average), "1.00 should map to ~70-95: {average}");
+        assert!((85..=95).contains(&average), "1.00 should map to ~85-95: {average}");
+        let user_grade = predicted_exam_score(1.17, Some(86.0));
+        assert!((110..=116).contains(&user_grade), "1.17 should map to 110-116: {user_grade}");
         let high = predicted_exam_score(1.30, Some(85.0));
-        assert!((115..=135).contains(&high), "1.30 should map to ~115-135: {high}");
+        assert!((122..=132).contains(&high), "1.30 should map to ~122-132: {high}");
         let perfect = predicted_exam_score(1.60, Some(100.0));
-        assert!(perfect >= 140, "1.60+ should map to 140-150: {perfect}");
+        assert!(perfect >= 145, "1.60+ should map to 145-150: {perfect}");
     }
 }
 

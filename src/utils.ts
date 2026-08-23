@@ -88,7 +88,7 @@ export function getPaceEvaluation(
  * exceptional result and 2.00 is reserved for near-perfect, difficult work.
  */
 export const CS_RATING_MIN = 0
-export const CS_RATING_MAX = 2
+export const CS_RATING_MAX = 2.5
 export const CS_RATING_AVERAGE = 1
 
 export const DIFFICULTY_MULTIPLIER_MIN = 0.94
@@ -223,11 +223,22 @@ export function verdictChip(verdict: string | null): { label: string; tone: stri
  * 考场 150 分预测分映射计算器 (基于 HLTV Rating 3.0 与 KAST 稳定性)
  */
 export function predictedExamScore(rating: number, kast = 75): number {
-  const k = Math.max(30, Math.min(100, kast)) / 100
-  const r = Math.max(0, Math.min(2.0, rating))
-  const exponent = -2.75 * (r - 1.05)
-  const logistic = 1 / (1 + Math.exp(exponent))
-  const score = 150 * logistic * Math.pow(k, 0.18)
-  return Math.round(Math.max(0, Math.min(150, score)))
+  const k = Math.max(40, Math.min(100, kast)) / 100
+  const r = Math.max(0, Math.min(CS_RATING_MAX, rating))
+  
+  let base = 0
+  if (r <= 0.80) {
+    base = (r / 0.80) * 65.0
+  } else if (r <= 1.20) {
+    base = 65.0 + ((r - 0.80) / 0.40) * 50.0 // 0.80 -> 65, 1.00 -> 90, 1.17 -> 111.3, 1.20 -> 115
+  } else if (r <= 1.50) {
+    base = 115.0 + ((r - 1.20) / 0.30) * 28.0 // 1.20 -> 115, 1.35 -> 129, 1.50 -> 143
+  } else {
+    base = 143.0 + Math.min(1.0, (r - 1.50) / 0.20) * 7.0 // 1.50 -> 143, 1.70+ -> 150
+  }
+  
+  const stability = Math.pow(k / 0.75, 0.12)
+  const finalScore = Math.round(base * stability)
+  return Math.max(0, Math.min(150, finalScore))
 }
 

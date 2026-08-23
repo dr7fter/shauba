@@ -18,7 +18,7 @@ use tauri::{Manager, State};
 const DEFAULT_LIBRARY: &str = r"E:\考研资料\题库-大观园";
 const CATEGORY_SCHEMA_VERSION: &str = "2";
 const AI_RATING_MIN: f64 = 0.0;
-const AI_RATING_MAX: f64 = 2.0;
+const AI_RATING_MAX: f64 = 2.50;
 
 fn clamp_ai_rating(value: f64) -> f64 {
     value.clamp(AI_RATING_MIN, AI_RATING_MAX)
@@ -1680,7 +1680,7 @@ fn apply_analysis_rating_to_latest_attempt(
             } else {
                 ELO_K
             };
-            let delta = (k * correction / services::rating::RATING_MAX).round();
+            let delta = (k * correction / 2.0).round();
             if delta != 0.0 {
                 conn.execute(
                     "INSERT INTO elo_events(attempt_id,question_id,delta,rating_after,performance,expected,created_at,session_id,reason)
@@ -4301,7 +4301,7 @@ fn settle_elo(
                 services::rating::attempt_rating(outcome, fluency_rating, duration, bench)
             })
     };
-    let score = performance / services::rating::RATING_MAX;
+    let score = (performance / 2.0).clamp(0.0, 1.25);
     // 期望由题目难度与章节掌握度共同决定：薄弱章节的难题期望最低，收益最大
     let mastery: f64 = conn
         .query_row(
@@ -6310,8 +6310,8 @@ fn create_codex_task(question_id: i64, state: State<AppState>) -> Result<CodexTa
    - 🔴 瞄准失误 (计算笔误/符号写反) -> verdict: "partial", 保留有效步骤分 (ADR 65-80);
    - 🟡 概念盲区 (定理前提遗漏/混淆充分必要) -> verdict: "incorrect", 严查概念边界;
    - 🔵 战术绕路 (方法机械蛮干/超时严重) -> speed <= 60, 指出计算黑洞与冗余步骤.
-2. HLTV Rating 3.0 定位 (0.00-2.00，严禁中庸打安全分)：
-   - 0.50: 核心断裂/盲区; 0.80: 笨拙硬算且有笔误; 1.00: 常规达标; 1.20: 规范严密; 1.35: 巧解秒杀; 1.50+: 压轴题突破/满分级直觉;
+2. HLTV Rating 3.0 定位 (0.00-2.50，拉开区分度)：
+   - 0.50: 核心断裂/盲区; 0.80: 笨拙硬算且有笔误; 1.00: 常规达标; 1.15-1.25: 规范严密; 1.30-1.45: 巧解秒杀; 1.50-1.65: 压轴题突破; 2.00-2.45: Donk-tier 超神秒杀 (极罕见神级表现);
    - 【硬约束规则】：若 verdict 为 incorrect，rating 严禁超过 0.65 (有大量正确步骤的笔误最高 0.80)；若超时 1.5 倍以上且做错，触发经济拖累惩罚。
 3. 六维能力打分准则 (0-100)：
    - 每维评分必须在 evidence 中引用草稿具体推导行与公式证据，严禁无证据给分；
@@ -6413,8 +6413,8 @@ fn build_codex_batch_task_prompt(
    - 🟡 概念盲区 (定理前提遗漏/混淆充分必要) -> verdict: "incorrect", 严查概念边界;
    - 🔵 战术绕路 (方法机械蛮干/超时严重) -> speed <= 60, 指出计算黑洞与冗余步骤.
    无法确定时 result 设为 "uncertain"。durationSeconds 必须原样填写上方提供的实际作答耗时（秒）。
-3. HLTV Rating 3.0 定位 (0.00-2.00，严禁中庸打安全分)：
-   - 0.50: 核心断裂; 0.80: 笨拙硬算且有笔误; 1.00: 常规达标; 1.20: 规范严密; 1.35: 巧解秒杀; 1.50+: 压轴题突破/满分级直觉;
+3. HLTV Rating 3.0 定位 (0.00-2.50，拉开区分度)：
+   - 0.50: 核心断裂; 0.80: 笨拙硬算且有笔误; 1.00: 常规达标; 1.15-1.25: 规范严密; 1.30-1.45: 巧解秒杀; 1.50-1.65: 压轴题突破; 2.00-2.45: Donk-tier 超神秒杀 (极罕见神级表现);
    - 【整组区分度要求】：同组题目的 Rating 必须依据草稿实际优劣拉开梯度（严禁全部打在 1.10-1.20 区间）。若 verdict 为 incorrect，rating 严禁超过 0.65 (有大量正确步骤的笔误最高 0.80)。
 4. 六维能力打分准则 (0-100)：
    - 每维评分必须在 evidence 中引用草稿具体推导证据，严禁无证据给分；

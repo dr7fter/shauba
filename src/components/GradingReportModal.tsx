@@ -299,7 +299,9 @@ export function PressureLearningReportView({
               <div className="report-rating-total">
                 <div className="rating-num-row">
                   <strong className={`rating-number rating-${ratingTone}`}>{averageRatingScore.toFixed(2)}</strong>
-                  <b className="tier-capsule">{ratingTier} 级</b>
+                  <b className={`tier-capsule ${averageRatingScore >= 2.0 ? 'donk-tier' : ''}`}>
+                    {averageRatingScore >= 2.0 ? '👑 DONK' : `${ratingTier} 级`}
+                  </b>
                 </div>
                 <span className="rating-exam-subtext">🎯 考场预测分 {examPrediction} / 150</span>
               </div>
@@ -308,13 +310,18 @@ export function PressureLearningReportView({
               <div className="report-rating-chart" role="list" aria-label="逐题 rating 分布">
                 {grades.map((grade, index) => {
                   const score = ratingScores[index] ?? 0
-                  const isClutch = score >= 1.35
+                  const isDonk = score >= 2.0
+                  const isClutch = score >= 1.35 && !isDonk
                   const tone = gradeTone(grade)
                   return (
                     <div className="report-rating-column" key={`${grade.questionId}-${index}`} role="listitem">
                       <div className={`report-rating-value rating-${csRatingTone(score)}`}>
                         {score}
-                        {isClutch && <span className="clutch-spark-tag" title="高难度突破 / 巧解秒杀">⚡</span>}
+                        {isDonk ? (
+                          <span className="donk-spark-tag" title="👑 DONK 级神仙秒杀突破！">👑</span>
+                        ) : isClutch ? (
+                          <span className="clutch-spark-tag" title="⚡ 高难度突破 / 巧解秒杀">⚡</span>
+                        ) : null}
                       </div>
                       <div className={`report-rating-track rating-${csRatingTone(score)}`}>
                         <i style={{ height: `${Math.max(6, (score / CS_RATING_MAX) * 100)}%` }} />

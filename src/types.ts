@@ -624,3 +624,59 @@ export type AppUpdateInfo = {
   sourceDownloadUrl?: string | null
 }
 
+export type UserProfileSettings = {
+  nickname: string
+  targetSchool?: string | null
+  avatar?: string | null
+}
+
+export type FriendDimensions = {
+  rigor: number
+  computation: number
+  speed: number
+  modeling: number
+  methodUse: number
+  strategyInsight: number
+}
+
+export type FriendProfile = {
+  id: string
+  friendCode: string
+  nickname: string
+  avatar: string
+  title: string
+  targetSchool: string
+  currentElo: number
+  peakElo: number
+  rankLetter: string
+  ratingPro: number
+  predictedExamScore: number
+  todayProblems: number
+  totalMatches: number
+  winRate: number
+  status: 'online' | 'in_match' | 'offline'
+  currentActivity?: string
+  lastActiveAt: string
+  dimensions: FriendDimensions
+  isSelf?: boolean
+  eloChangeToday?: number
+}
+
+export type FriendActivity = {
+  id: string
+  friendCode: string
+  nickname: string
+  avatar: string
+  type: 'rank_up' | 'donk_burst' | 'exam_finish' | 'daily_streak'
+  title: string
+  content: string
+  timestamp: string
+}
+
+export type FriendsSystemData = {
+  myProfile: FriendProfile
+  friends: FriendProfile[]
+  activities: FriendActivity[]
+}
+
+

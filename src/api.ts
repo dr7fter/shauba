@@ -1,6 +1,6 @@
 import { invoke } from '@tauri-apps/api/core'
 import { mockBootstrap, mockCategories, mockInbox, mockMastery, mockQuestions, mockRecommendations } from './mock'
-import type { BootstrapData, CategoryNode, CodexTask, DailyLog, DailyTrendPoint, EloStatus, TagClosure, ExportResult, FailedInboxItem, InboxItem, InboxSummary, InsightPoint, MasteryChapter, MasteryNode, PracticeSessionState, Question, QuestionPage, RatingDistribution, RecommendationBatch, RecommendedQuestion, ReviewHistory, ReviewPlan, SeasonStatus, SessionScoreboard, UserStreak, WeaknessRadar, PressureSession, GradingReport, TacticalDashboardData, AppUpdateInfo } from './types'
+import type { BootstrapData, CategoryNode, CodexTask, DailyLog, DailyTrendPoint, EloStatus, TagClosure, ExportResult, FailedInboxItem, InboxItem, InboxSummary, InsightPoint, MasteryChapter, MasteryNode, PracticeSessionState, Question, QuestionPage, RatingDistribution, RecommendationBatch, RecommendedQuestion, ReviewHistory, ReviewPlan, SeasonStatus, SessionScoreboard, UserStreak, WeaknessRadar, PressureSession, GradingReport, TacticalDashboardData, AppUpdateInfo, UserProfileSettings } from './types'
 import { createPracticeSessionPayload } from './domain/evidence'
 import { compareSemver } from './utils'
 
@@ -518,4 +518,41 @@ export async function checkAppUpdate(repo = 'shuaba-app/shuaba'): Promise<AppUpd
     htmlUrl: `https://github.com/${repo}/releases`,
   }
 }
+
+export async function getUserProfile(): Promise<UserProfileSettings> {
+  if (isTauri()) {
+    try {
+      return await invoke<UserProfileSettings>('get_user_profile')
+    } catch {
+      // fallback
+    }
+  }
+  try {
+    const raw = localStorage.getItem('shuaba_my_profile_v1')
+    if (raw) return JSON.parse(raw)
+  } catch {
+    // ignore
+  }
+  return {
+    nickname: 'dr7fter',
+    targetSchool: '考研数学一 · 目标985',
+    avatar: '🚀',
+  }
+}
+
+export async function setUserProfile(profile: UserProfileSettings): Promise<void> {
+  try {
+    localStorage.setItem('shuaba_my_profile_v1', JSON.stringify(profile))
+  } catch {
+    // ignore
+  }
+  if (isTauri()) {
+    try {
+      await invoke('set_user_profile', { profile })
+    } catch {
+      // ignore
+    }
+  }
+}
+
 

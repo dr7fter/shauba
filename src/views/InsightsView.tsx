@@ -19,6 +19,7 @@ import {
   Target,
   TrendingDown,
   TrendingUp,
+  Users,
   X,
   XCircle,
   Zap,
@@ -48,6 +49,7 @@ import {
 } from '../utils'
 import { MathText } from '../components/MathText'
 import { QuestionDetail } from '../components/QuestionDetailModal'
+import { FriendsLadderView } from '../components/FriendsLadderView'
 import { InboxView } from './InboxView'
 import type {
   BootstrapData,
@@ -63,7 +65,7 @@ import type {
   WeaknessRadar,
 } from '../types'
 
-type DataTab = 'overview' | 'matches' | 'mistakes' | 'inbox'
+type DataTab = 'overview' | 'friends' | 'matches' | 'mistakes' | 'inbox'
 type ScopeMode = 'ranked' | 'all' | 'solo'
 
 function averageReportRating(report: GradingReport | null): number | null {
@@ -365,7 +367,10 @@ export function InsightsView({
       <div className="insights-tabs data-tabs tactical-nav-tabs">
         <div className="segmented">
           <button className={tab === 'overview' ? 'active' : ''} onClick={() => setTab('overview')}>
-            <BarChart3 size={16} /> 个人数据
+            <BarChart3 size={16} /> 个人战绩
+          </button>
+          <button className={tab === 'friends' ? 'active' : ''} onClick={() => setTab('friends')}>
+            <Users size={16} /> 天梯好友
           </button>
           <button className={tab === 'matches' ? 'active' : ''} onClick={() => setTab('matches')}>
             <Clock3 size={16} /> 比赛记录
@@ -440,6 +445,20 @@ export function InsightsView({
               onStartRecommendation={onStartRecommendation}
               onStartVariant={onStartVariant}
               onOpenPressureReport={onOpenPressureReport}
+            />
+          </motion.div>
+        ) : tab === 'friends' ? (
+          <motion.div
+            key="friends"
+            initial={{ opacity: 0, y: 10 }}
+            animate={{ opacity: 1, y: 0 }}
+            exit={{ opacity: 0, y: -10 }}
+          >
+            <FriendsLadderView
+              tacticalData={tacticalData}
+              bootstrapData={data}
+              eloStatus={elo}
+              notify={notify}
             />
           </motion.div>
         ) : tab === 'overview' ? (

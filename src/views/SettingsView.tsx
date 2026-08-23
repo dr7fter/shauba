@@ -12,10 +12,12 @@ import {
   setLibraryPath,
   checkAppUpdate,
   getAppVersion,
+  getUserProfile,
+  setUserProfile,
 } from '../api'
 import { isAudioMuted, setAudioMuted } from '../data/audio'
 import { UpdateModal } from '../components/UpdateModal'
-import type { BackupInfo, BootstrapData, SeasonStatus, AppUpdateInfo } from '../types'
+import type { BackupInfo, BootstrapData, SeasonStatus, AppUpdateInfo, UserProfileSettings } from '../types'
 
 export function SettingsView({
   data,
@@ -58,11 +60,35 @@ export function SettingsView({
   const [updateResult, setUpdateResult] = useState<AppUpdateInfo | null>(null)
   const [showUpdateModal, setShowUpdateModal] = useState(false)
 
+  const [userNickname, setUserNickname] = useState('dr7fter')
+  const [userSchool, setUserSchool] = useState('考研数学一 · 目标985')
+  const [userAvatar, setUserAvatar] = useState('🚀')
+
   useEffect(() => {
     void getSeasonStatus().then(setSeason).catch(() => undefined)
     void getLibraryPath().then(setLibraryPathInput).catch(() => undefined)
     void getAppVersion().then(setCurrentVersion).catch(() => undefined)
+    void getUserProfile().then((p) => {
+      if (p.nickname) setUserNickname(p.nickname)
+      if (p.targetSchool) setUserSchool(p.targetSchool)
+      if (p.avatar) setUserAvatar(p.avatar)
+    }).catch(() => undefined)
   }, [])
+
+  const handleSaveUserProfile = async () => {
+    if (!userNickname.trim()) {
+      notify('战术昵称不能为空')
+      return
+    }
+    const profile: UserProfileSettings = {
+      nickname: userNickname.trim(),
+      targetSchool: userSchool.trim(),
+      avatar: userAvatar,
+    }
+    await setUserProfile(profile)
+    notify(`战术名片已更新：选手「${profile.nickname}」`)
+    refresh()
+  }
 
   const handleCheckUpdate = async (silent = false) => {
     setCheckingUpdate(true)
@@ -208,6 +234,60 @@ export function SettingsView({
           </button>
         </div>
       </section>
+
+      <section>
+        <div>
+          <h2>战术选手与名片设置</h2>
+          <p>自定义你的考研战术选手昵称、目标院校与头像徽章，同步至天梯好友榜与战力大屏。</p>
+        </div>
+        <div className="setting-control">
+          <label>战术头像徽章</label>
+          <div className="avatar-options-row">
+            {['🚀', '👑', '⚡', '🎓', '🎯', '🔥', '🦁', '🌟', '📐', '💎'].map((em) => (
+              <button
+                key={em}
+                type="button"
+                className={`avatar-option-btn ${userAvatar === em ? 'selected' : ''}`}
+                onClick={() => setUserAvatar(em)}
+              >
+                {em}
+              </button>
+            ))}
+          </div>
+        </div>
+
+        <div className="setting-control" style={{ marginTop: '16px' }}>
+          <label>战术昵称 (用户名)</label>
+          <input
+            type="text"
+            className="profile-text-input"
+            value={userNickname}
+            onChange={(e) => setUserNickname(e.target.value)}
+            placeholder="例如: dr7fter"
+          />
+        </div>
+
+        <div className="setting-control" style={{ marginTop: '16px' }}>
+          <label>目标院校与专业</label>
+          <input
+            type="text"
+            className="profile-text-input"
+            value={userSchool}
+            onChange={(e) => setUserSchool(e.target.value)}
+            placeholder="例如: 清华大学 · 自动化"
+          />
+        </div>
+
+        <button
+          type="button"
+          className="primary-button compact"
+          style={{ marginTop: '16px', alignSelf: 'flex-start' }}
+          onClick={handleSaveUserProfile}
+        >
+          保存选手名片
+        </button>
+      </section>
+
       <section>
         <div>
           <h2>界面与反馈</h2>

@@ -260,3 +260,14 @@ export function compareSemver(current: string, latest: string): boolean {
   return false
 }
 
+export function rankLetterForElo(elo: number): string {
+  if (elo >= 1950) return 'DONK'
+  if (elo >= 1800) return 'S'
+  if (elo >= 1700) return 'A+'
+  if (elo >= 1600) return 'A'
+  if (elo >= 1500) return 'B+'
+  if (elo >= 1400) return 'B'
+  return 'C'
+}
+
+

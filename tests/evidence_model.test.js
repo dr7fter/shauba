@@ -5,7 +5,7 @@ import {
   createPracticeSessionPayload,
   determineAttemptEvidence,
 } from '../src/domain/evidence.ts'
-import { compareSemver } from '../src/utils.ts'
+import { compareSemver, predictedExamScore } from '../src/utils.ts'
 
 test('paper objective without a screen selection is not inferred as wrong', () => {
   assert.deepEqual(
@@ -66,5 +66,11 @@ test('semver comparison correctly determines upgrade availability', () => {
   assert.equal(compareSemver('1.3.0', '1.3.0'), false)
   assert.equal(compareSemver('1.4.0', '1.3.0'), false)
   assert.equal(compareSemver('1.3.1', '1.3.0'), false)
+})
+
+test('predicted exam score maps realistically from rating and kast', () => {
+  assert.equal(predictedExamScore(1.0, 75), 90)
+  assert.equal(predictedExamScore(1.25, 85), 121)
+  assert.equal(predictedExamScore(1.5, 95), 147)
 })
 

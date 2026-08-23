@@ -5539,8 +5539,9 @@ fn get_tactical_dashboard_stats(
     .map(|(_, title)| title)
     .unwrap_or("一锤定音的战场收割者");
 
+    let user_nickname = setting(&conn, "user_nickname", "dr7fter");
     let profile = TacticalProfile {
-        nickname: "dr7fter".into(),
+        nickname: user_nickname,
         title: max_dim.into(),
         combat_power,
         current_elo,
@@ -7223,6 +7224,56 @@ fn check_app_update(repo: Option<String>) -> Result<AppUpdateInfo, String> {
     Ok(info)
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct UserProfileSettings {
+    pub nickname: String,
+    pub target_school: Option<String>,
+    pub avatar: Option<String>,
+}
+
+#[tauri::command]
+fn get_user_profile(state: State<AppState>) -> Result<UserProfileSettings, String> {
+    let conn = state.db.lock().map_err(|e| e.to_string())?;
+    let nickname = setting(&conn, "user_nickname", "dr7fter");
+    let target_school = setting(&conn, "target_school", "考研数学一 · 目标985");
+    let avatar = setting(&conn, "user_avatar", "🚀");
+    Ok(UserProfileSettings {
+        nickname,
+        target_school: Some(target_school),
+        avatar: Some(avatar),
+    })
+}
+
+#[tauri::command]
+fn set_user_profile(profile: UserProfileSettings, state: State<AppState>) -> Result<(), String> {
+    let conn = state.db.lock().map_err(|e| e.to_string())?;
+    conn.execute(
+        "INSERT INTO settings(key,value) VALUES('user_nickname',?1)
+         ON CONFLICT(key) DO UPDATE SET value=excluded.value",
+        [&profile.nickname],
+    )
+    .map_err(|e| e.to_string())?;
+    if let Some(target_school) = profile.target_school {
+        conn.execute(
+            "INSERT INTO settings(key,value) VALUES('target_school',?1)
+             ON CONFLICT(key) DO UPDATE SET value=excluded.value",
+            [&target_school],
+        )
+        .map_err(|e| e.to_string())?;
+    }
+    if let Some(avatar) = profile.avatar {
+        conn.execute(
+            "INSERT INTO settings(key,value) VALUES('user_avatar',?1)
+             ON CONFLICT(key) DO UPDATE SET value=excluded.value",
+            [&avatar],
+        )
+        .map_err(|e| e.to_string())?;
+    }
+    Ok(())
+}
+
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
@@ -7363,7 +7414,9 @@ pub fn run() {
             list_pressure_sessions,
             get_today_attempted_questions,
             get_app_version,
-            check_app_update
+            check_app_update,
+            get_user_profile,
+            set_user_profile
         ])
         .run(tauri::generate_context!())
         .expect("error while running 刷吧");

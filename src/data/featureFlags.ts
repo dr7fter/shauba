@@ -22,11 +22,13 @@ const FEATURE_FLAG_NAMES: ShuabaFeatureFlag[] = [
 ]
 
 const defaultFeatureFlags: ShuabaFeatureFlags = {
-  learningCenterV1: false,
-  learningEvidenceProjectionV1: false,
-  lowConfidenceGateV1: false,
-  nonPressureBatchGradingV1: false,
-  shadowRecommendationPlanV1: false,
+  // v1.5.0 已完成人工验收的正式功能：生产安装包默认开启。
+  learningCenterV1: true,
+  learningEvidenceProjectionV1: true,
+  lowConfidenceGateV1: true,
+  nonPressureBatchGradingV1: true,
+  shadowRecommendationPlanV1: true,
+  // 尚未完成历史迁移与好友广播放量，继续保持关闭。
   rankedOnlyEloV1: false,
   friendBroadcastsV1: false,
 }
@@ -57,7 +59,7 @@ function buildFeatureFlags(): ShuabaFeatureFlags {
   const enabled = new Set([...getCompileTimeFlags(), ...getDevelopmentStorageFlags()])
   return FEATURE_FLAG_NAMES.reduce<ShuabaFeatureFlags>(
     (flags, name) => {
-      flags[name] = enabled.has(name)
+      flags[name] = flags[name] || enabled.has(name)
       return flags
     },
     { ...defaultFeatureFlags },
@@ -66,8 +68,8 @@ function buildFeatureFlags(): ShuabaFeatureFlags {
 
 /**
  * Feature flags are intentionally evaluated once at app startup. In production,
- * only the compile-time VITE_SHUABA_FEATURE_FLAGS value is accepted; ordinary
- * localStorage cannot silently enable an unfinished feature.
+ * stable features are enabled by their production defaults. Compile-time flags may
+ * additionally expose controlled features; ordinary localStorage remains DEV-only.
  */
 export const featureFlags: ShuabaFeatureFlags = Object.freeze(buildFeatureFlags())
 

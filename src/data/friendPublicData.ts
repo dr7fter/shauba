@@ -456,6 +456,9 @@ export function importFriendInvitation(raw: string): {
   const friendCode = normalizeFriendCode(parsed.friendCode)
   if (!friendCode) return { success: false, message: '邀请文件中的好友码格式不正确' }
 
+  // 主动导入好友邀请时，自动解除屏蔽
+  unblockIdentity(friendCode, parsed.profileId)
+
   const config: Partial<FriendSyncConfig> = {
     endpoint: parsed.endpoint.trim(),
     folder: parsed.folder ? parsed.folder.trim() : 'shuaba-friends',
@@ -463,7 +466,7 @@ export function importFriendInvitation(raw: string): {
 
   return {
     success: true,
-    message: `已成功导入「${parsed.nickname || friendCode}」的邀请！已自动填充 WebDAV 路径与好友码，只需填写您自己的坚果云应用密码即可开始同步。`,
+    message: `已成功导入「${parsed.nickname || friendCode}」的邀请并解除屏蔽！已自动填充 WebDAV 路径与好友码，只需填写您自己的坚果云应用密码即可开始同步。`,
     config,
     friendCode,
   }

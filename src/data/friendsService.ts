@@ -22,6 +22,7 @@ import { predictedExamScore, rankLetterForElo } from '../utils'
 import {
   addBlockedIdentity,
   createFriendInvitation,
+  getBlockedIdentities,
   dedupeIdentitiesConnected,
   getMyPresence,
   getMyPublicMatches,
@@ -31,9 +32,17 @@ import {
   normalizeFriendCode,
   saveFriendCachedMatches,
   saveFriendCachedReports,
+  unblockIdentity,
 } from './friendPublicData'
 
-export { createFriendInvitation, importFriendInvitation, normalizeFriendCode }
+export {
+  createFriendInvitation,
+  getBlockedIdentities,
+  importFriendInvitation,
+  isIdentityBlocked,
+  normalizeFriendCode,
+  unblockIdentity,
+}
 
 const STORAGE_KEY_FRIENDS = 'shuaba_friends_roster_v2'
 const STORAGE_KEY_MY_PROFILE = 'shuaba_my_profile_v2'
@@ -448,7 +457,12 @@ export function addFriendCode(codeInput: string): { success: boolean; message: s
   const own = getSavedMyCustomProfile().friendCode
   if (!code) return { success: false, message: '好友码格式不正确' }
   if (code === own) return { success: false, message: '不能添加自己' }
-  if (isIdentityBlocked(code)) return { success: false, message: '该好友已被屏蔽，如需添加请先解除屏蔽' }
+
+  const wasBlocked = isIdentityBlocked(code)
+  if (wasBlocked) {
+    unblockIdentity(code)
+  }
+
   const codes = getSavedFriendCodes()
   if (!codes.includes(code)) writeStorage(STORAGE_KEY_FRIEND_CODES, [code, ...codes])
   const existing = getSavedFriends().find((friend) => friend.friendCode === code)
@@ -460,7 +474,12 @@ export function addFriendCode(codeInput: string): { success: boolean; message: s
     lastSnapshotHash: existing?.lastSnapshotHash,
     lastSnapshotExportedAt: existing?.lastSnapshotExportedAt,
   })
-  return { success: true, message: `已记录好友码 ${code}，等待好友首次发布数据` }
+  return {
+    success: true,
+    message: wasBlocked
+      ? `已解除对好友「${code}」的屏蔽并重新添加关注`
+      : `已记录好友码 ${code}，等待好友首次发布数据`,
+  }
 }
 
 export function getSavedFriendSyncConfig(): FriendSyncConfig | null {
@@ -911,7 +930,10 @@ export function addFriendSnapshot(
   if (profile.friendCode === own.friendCode || profile.profileId === own.profileId) {
     return { success: false, message: '不能添加自己的好友卡片' }
   }
-  if (isIdentityBlocked(profile.friendCode, profile.profileId)) {
+  if (options?.sourceFileName === undefined && isIdentityBlocked(profile.friendCode, profile.profileId)) {
+    // 用户手动导入/粘贴该好友数据，自动解除屏蔽
+    unblockIdentity(profile.friendCode, profile.profileId)
+  } else if (isIdentityBlocked(profile.friendCode, profile.profileId)) {
     return { success: false, message: '该好友已被屏蔽，拒绝导入' }
   }
 

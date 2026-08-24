@@ -21,6 +21,7 @@ import {
   addFriendSnapshot,
   createFriendInvitation,
   createFriendShareSnapshot,
+  getBlockedIdentities,
   getSavedFriendSyncConfig,
   getSavedFriends,
   importFriendInvitation,
@@ -31,6 +32,7 @@ import {
   syncFriendSnapshots,
   removeFriendById,
   saveMyCustomProfile,
+  unblockIdentity,
 } from '../data/friendsService'
 import { FriendVsRadarModal } from './FriendVsRadarModal'
 import { FriendPublicProfileModal } from './FriendPublicProfileModal'
@@ -880,6 +882,51 @@ export function FriendsLadderView({
                   </button>
                 </div>
               </div>
+
+              {/* Blocked Friends List */}
+              {getBlockedIdentities().length > 0 && (
+                <div style={{ marginTop: '16px', paddingTop: '12px', borderTop: '1px solid var(--line)' }}>
+                  <div style={{ fontSize: 'var(--fs-xs)', fontWeight: 600, color: 'var(--muted)', marginBottom: '8px' }}>
+                    🛡️ 已屏蔽的好友名单 ({getBlockedIdentities().length}) · 点击解除屏蔽可重新添加
+                  </div>
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: '6px', maxHeight: '120px', overflowY: 'auto' }}>
+                    {getBlockedIdentities().map((item, idx) => {
+                      const displayCode = item.friendCodes[0] || item.profileId || '已屏蔽好友'
+                      return (
+                        <div
+                          key={idx}
+                          style={{
+                            display: 'flex',
+                            alignItems: 'center',
+                            justifyContent: 'space-between',
+                            padding: '6px 10px',
+                            background: 'var(--surface)',
+                            borderRadius: 'var(--r-sm)',
+                            border: '1px solid var(--line)',
+                            fontSize: 'var(--fs-xs)',
+                          }}
+                        >
+                          <div>
+                            <strong style={{ color: 'var(--ink)' }}>{displayCode}</strong>
+                            <span style={{ color: 'var(--muted)', marginLeft: '8px' }}>{item.reason}</span>
+                          </div>
+                          <button
+                            className="secondary-button compact"
+                            style={{ padding: '2px 8px', fontSize: 'var(--fs-xs)' }}
+                            onClick={() => {
+                              unblockIdentity(displayCode, item.profileId)
+                              notify(`已解除对「${displayCode}」的屏蔽`)
+                              setData(loadFriendsSystemData(tacticalData, bootstrapData, eloStatus))
+                            }}
+                          >
+                            解除屏蔽
+                          </button>
+                        </div>
+                      )
+                    })}
+                  </div>
+                </div>
+              )}
             </div>
             <div className="modal-footer">
               <button className="secondary-button compact" onClick={() => setShowAddModal(false)}>

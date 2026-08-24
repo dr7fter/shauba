@@ -1,13 +1,13 @@
 {
   "name": "shuaba",
   "private": true,
-  "version": "1.4.7",
+  "version": "1.5.0",
   "type": "module",
   "scripts": {
     "dev": "vite",
     "build": "tsc -b && vite build",
     "lint": "oxlint",
-    "test": "node --test tests/evidence_model.test.js tests/friend_system.test.js && cargo test --locked --manifest-path src-tauri/Cargo.toml",
+    "test": "node --test tests/evidence_model.test.js tests/friend_system.test.js tests/codex_batch_task.test.js && cargo test --locked --manifest-path src-tauri/Cargo.toml",
     "preview": "vite preview",
     "app": "tauri dev",
     "app:build": "tauri build",

@@ -70,19 +70,22 @@ export function FriendPublicProfileModal({
   const [activeTab, setActiveTab] = useState<'overview' | 'matches' | 'activities'>('overview')
   const [selectedReport, setSelectedReport] = useState<FriendPublicReport | null>(null)
 
-  if (!friend) return null
-
-  const handleOpenReport = (match: FriendPublicMatch) => {
-    if (!match.reportId) return
-    const fKey = friend.profileId || friend.friendCode
-    const rep = getPublicReportById(fKey, match.reportId, friend.friendCode)
-    if (rep) {
-      setSelectedReport(rep)
-    }
-  }
-
   const { polygonPoints, gridCircles, dataPoints, labelPoints, dimValues, friendMatches, friendActivities, presenceInfo } = useMemo(() => {
-    const pInfo = calculatePresenceState(presence, friend.lastSyncedAt, friend.lastActiveAt)
+    const pInfo = calculatePresenceState(presence, friend?.lastSyncedAt, friend?.lastActiveAt)
+
+    if (!friend) {
+      return {
+        polygonPoints: '',
+        gridCircles: [],
+        dataPoints: [],
+        labelPoints: [],
+        dimValues: [],
+        friendMatches: [],
+        friendActivities: [],
+        presenceInfo: pInfo,
+      }
+    }
+
     const fKey = friend.profileId || friend.friendCode
     const fMatches = getFriendCachedMatches(fKey, friend.friendCode)
     const fActivities = activities.filter((a) => a.friendCode === friend.friendCode)
@@ -147,6 +150,17 @@ export function FriendPublicProfileModal({
       presenceInfo: pInfo,
     }
   }, [friend, presence, activities])
+
+  if (!friend) return null
+
+  const handleOpenReport = (match: FriendPublicMatch) => {
+    if (!match.reportId) return
+    const fKey = friend.profileId || friend.friendCode
+    const rep = getPublicReportById(fKey, match.reportId, friend.friendCode)
+    if (rep) {
+      setSelectedReport(rep)
+    }
+  }
 
   return (
     <>

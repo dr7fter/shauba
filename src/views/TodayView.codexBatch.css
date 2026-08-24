@@ -1,0 +1,139 @@
+.today-codex-batch-action {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 34px;
+  padding: 7px 10px;
+  border: 1px solid rgba(117, 91, 218, 0.28);
+  border-radius: 10px;
+  background: rgba(117, 91, 218, 0.08);
+  color: var(--text-primary, #27242d);
+  cursor: pointer;
+  font-size: 12px;
+  font-weight: 700;
+  transition: border-color 160ms ease, background 160ms ease, transform 160ms ease;
+}
+
+.today-codex-batch-action:hover:not(:disabled) {
+  border-color: rgba(117, 91, 218, 0.52);
+  background: rgba(117, 91, 218, 0.14);
+  transform: translateY(-1px);
+}
+
+.today-codex-batch-action:focus-visible,
+.today-codex-batch-copy:focus-visible,
+.today-codex-batch-card .primary-button:focus-visible {
+  outline: 3px solid rgba(117, 91, 218, 0.28);
+  outline-offset: 2px;
+}
+
+.today-codex-batch-action:disabled {
+  cursor: not-allowed;
+  opacity: 0.58;
+}
+
+.today-codex-batch-action .today-codex-batch-count {
+  color: var(--text-secondary, #756f7f);
+  font-weight: 600;
+}
+
+.today-codex-batch-card {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  margin: 10px 0 14px;
+  padding: 12px 14px;
+  border: 1px solid rgba(117, 91, 218, 0.2);
+  border-radius: 12px;
+  background: linear-gradient(135deg, rgba(117, 91, 218, 0.08), rgba(255, 255, 255, 0.52));
+}
+
+.today-codex-batch-card-icon {
+  display: grid;
+  flex: 0 0 auto;
+  width: 30px;
+  height: 30px;
+  place-items: center;
+  border-radius: 9px;
+  background: rgba(117, 91, 218, 0.15);
+  color: #6750c7;
+}
+
+.today-codex-batch-card-body {
+  min-width: 0;
+  flex: 1;
+}
+
+.today-codex-batch-card-title {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 10px;
+  color: var(--text-primary, #27242d);
+  font-size: 13px;
+  font-weight: 800;
+}
+
+.today-codex-batch-card-title small {
+  color: var(--text-secondary, #756f7f);
+  font-size: 11px;
+  font-weight: 600;
+}
+
+.today-codex-batch-card p {
+  margin: 4px 0 8px;
+  color: var(--text-secondary, #756f7f);
+  font-size: 12px;
+  line-height: 1.55;
+}
+
+.today-codex-batch-card p strong {
+  color: var(--text-primary, #27242d);
+}
+
+.today-codex-batch-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 7px;
+}
+
+.today-codex-batch-copy {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  min-height: 29px;
+  padding: 5px 9px;
+  border: 1px solid rgba(117, 91, 218, 0.3);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.62);
+  color: #5d48b2;
+  cursor: pointer;
+  font-size: 11px;
+  font-weight: 750;
+}
+
+.today-codex-batch-copy:hover:not(:disabled) {
+  background: rgba(117, 91, 218, 0.12);
+}
+
+.today-codex-batch-copy:disabled {
+  cursor: wait;
+  opacity: 0.65;
+}
+
+.today-codex-batch-stale {
+  color: #a05a19 !important;
+}
+
+@media (max-width: 960px) {
+  .today-codex-batch-action {
+    flex: 1 1 100%;
+    justify-content: center;
+  }
+
+  .today-codex-batch-card-title {
+    align-items: flex-start;
+    flex-direction: column;
+    gap: 2px;
+  }
+}

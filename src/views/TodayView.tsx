@@ -35,6 +35,7 @@ import {
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
   clearPracticeSession,
+  createCodexBatchTask,
   createCodexTask,
   getDailyLog,
   getEloStatus,
@@ -49,6 +50,7 @@ import {
   undoLastAttempt,
 } from '../api'
 import { playCorrectSound } from '../data/audio'
+import { isFeatureEnabled } from '../data/featureFlags'
 import { triggerBackgroundSync } from '../data/friendsService'
 import {
   clampAttemptDuration,
@@ -62,6 +64,17 @@ import {
   localToday,
   normalizeAnswer,
 } from '../utils'
+import {
+  areSameCodexBatchQuestionIds,
+  buildCodexBatchQueueSnapshot,
+  formatCodexBatchCount,
+  isCodexBatchRoundChanged,
+  reconcileCodexBatchSnapshot,
+  withCodexBatchAttemptIdForRound,
+  withCodexBatchDuration,
+  withoutCodexBatchAttemptId,
+  type CodexBatchQueueSnapshot,
+} from '../utils/codexBatchTask'
 import { MathText } from '../components/MathText'
 import { QuestionImages } from '../components/QuestionImages'
 import { SessionScoreboardModal } from '../components/SessionScoreboardModal'
@@ -80,6 +93,7 @@ import type {
   SessionScoreboard,
   View,
 } from '../types'
+import './TodayView.codexBatch.css'
 
 export const reasonLabels: Record<string, string> = {
   due: '到期复习',
@@ -151,6 +165,7 @@ export function TodayView({
   pressureReportLoading: boolean
 }) {
   const queue = initialQueue ?? data.recommendations
+  const nonPressureBatchGradingEnabled = isFeatureEnabled('nonPressureBatchGradingV1')
   const [index, setIndex] = useState(initialIndex)
   const [selected, setSelected] = useState<string[]>([])
   const [revealed, setRevealed] = useState(false)
@@ -166,6 +181,29 @@ export function TodayView({
     correct?: boolean
   } | null>(null)
   const [task, setTask] = useState<CodexTask | null>(null)
+  const [nonPressureBatchSnapshot, setNonPressureBatchSnapshot] =
+    useState<CodexBatchQueueSnapshot | null>(null)
+  const nonPressureRoundKindRef = useRef<'normal' | 'blitz' | 'pressure' | null>(null)
+  const [nonPressureRoundGeneration, setNonPressureRoundGeneration] = useState(0)
+  const [nonPressureBatchTask, setNonPressureBatchTask] = useState<{
+    task: CodexTask
+    questionIds: number[]
+    roundKey?: string
+  } | null>(null)
+  const nonPressureBatchRequestSeqRef = useRef(0)
+  const pendingQueueChangeRef = useRef<RecommendedQuestion[] | null>(null)
+  const observedInitialQueueRef = useRef<RecommendedQuestion[] | null | undefined>(undefined)
+  const nonPressureBatchContextRef = useRef<{
+    roundKey?: string
+    pressureBatchFlowActive: boolean
+    isBlitzMode: boolean
+  }>({
+    roundKey: undefined,
+    pressureBatchFlowActive: false,
+    isBlitzMode: false,
+  })
+  const [batchTaskCreating, setBatchTaskCreating] = useState(false)
+  const [batchTaskCopying, setBatchTaskCopying] = useState(false)
   const [mobileQueueOpen, setMobileQueueOpen] = useState(false)
   const submittingRef = useRef(false)
   const undoAppliedRef = useRef(false)
@@ -220,8 +258,24 @@ export function TodayView({
   }, [])
 
   const replaceQueue = useCallback(
-    (next: RecommendedQuestion[]) => onQueueChange(next),
-    [onQueueChange]
+    (next: RecommendedQuestion[]) => {
+      if (nonPressureBatchGradingEnabled) {
+        pendingQueueChangeRef.current = next
+        setNonPressureRoundGeneration((generation) => generation + 1)
+      }
+      onQueueChange(next)
+    },
+    [nonPressureBatchGradingEnabled, onQueueChange],
+  )
+
+  const replaceQueueWithinRound = useCallback(
+    (next: RecommendedQuestion[]) => {
+      if (nonPressureBatchGradingEnabled) {
+        pendingQueueChangeRef.current = next
+      }
+      onQueueChange(next)
+    },
+    [nonPressureBatchGradingEnabled, onQueueChange],
   )
 
   // Hook 1: Blitz Mode
@@ -241,7 +295,7 @@ export function TodayView({
     showPressureResult,
     pressureSessionStartTime,
     pressureClock,
-    batchTask,
+    batchTask: pressureBatchTask,
     pressureResumeElapsedRef,
     pressureQuestionStartedAtRef,
     startPressureMode,
@@ -307,6 +361,135 @@ export function TodayView({
   const current = queue[index]?.question
   const currentQuestionId = current?.id
   const activeBatch = data.activeRecommendation
+  const nonPressureRoundKey = useMemo(
+    () =>
+      [
+        activeBatch?.taskId ?? 'recommendation:none',
+        attemptMode,
+        data.currentChapterId ?? 'chapter:none',
+        (data.currentFocusCategoryIds ?? []).slice().sort((a, b) => a - b).join(',') ||
+          'focus:none',
+        `generation:${nonPressureRoundGeneration}`,
+      ].join('|'),
+    [
+      activeBatch?.taskId,
+      attemptMode,
+      data.currentChapterId,
+      data.currentFocusCategoryIds,
+      nonPressureRoundGeneration,
+    ],
+  )
+  const currentQueueBatchSnapshot = useMemo(
+    () =>
+      buildCodexBatchQueueSnapshot(
+        queue,
+        currentQuestionId,
+        isQuestionTimerStarted ? questionElapsedSec : undefined,
+        nonPressureRoundKey,
+      ),
+    [
+      queue,
+      currentQuestionId,
+      isQuestionTimerStarted,
+      questionElapsedSec,
+      nonPressureRoundKey,
+    ],
+  )
+
+  const pressureBatchFlowActive =
+    pressureMode ||
+    showPressureResult ||
+    pressureSession?.status === 'ongoing' ||
+    pressureSession?.status === 'awaiting_codex'
+
+  const currentQueueStartsNewBatch =
+    nonPressureBatchGradingEnabled &&
+    nonPressureBatchSnapshot !== null &&
+    currentQueueBatchSnapshot.questionIds.length > 0 &&
+    isCodexBatchRoundChanged(nonPressureBatchSnapshot, currentQueueBatchSnapshot)
+
+  const invalidateNonPressureBatchRequest = useCallback(() => {
+    nonPressureBatchRequestSeqRef.current += 1
+    setBatchTaskCreating(false)
+    setBatchTaskCopying(false)
+  }, [])
+
+  // Keep this guard synchronous with render instead of waiting for an effect:
+  // a record_attempt response may arrive exactly while a new queue/mode renders.
+  nonPressureBatchContextRef.current = {
+    roundKey: nonPressureRoundKey,
+    pressureBatchFlowActive,
+    isBlitzMode,
+  }
+
+  // App-level entry points can replace the queue without going through one of
+  // the local helpers (for example, starting the same variant round twice).
+  // Do not let an identical question set inherit the previous Codex snapshot.
+  useEffect(() => {
+    if (!nonPressureBatchGradingEnabled) {
+      pendingQueueChangeRef.current = null
+      observedInitialQueueRef.current = initialQueue
+      return
+    }
+
+    const previousQueue = observedInitialQueueRef.current
+    const expectedQueue = pendingQueueChangeRef.current
+    const isExternalReplacement =
+      initialQueue !== null &&
+      previousQueue !== undefined &&
+      initialQueue !== previousQueue &&
+      initialQueue !== expectedQueue
+
+    if (isExternalReplacement) {
+      invalidateNonPressureBatchRequest()
+      setNonPressureRoundGeneration((generation) => generation + 1)
+      setNonPressureBatchSnapshot(null)
+      setNonPressureBatchTask(null)
+    }
+
+    if (initialQueue === expectedQueue) {
+      pendingQueueChangeRef.current = null
+    }
+    observedInitialQueueRef.current = initialQueue
+  }, [initialQueue, invalidateNonPressureBatchRequest, nonPressureBatchGradingEnabled])
+
+  useEffect(() => {
+    if (!nonPressureBatchGradingEnabled) {
+      nonPressureRoundKindRef.current = null
+      return
+    }
+    if (isBlitzMode) {
+      invalidateNonPressureBatchRequest()
+      nonPressureRoundKindRef.current = 'blitz'
+      setNonPressureBatchSnapshot(null)
+      setNonPressureBatchTask(null)
+      return
+    }
+    if (pressureBatchFlowActive) {
+      invalidateNonPressureBatchRequest()
+      nonPressureRoundKindRef.current = 'pressure'
+      setNonPressureBatchSnapshot(null)
+      setNonPressureBatchTask(null)
+      return
+    }
+    if (currentQueueBatchSnapshot.questionIds.length === 0) return
+
+    nonPressureRoundKindRef.current = 'normal'
+    if (currentQueueStartsNewBatch) {
+      invalidateNonPressureBatchRequest()
+      setNonPressureBatchTask(null)
+    }
+    setNonPressureBatchSnapshot((previous) =>
+      reconcileCodexBatchSnapshot(previous, currentQueueBatchSnapshot),
+    )
+  }, [
+    currentQueueBatchSnapshot,
+    currentQueueStartsNewBatch,
+    invalidateNonPressureBatchRequest,
+    isBlitzMode,
+    nonPressureBatchGradingEnabled,
+    pressureBatchFlowActive,
+  ])
 
   const benchmarkSec = useMemo(() => {
     if (!current) return 600
@@ -487,7 +670,35 @@ export function TodayView({
         )
       const durationSeconds = clampAttemptDuration(rawSeconds)
 
-      await recordAttempt({
+      // Capture the round identity before awaiting Rust. The answer request can
+      // resolve after a mode switch or after a new queue with the same question id
+      // has rendered; in that case its attempt id must never enter the new snapshot.
+      const submissionRoundKey = nonPressureRoundKey
+      const shouldBindSubmittedAttempt =
+        nonPressureBatchGradingEnabled &&
+        !isBlitzMode &&
+        !pressureBatchFlowActive &&
+        nonPressureRoundKindRef.current === 'normal' &&
+        nonPressureBatchSnapshot?.roundKey === submissionRoundKey
+      const isSubmissionRoundCurrent = () => {
+        const context = nonPressureBatchContextRef.current
+        return (
+          shouldBindSubmittedAttempt &&
+          !context.pressureBatchFlowActive &&
+          !context.isBlitzMode &&
+          context.roundKey === submissionRoundKey
+        )
+      }
+
+      if (isSubmissionRoundCurrent()) {
+        setNonPressureBatchSnapshot((previous) =>
+          previous?.roundKey === submissionRoundKey
+            ? withCodexBatchDuration(previous, current.id, durationSeconds)
+            : previous,
+        )
+      }
+
+      const recorded = await recordAttempt({
         questionId: current.id,
         durationSeconds,
         result: finalOutcome,
@@ -499,6 +710,16 @@ export function TodayView({
         fluencyRating: rating,
         confidence: 1.0,
       })
+      if (isSubmissionRoundCurrent()) {
+        setNonPressureBatchSnapshot((previous) =>
+          withCodexBatchAttemptIdForRound(
+            previous,
+            submissionRoundKey,
+            current.id,
+            recorded.attemptId,
+          ),
+        )
+      }
       void triggerBackgroundSync('attempt_recorded')
 
       if (correct) playCorrectSound()
@@ -563,7 +784,7 @@ export function TodayView({
       }
 
       const remaining = queue.filter((item) => item.question.id !== current.id)
-      replaceQueue(remaining)
+      replaceQueueWithinRound(remaining)
       if (remaining.length) {
         setIndex(Math.min(index, remaining.length - 1))
       } else if (!isBlitzMode && finalOutcome !== 'uncertain') {
@@ -591,8 +812,23 @@ export function TodayView({
       notify('还没有可以撤销的提交')
       return
     }
+    // If this exact local row is deleted, leave the full round intact but remove
+    // its now-invalid immutable binding. A later re-submit receives a new id.
+    const undoRoundKey = nonPressureRoundKey
     try {
       const restored = await undoLastAttempt(lastSubmitted.questionId)
+      const context = nonPressureBatchContextRef.current
+      if (
+        !context.pressureBatchFlowActive &&
+        !context.isBlitzMode &&
+        context.roundKey === undoRoundKey
+      ) {
+        setNonPressureBatchSnapshot((previous) =>
+          previous?.roundKey === undoRoundKey
+            ? withoutCodexBatchAttemptId(previous, lastSubmitted.questionId)
+            : previous,
+        )
+      }
       const reitem: RecommendedQuestion = {
         question: restored,
         score: queue[index]?.score ?? 100,
@@ -602,7 +838,7 @@ export function TodayView({
       const position = Math.min(lastSubmitted.index, queue.length)
       const next = [...queue]
       next.splice(position, 0, reitem)
-      replaceQueue(next)
+      replaceQueueWithinRound(next)
       undoAppliedRef.current = true
       setSessionTotalCount((prev) => Math.max(0, prev - 1))
       if (lastSubmitted.correct) {
@@ -627,7 +863,7 @@ export function TodayView({
     const skipped = queue[index]
     const rest = queue.filter((item) => item.question.id !== skipped.question.id)
     const next = [...rest, skipped]
-    replaceQueue(next)
+    replaceQueueWithinRound(next)
     resetActiveTimer()
     setQuestionElapsedSec(0)
     setIsQuestionTimerPaused(false)
@@ -638,7 +874,7 @@ export function TodayView({
     setRevealed(false)
     setTask(null)
     notify('已跳过本题，稍后它会回到队列末尾')
-  }, [queue, index, replaceQueue, resetActiveTimer, notify])
+  }, [queue, index, replaceQueueWithinRound, resetActiveTimer, notify])
 
   const reveal = useCallback(() => {
     if (!revealed) {
@@ -678,9 +914,9 @@ export function TodayView({
     }
   }
 
-  const submitIfReady = useCallback(() => {
+  const submitIfReady = () => {
     if (revealed && rating !== null && current) void submit()
-  }, [revealed, rating, current])
+  }
 
   const previousQuestion = useCallback(() => {
     if (index > 0) setIndex(index - 1)
@@ -724,6 +960,208 @@ export function TodayView({
     } catch (error) {
       notify(`生成 Codex 任务失败：${String(error)}`)
     }
+  }
+
+  const nonPressureBatchQuestionIds = nonPressureBatchSnapshot?.questionIds ?? []
+  const nonPressureBatchTaskIsStale =
+    nonPressureBatchTask !== null &&
+    (nonPressureBatchTask.roundKey !== nonPressureBatchSnapshot?.roundKey ||
+      !areSameCodexBatchQuestionIds(
+        nonPressureBatchTask.questionIds,
+        nonPressureBatchQuestionIds,
+      ))
+
+  const copyNonPressureBatchTask = useCallback(async (targetTask: CodexTask) => {
+    if (!navigator.clipboard?.writeText) {
+      throw new Error('当前环境不支持剪贴板写入')
+    }
+    await navigator.clipboard.writeText(targetTask.prompt)
+  }, [])
+
+  const createNonPressureBatchTask = useCallback(async () => {
+    if (!nonPressureBatchGradingEnabled) return
+    if (pressureBatchFlowActive) {
+      notify('压力模拟请使用完成后的整组批改流程，避免生成两份任务')
+      return
+    }
+    if (isBlitzMode) {
+      notify('闪击战请保留现有结算流程，暂不生成日常整组批改任务')
+      return
+    }
+    if (currentQueueStartsNewBatch) {
+      notify('检测到新题组正在载入，请稍后再生成整组批改任务')
+      return
+    }
+    const snapshot = nonPressureBatchSnapshot
+    const { questionIds, duplicateCount } =
+      snapshot ?? { questionIds: [], duplicateCount: 0 }
+    if (questionIds.length === 0) {
+      notify('当前题组为空，请先载入题目后再生成整组批改任务')
+      return
+    }
+
+    const liveDuration =
+      currentQuestionId !== undefined && isQuestionTimerStarted
+        ? clampAttemptDuration(
+            (settledDuration ?? questionElapsedSec) || Math.round(activeDurationMsRef.current / 1000),
+          )
+        : undefined
+    const requestSnapshot =
+      snapshot && liveDuration !== undefined
+        ? withCodexBatchDuration(snapshot, currentQuestionId as number, liveDuration)
+        : snapshot
+    const durations = requestSnapshot?.durations
+    const attemptIds = requestSnapshot?.attemptIds
+    const requestRoundKey = snapshot?.roundKey
+    const requestSequence = nonPressureBatchRequestSeqRef.current + 1
+    nonPressureBatchRequestSeqRef.current = requestSequence
+    const isRequestCurrent = () => {
+      const context = nonPressureBatchContextRef.current
+      return (
+        nonPressureBatchRequestSeqRef.current === requestSequence &&
+        !context.pressureBatchFlowActive &&
+        !context.isBlitzMode &&
+        context.roundKey === requestRoundKey
+      )
+    }
+
+    setBatchTaskCreating(true)
+    try {
+      // Only ids captured from record_attempt in this same immutable snapshot are
+      // sent. Missing ids intentionally mean "no local answer", never a latest-row lookup.
+      const created = await createCodexBatchTask(questionIds, durations, undefined, attemptIds)
+      if (!isRequestCurrent()) return
+
+      setNonPressureBatchTask({ task: created, questionIds, roundKey: requestRoundKey })
+      setBatchTaskCopying(true)
+      try {
+        await copyNonPressureBatchTask(created)
+        if (!isRequestCurrent()) return
+        notify(
+          `已生成并复制 ${formatCodexBatchCount(questionIds.length)}整组批改任务；请按题序上传每题对应草稿，少图时 Codex 只批收到的题，不猜未上传题目${
+            duplicateCount > 0 ? `（已忽略 ${duplicateCount} 个重复题目）` : ''
+          }`,
+        )
+      } catch (copyError) {
+        if (!isRequestCurrent()) return
+        console.error('复制非压力整组批改任务失败:', copyError)
+        notify('整组任务已生成，但复制失败；请点击任务卡中的“重试复制”')
+      } finally {
+        if (nonPressureBatchRequestSeqRef.current === requestSequence) {
+          setBatchTaskCopying(false)
+        }
+      }
+    } catch (error) {
+      if (!isRequestCurrent()) return
+      console.error('生成非压力整组批改任务失败:', error)
+      notify(`生成整组 Codex 任务失败：${String(error)}`)
+    } finally {
+      if (nonPressureBatchRequestSeqRef.current === requestSequence) {
+        setBatchTaskCreating(false)
+      }
+    }
+  }, [
+    copyNonPressureBatchTask,
+    currentQuestionId,
+    currentQueueStartsNewBatch,
+    isBlitzMode,
+    isQuestionTimerStarted,
+    nonPressureBatchGradingEnabled,
+    nonPressureBatchSnapshot,
+    notify,
+    pressureBatchFlowActive,
+    questionElapsedSec,
+    settledDuration,
+  ])
+
+  const retryCopyNonPressureBatchTask = useCallback(async () => {
+    if (!nonPressureBatchTask || nonPressureBatchTaskIsStale) return
+    const taskAtStart = nonPressureBatchTask
+    const requestSequence = nonPressureBatchRequestSeqRef.current
+    const isCopyCurrent = () => {
+      const context = nonPressureBatchContextRef.current
+      return (
+        nonPressureBatchRequestSeqRef.current === requestSequence &&
+        !context.pressureBatchFlowActive &&
+        !context.isBlitzMode &&
+        context.roundKey === taskAtStart.roundKey
+      )
+    }
+
+    setBatchTaskCopying(true)
+    try {
+      await copyNonPressureBatchTask(taskAtStart.task)
+      if (!isCopyCurrent()) return
+      notify('整组任务说明已复制；请按题序上传对应草稿')
+    } catch (error) {
+      if (!isCopyCurrent()) return
+      console.error('重试复制非压力整组批改任务失败:', error)
+      notify('复制失败，请检查剪贴板权限后重试')
+    } finally {
+      if (isCopyCurrent()) setBatchTaskCopying(false)
+    }
+  }, [
+    copyNonPressureBatchTask,
+    nonPressureBatchTask,
+    nonPressureBatchTaskIsStale,
+    notify,
+  ])
+
+  const renderNonPressureBatchCompletionCard = () => {
+    if (
+      !nonPressureBatchGradingEnabled ||
+      nonPressureRoundKindRef.current !== 'normal' ||
+      pressureBatchFlowActive ||
+      isBlitzMode ||
+      nonPressureBatchQuestionIds.length === 0
+    ) {
+      return null
+    }
+
+    return (
+      <div className="today-codex-batch-card today-codex-batch-completion-card" role="status">
+        <div className="today-codex-batch-card-icon" aria-hidden="true">
+          <ClipboardCheck size={16} />
+        </div>
+        <div className="today-codex-batch-card-body">
+          <div className="today-codex-batch-card-title">
+            <span>本轮题组已保留</span>
+            <small>{formatCodexBatchCount(nonPressureBatchQuestionIds.length)}</small>
+          </div>
+          <p>
+            可以把本轮完整题组交给 Codex；请按题序上传每题对应草稿，少图时只批改收到的题，未上传题目不猜测。
+            {nonPressureBatchTask && (
+              <> 任务 <strong>{nonPressureBatchTask.task.taskId}</strong> 已生成。</>
+            )}
+          </p>
+          <div className="today-codex-batch-actions">
+            <button
+              type="button"
+              className="primary-button"
+              onClick={() => void createNonPressureBatchTask()}
+              disabled={batchTaskCreating}
+            >
+              <ClipboardCheck size={15} />
+              {batchTaskCreating
+                ? '正在生成整组任务…'
+                : nonPressureBatchTask
+                ? '重新生成并复制本轮任务'
+                : '生成并复制本轮整组批改'}
+            </button>
+            {nonPressureBatchTask && (
+              <button
+                type="button"
+                className="today-codex-batch-copy"
+                onClick={() => void retryCopyNonPressureBatchTask()}
+                disabled={batchTaskCopying}
+              >
+                <Send size={13} /> {batchTaskCopying ? '复制中…' : '复制任务说明 / 重试'}
+              </button>
+            )}
+          </div>
+        </div>
+      </div>
+    )
   }
 
   if (!current) {
@@ -772,10 +1210,12 @@ export function TodayView({
             <p>
               你已完成 <b>{focusName}</b> 队列中的所有考点真题。可以继续加练本考点，或退出专项返回日常队列。
             </p>
+            {renderNonPressureBatchCompletionCard()}
             <div className="completion-actions">
               <button
                 className="primary-button"
                 onClick={async () => {
+                  setNonPressureRoundGeneration((generation) => generation + 1)
                   void refresh()
                   notify('已刷新专项题目')
                 }}
@@ -812,11 +1252,12 @@ export function TodayView({
             </div>
             <h2>✨ 今日错题复习全部通过！</h2>
             <p>你已经攻克了今天所有的到期错题，复习间隔已自动后延。</p>
+            {renderNonPressureBatchCompletionCard()}
             <div className="completion-actions">
               <button
                 className="primary-button"
                 onClick={() => {
-                  onQueueChange(data.recommendations)
+                  replaceQueue(data.recommendations)
                   setIndex(0)
                   setView('today')
                 }}
@@ -843,6 +1284,7 @@ export function TodayView({
             {data.dailyProblemTarget > 0 && `(目标 ${data.dailyProblemTarget} 题)`} · 累计{' '}
             <strong>{data.todayMinutes}</strong> 分钟
           </p>
+          {renderNonPressureBatchCompletionCard()}
           <div className="completion-actions">
             <button
               className="primary-button"
@@ -933,6 +1375,21 @@ export function TodayView({
           >
             <Target size={14} /> 压力模拟
           </button>
+          {nonPressureBatchGradingEnabled && !pressureBatchFlowActive && !isBlitzMode && !currentQueueStartsNewBatch && (
+            <button
+              type="button"
+              className="today-codex-batch-action"
+              onClick={() => void createNonPressureBatchTask()}
+              disabled={batchTaskCreating || nonPressureBatchQuestionIds.length === 0}
+              title="按当前题组顺序生成 kind=batch 整组草稿批改任务"
+            >
+              <ClipboardCheck size={14} />
+              <span>{batchTaskCreating ? '正在生成整组任务…' : '一键生成整组 Codex 批改'}</span>
+              <span className="today-codex-batch-count">
+                {formatCodexBatchCount(nonPressureBatchQuestionIds.length)}
+              </span>
+            </button>
+          )}
           <button
             className={`zen-toggle-mini-btn ${isZenMode ? 'active' : ''}`}
             onClick={onToggleZen}
@@ -969,6 +1426,35 @@ export function TodayView({
             </span>
           </div>
         ) : null}
+        {!pressureBatchFlowActive && !isBlitzMode && !currentQueueStartsNewBatch && nonPressureBatchTask && (
+          <div className="today-codex-batch-card" role="status">
+            <div className="today-codex-batch-card-icon" aria-hidden="true">
+              <ClipboardCheck size={16} />
+            </div>
+            <div className="today-codex-batch-card-body">
+              <div className="today-codex-batch-card-title">
+                <span>整组 Codex 任务已生成</span>
+                <small>{formatCodexBatchCount(nonPressureBatchTask.questionIds.length)}</small>
+              </div>
+              <p>
+                任务 <strong>{nonPressureBatchTask.task.taskId}</strong> · 状态：未过期（普通整组任务无时限） · 请按题序上传每题对应草稿；少图时只批改收到的题，未上传题目不猜测。
+                {nonPressureBatchTaskIsStale && (
+                  <span className="today-codex-batch-stale"> 当前队列已变化，该任务是旧题组快照。</span>
+                )}
+              </p>
+              <div className="today-codex-batch-actions">
+                <button
+                  type="button"
+                  className="today-codex-batch-copy"
+                  onClick={() => void retryCopyNonPressureBatchTask()}
+                  disabled={batchTaskCopying}
+                >
+                  <Send size={13} /> {batchTaskCopying ? '复制中…' : '复制任务说明 / 重试'}
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
         <div className="queue-title">
           <span>
             <b>{queueTitle}</b>
@@ -1042,7 +1528,7 @@ export function TodayView({
                   ? { ...item, question: { ...item.question, favorite: nextFav } }
                   : item
               )
-              replaceQueue(updated)
+              replaceQueueWithinRound(updated)
             }}
           >
             <Heart size={18} fill={current.favorite ? 'currentColor' : 'none'} />
@@ -2133,9 +2619,9 @@ export function TodayView({
               <p className="pressure-instruction">
                 整组草稿交给 Codex，结果会自动进入刷吧收件箱；确认后才计入作答记录。
               </p>
-              {batchTask ? (
+              {pressureBatchTask ? (
                 <div className="pressure-prompt-box">
-                  <pre>{batchTask.prompt}</pre>
+                  <pre>{pressureBatchTask.prompt}</pre>
                 </div>
               ) : (
                 <>
@@ -2148,10 +2634,10 @@ export function TodayView({
                   </button>
                 </>
               )}
-              {batchTask && (
+              {pressureBatchTask && (
                 <button
                   className="secondary-button full"
-                  onClick={() => copyPrompt(batchTask)}
+                  onClick={() => copyPrompt(pressureBatchTask)}
                 >
                   📋 复制整组 Codex 任务
                 </button>

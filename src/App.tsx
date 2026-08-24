@@ -8,6 +8,7 @@ import {
   Clock3,
   Command,
   Compass,
+  GraduationCap,
   HelpCircle,
   LibraryBig,
   ListPlus,
@@ -55,6 +56,7 @@ import { formatElapsed } from './utils'
 import type { BlitzExamResult } from './data/motivation'
 import { recordMyPublicMatch, sanitizeGradingReportToPublic } from './data/friendPublicData'
 import { addFriendActivity, getSavedMyCustomProfile, triggerBackgroundSync } from './data/friendsService'
+import { isFeatureEnabled } from './data/featureFlags'
 import type {
   AttemptMode,
   BootstrapData,
@@ -68,6 +70,7 @@ import type {
   View,
 } from './types'
 import { InsightsView } from './views/InsightsView'
+import { LearningCenterView } from './views/LearningCenterView'
 import { LibraryView } from './views/LibraryView'
 import { MasteryMapView } from './views/MasteryMapView'
 import { ReviewMapView } from './views/ReviewView'
@@ -75,6 +78,7 @@ import { SettingsView } from './views/SettingsView'
 import { TodayView } from './views/TodayView'
 
 const navItems: Array<{ id: View; label: string; icon: typeof BookOpen }> = [
+  { id: 'learning', label: '学习中心', icon: GraduationCap },
   { id: 'today', label: '今日', icon: Zap },
   { id: 'insights', label: '数据', icon: BarChart3 },
   { id: 'friends', label: '好友', icon: Users },
@@ -97,10 +101,12 @@ function Sidebar({
   view,
   setView,
   appVersion,
+  learningCenterEnabled,
 }: {
   view: View
   setView: (v: View) => void
   appVersion: string
+  learningCenterEnabled: boolean
 }) {
   const versionLabel = appVersion
     ? appVersion.startsWith('v')
@@ -117,7 +123,7 @@ function Sidebar({
         </div>
       </div>
       <nav>
-        {navItems.map(({ id, label, icon: Icon }) => (
+        {navItems.filter(({ id }) => id !== 'learning' || learningCenterEnabled).map(({ id, label, icon: Icon }) => (
           <button
             key={id}
             className={view === id ? 'nav-item active' : 'nav-item'}
@@ -424,6 +430,7 @@ export default function App() {
     null
   )
   const [view, setView] = useState<View>('today')
+  const learningCenterEnabled = isFeatureEnabled('learningCenterV1')
   const [loading, setLoading] = useState(true)
   const [notice, setNotice] = useState('')
   const [practiceQueue, setPracticeQueue] = useState<RecommendedQuestion[] | null>(null)
@@ -831,6 +838,15 @@ export default function App() {
 
   const commandActions = useMemo<CommandAction[]>(
     () => [
+      ...(learningCenterEnabled
+        ? [{
+            id: 'view-learning',
+            label: '跳转到学习中心',
+            hint: '视图',
+            icon: GraduationCap,
+            run: () => setView('learning'),
+          }]
+        : []),
       {
         id: 'view-today',
         label: '跳转到今日训练',
@@ -910,7 +926,7 @@ export default function App() {
       },
       { id: 'refresh', label: '刷新数据', icon: RefreshCw, run: () => refresh() },
     ],
-    [isZenMode, refresh, startBlitzExam]
+    [isZenMode, learningCenterEnabled, refresh, startBlitzExam]
   )
 
   useEffect(() => {
@@ -948,7 +964,12 @@ export default function App() {
 
   return (
     <div className={`app-shell ${isZenMode ? 'zen-mode' : ''}`}>
-      <Sidebar view={view} setView={setView} appVersion={appVersion} />
+      <Sidebar
+        view={view}
+        setView={setView}
+        appVersion={appVersion}
+        learningCenterEnabled={learningCenterEnabled}
+      />
       <main className="main-area">
         <Topbar
           view={view}
@@ -967,6 +988,41 @@ export default function App() {
             exit={{ opacity: 0, y: -5 }}
             transition={{ duration: 0.18 }}
           >
+            {learningCenterEnabled && view === 'learning' && (
+              <LearningCenterView
+                onNotify={setNotice}
+                onNavigate={(target) => {
+                  switch (target.type) {
+                    case 'today':
+                      setView('today')
+                      break
+                    case 'review':
+                      setView('review')
+                      break
+                    case 'mastery':
+                      setView('mastery')
+                      break
+                    case 'insights':
+                      setView('insights')
+                      break
+                    case 'friends':
+                      setView('friends')
+                      break
+                    case 'report':
+                      void openPressureReport({ sessionId: target.sessionId })
+                      break
+                    case 'pressure':
+                      setView('today')
+                      setNotice('压力模拟请从今日训练进入；学习中心不会替你创建会话。')
+                      break
+                    case 'batch_grade':
+                      setView('today')
+                      setNotice('整组批改入口仍由今日训练中的功能开关控制。')
+                      break
+                  }
+                }}
+              />
+            )}
             {data && view === 'today' && (
               <TodayView
                 key={practiceSessionRevision}

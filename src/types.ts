@@ -596,8 +596,325 @@ export type GradingReport = {
   confirmedAt?: number | null
   createdAt: number
 }
+export type LearningCenterTrack =
+  | 'repair'
+  | 'consolidate'
+  | 'transfer'
+  | 'challenge'
+
+export type LearningCenterLoadingState =
+  | 'idle'
+  | 'loading'
+  | 'refreshing'
+  | 'ready'
+  | 'empty'
+  | 'error'
+
+export type LearningConfidenceState =
+  | 'unknown'
+  | 'low'
+  | 'medium'
+  | 'high'
+  | 'conflict'
+
+export type LearningSkillState =
+  | 'unseen'
+  | 'exposed'
+  | 'diagnosed'
+  | 'learning'
+  | 'unstable'
+  | 'stable'
+  | 'decaying'
+  | 'remediating'
+  | 'uncertain'
+
+export type LearningNextAction =
+  | 'move_on'
+  | 'quick_retry'
+  | 'recall'
+  | 'review_concept'
+  | 'practice_similar'
+  | 'practice_variant'
+  | 'timed_retry'
+  | 'schedule_delayed_review'
+  | 'manual_check'
+  | 'open_report'
+
+export type LearningLedger = 'training' | 'competitive' | 'incentive'
+
+export type LearningMetricKey =
+  | 'mastery'
+  | 'fluency'
+  | 'transfer'
+  | 'retention'
+  | 'confidence'
+
+export type LearningMetric = {
+  key: LearningMetricKey
+  value: number | null
+  state: 'unseen' | 'initial' | 'unstable' | 'stable' | 'risk' | 'conflict'
+  evidenceCount: number
+  lastEvidenceAt: string | null
+  delta: number | null
+  deltaReason: string | null
+  description: string
+}
+
+export type LearningEvidenceRef = {
+  id: string
+  source: 'attempt' | 'review' | 'variant' | 'delayed_review' | 'pressure' | 'codex' | string
+  questionId: number | null
+  attemptId: number | null
+  sessionId: string | null
+  observedAt: string
+  confidence: number | null
+  accepted: boolean
+  note: string | null
+}
+
+export type LearningObjectiveStatus =
+  | 'not_started'
+  | 'in_progress'
+  | 'temporarily_passed'
+  | 'stable_completed'
+  | 'blocked'
+  | 'skipped'
+
+export type LearningObjective = {
+  id: string
+  order: 1 | 2 | 3
+  track: LearningCenterTrack
+  title: string
+  categoryId: number | null
+  categoryPath: string | null
+  status: LearningObjectiveStatus
+  estimatedMinutes: number
+  plannedItemCount: number
+  completedItemCount: number
+  whyNow: string
+  evidenceIds: string[]
+  successCriteria: string
+  nextAction: LearningNextAction
+  questionIds: number[]
+  isUserPinned: boolean
+  blockedReason: string | null
+}
+
+export type RecommendationReason = {
+  track: LearningCenterTrack
+  targetCategoryId: number | null
+  evidenceText: string
+  goalText: string
+  successCriteria: string
+  sourceEvidenceIds: string[]
+  confidence: number | null
+}
+
+export type LearningRecommendation = {
+  id: string
+  questionId: number | null
+  title: string
+  categoryPath: string | null
+  track: LearningCenterTrack
+  score: number
+  estimatedMinutes: number
+  state: 'available' | 'completed' | 'deferred' | 'invalid' | 'blocked'
+  reason: RecommendationReason
+  variantOfQuestionId: number | null
+  isDifferentQuestion: boolean
+  isDifferentStructure: boolean
+  actions: Array<'start' | 'replace' | 'defer' | 'open_detail'>
+}
+
+export type MistakeChainStage =
+  | 'exposed'
+  | 'diagnosed'
+  | 'recall'
+  | 'original_retry'
+  | 'similar_check'
+  | 'transfer_check'
+  | 'delayed_review'
+  | 'closed'
+  | 'remediating'
+  | 'uncertain'
+  | 'manual_check'
+
+export type MistakeChain = {
+  id: string
+  categoryId: number | null
+  categoryPath: string
+  label: string
+  errorClass: 'aiming' | 'concept' | 'tactics' | 'mixed' | 'uncertain'
+  stage: MistakeChainStage
+  statusLabel: string
+  firstExposedAt: string
+  lastObservedAt: string
+  nextReviewAt: string | null
+  repeatedCount: number
+  evidenceCount: number
+  confidence: number | null
+  earliestError: string | null
+  advice: string | null
+  nextAction: LearningNextAction
+  originalRetryPassed: boolean
+  similarPassed: boolean
+  transferPassed: boolean
+  delayedReviewPassed: boolean
+  stableClosedAt: string | null
+  relapseAt: string | null
+  blockedReason: string | null
+}
+
+export type TrainingLedgerSummary = {
+  todayProblems: number
+  todayMinutes: number
+  weeklyProblems: number
+  weeklyMinutes: number
+  dueReviews: number
+  activeMistakeChains: number
+  stableClosedChains: number
+  variantPasses: number
+  delayedReviewPasses: number
+  incentiveAvailable: boolean
+  xpThisWeek: number | null
+  achievements: Array<{ id: string; label: string; earnedAt: string }> | null
+}
+
+export type CompetitiveLedgerSummary = {
+  rating: number | null
+  elo: number | null
+  rank: string | null
+  seasonName: string | null
+  settlementCount: number
+  lastDelta: number | null
+  lastMatchAt: string | null
+  validPressureSessions: number
+  pendingSettlementCount: number
+  note: string
+}
+
+export type IncentiveLedgerSummary = {
+  available: boolean
+  xp: number | null
+  level: number | null
+  streakDays: number | null
+  weeklyGoalCompleted: number | null
+  weeklyGoalTotal: number | null
+  recentAchievements: string[]
+  note?: string | null
+}
+
+export type FriendBroadcastEvent = {
+  id: string
+  friendProfileId: string
+  friendName: string
+  eventType:
+    | 'pressure_settled'
+    | 'mistake_closed'
+    | 'variant_passed'
+    | 'delayed_review_passed'
+    | 'review_streak'
+    | 'real_match_conversion'
+    | 'daily_objectives_completed'
+    | 'report_published'
+    | string
+  occurredAt: string
+  title: string
+  summary: string
+  publicCategoryPath: string | null
+  ratingDelta: number | null
+  eloDelta: number | null
+  xpDelta: number | null
+  reportId: string | null
+  privacy: 'public_summary' | 'private' | 'redacted' | string
+}
+
+export type LearningSectionError = {
+  section: string
+  message: string
+  code?: string | null
+}
+
+export type LearningIntegrity = {
+  stableGateStatus?: 'blocked' | 'accepted' | 'degraded' | string
+  stableGateReasons?: string[]
+  acceptedEvidenceCount?: number
+  lowConfidenceEvidenceCount?: number
+  uncertainEvidenceCount?: number
+  structuredVariantEvidence?: boolean
+  structuredDelayedReviewEvidence?: boolean
+  /** Compatibility fields for older snapshots. */
+  status?: 'ok' | 'degraded' | 'error' | string
+  message?: string | null
+  evidenceCount?: number | null
+  projectionVersion?: string | null
+}
+
+export type LearningCenterNavigationTarget =
+  | { type: 'today'; questionId?: number | null; objectiveId?: string }
+  | { type: 'review'; questionId?: number | null; mistakeChainId?: string }
+  | { type: 'mastery'; categoryId?: number | null }
+  | { type: 'insights' }
+  | { type: 'pressure'; sessionId?: string | null }
+  | { type: 'report'; sessionId: string }
+  | { type: 'friends'; friendProfileId?: string | null }
+  | { type: 'batch_grade'; questionIds: number[] }
+
+export type LearningCenterFeatureFlags = {
+  learningCenterV1: boolean
+  learningEvidenceProjectionV1: boolean
+  lowConfidenceGateV1: boolean
+  nonPressureBatchGradingV1: boolean
+  shadowRecommendationPlanV1: boolean
+  rankedOnlyEloV1: boolean
+  friendBroadcastsV1: boolean
+}
+
+export type LearningCenterData = {
+  generatedAt: string
+  today: {
+    date: string
+    objectives: LearningObjective[]
+    completedCount: number
+    totalCount: number
+    completedMinutes: number
+    plannedMinutes: number
+  }
+  recommendations: {
+    weights: Record<LearningCenterTrack, number>
+    items: LearningRecommendation[]
+    emptyReason?: string | null
+  }
+  metrics: LearningMetric[]
+  mistakeChains: MistakeChain[]
+  training: TrainingLedgerSummary
+  competitive: CompetitiveLedgerSummary
+  incentive: IncentiveLedgerSummary
+  friendEvents: FriendBroadcastEvent[]
+  capabilities: {
+    canBatchGradeDrafts: boolean
+    canOpenPressureReport: boolean
+    canOpenExistingMasteryMap: boolean
+    canOpenExistingReviewView: boolean
+    canReadFriendEvents: boolean
+    structuredVariantEvidence: boolean
+    structuredDelayedReviewEvidence: boolean
+    canReadIncentiveLedger: boolean
+    rankedOnlyCompetitiveLedger: boolean
+  }
+}
+
+export type LearningCenterSnapshot = LearningCenterData & {
+  schemaVersion?: number
+  recentEvidence?: LearningEvidenceRef[] | null
+  integrity?: LearningIntegrity | string | null
+  sectionErrors?: LearningSectionError[] | Record<string, string | null> | null
+  /** Compatibility name for backends that expose the shadow plan explicitly. */
+  shadowPlan?: LearningCenterData['recommendations'] & { isShadow?: boolean }
+}
+
 export type FontScaleMode = 'standard' | 'medium' | 'large'
-export type View = 'today' | 'library' | 'review' | 'mastery' | 'insights' | 'friends' | 'settings'
+export type View = 'today' | 'library' | 'review' | 'mastery' | 'insights' | 'friends' | 'learning' | 'settings'
 export type AttemptMode = 'paper' | 'review'
 
 export type TodayAttemptItem = {

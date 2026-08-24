@@ -575,7 +575,7 @@
 .question-content { padding: 30px clamp(28px,5vw,74px) 28px; max-width: 960px; width: 100%; margin: 0 auto; color: var(--ink); }
 .question-index { color: var(--green); font-size: var(--fs-base); font-weight: 700; margin-bottom: 14px; }
 .question-index span { color: var(--quiet); font-weight: 500; margin-left: 8px; }
-.question-stem { display: block; font-family: var(--font-stem); font-size: var(--fs-2xl); line-height: 1.82; color: var(--ink); }
+.question-stem { display: block; font-family: var(--font-stem); font-size: var(--fs-2xl); font-weight: 500; line-height: 1.82; color: var(--ink); }
 /* 选择题选项样式统一 */
 .options-list {
   display: grid;
@@ -641,6 +641,7 @@
 .option .math-text {
   min-width: 0;
   font-size: var(--fs-lg);
+  font-weight: 500;
   line-height: 1.6;
   color: var(--ink);
 }

@@ -2,7 +2,7 @@ import { invoke } from '@tauri-apps/api/core'
 import { check, type Update } from '@tauri-apps/plugin-updater'
 import { relaunch } from '@tauri-apps/plugin-process'
 import { mockBootstrap, mockCategories, mockInbox, mockMastery, mockQuestions, mockRecommendations } from './mock'
-import type { BootstrapData, CategoryNode, CodexTask, DailyLog, DailyTrendPoint, EloStatus, TagClosure, ExportResult, FailedInboxItem, InboxItem, InboxSummary, InsightPoint, MasteryChapter, MasteryNode, PracticeSessionState, Question, QuestionPage, RatingDistribution, RecommendationBatch, RecommendedQuestion, ReviewHistory, ReviewPlan, SeasonStatus, SessionScoreboard, UserStreak, WeaknessRadar, PressureSession, GradingReport, TacticalDashboardData, UserProfileSettings, FriendSyncConfig, FriendSyncRemoteSnapshot } from './types'
+import type { BootstrapData, CategoryNode, CodexTask, DailyLog, DailyTrendPoint, EloStatus, TagClosure, ExportResult, FailedInboxItem, InboxItem, InboxSummary, InsightPoint, MasteryChapter, MasteryNode, PracticeSessionState, Question, QuestionPage, RatingDistribution, RecommendationBatch, RecommendedQuestion, ReviewHistory, ReviewPlan, SeasonStatus, SessionScoreboard, UserStreak, WeaknessRadar, PressureSession, GradingReport, TacticalDashboardData, UserProfileSettings, FriendSyncConfig, FriendSyncRemoteSnapshot, LearningCenterSnapshot } from './types'
 import { createPracticeSessionPayload } from './domain/evidence'
 
 const isTauri = () => '__TAURI_INTERNALS__' in window
@@ -47,6 +47,17 @@ export async function getTacticalDashboardStats(scope = 'ranked'): Promise<Tacti
     weapons: [],
     currentSeason: '2026S2·热浪争锋',
   }
+}
+
+/**
+ * LearningCenter is intentionally desktop-only: browser preview must not invent
+ * local learning evidence or silently fall back to tactical/mock statistics.
+ */
+export async function getLearningCenterSnapshot(): Promise<LearningCenterSnapshot> {
+  if (!isTauri()) {
+    throw new Error('学习中心仅支持桌面端本地数据')
+  }
+  return invoke<LearningCenterSnapshot>('get_learning_center_snapshot')
 }
 
 export async function getQuestion(id: number): Promise<Question> {
@@ -191,6 +202,11 @@ export async function setCurrentChapter(categoryId: number | null): Promise<void
   if (isTauri()) await invoke('set_current_chapter', { categoryId })
 }
 
+export type RecordAttemptResult = {
+  question: Question
+  attemptId: number
+}
+
 export async function recordAttempt(input: {
   questionId: number
   durationSeconds: number
@@ -204,9 +220,14 @@ export async function recordAttempt(input: {
   confidence?: number
   sessionId?: string
   diagnosisId?: string
-}): Promise<Question> {
+}): Promise<RecordAttemptResult> {
   if (isTauri()) return invoke('record_attempt', { input })
-  return { ...(await getQuestion(input.questionId)), attempts: 1, mastery: input.selfRating }
+  return {
+    question: { ...(await getQuestion(input.questionId)), attempts: 1, mastery: input.selfRating },
+    // Browser preview has no SQLite row. A deterministic positive placeholder keeps
+    // the UI contract testable while only Tauri values are ever sent to Rust.
+    attemptId: input.questionId,
+  }
 }
 
 export async function savePracticeSession(
@@ -314,8 +335,11 @@ export async function createCodexBatchTask(
   questionIds: number[],
   durations?: Record<number, number>,
   sessionId?: string,
+  attemptIds?: Record<number, number>,
 ): Promise<CodexTask> {
-  if (isTauri()) return invoke('create_codex_batch_task', { questionIds, durations, sessionId })
+  if (isTauri()) {
+    return invoke('create_codex_batch_task', { questionIds, durations, sessionId, attemptIds })
+  }
   return {
     taskId: 'SB-BATCH-PREVIEW-0001', questionId: null, questionCount: questionIds.length,
     prompt: '你正在为数学刷题 App「刷吧」批改数一草稿。本任务包含多道题，草稿图片按顺序对应题目；若草稿张数少于题目数，只批改上传了草稿的题，不猜测其余题目。',

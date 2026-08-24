@@ -60,7 +60,7 @@ export function SettingsView({
   const [season, setSeason] = useState<SeasonStatus | null>(null)
   const [advancingSeason, setAdvancingSeason] = useState(false)
   const [libraryPathInput, setLibraryPathInput] = useState('')
-  const [currentVersion, setCurrentVersion] = useState('1.4.0')
+  const [currentVersion, setCurrentVersion] = useState('开发版')
   const [checkingUpdate, setCheckingUpdate] = useState(false)
   const [updateResult, setUpdateResult] = useState<AppUpdateInfo | null>(null)
   const [pendingUpdate, setPendingUpdate] = useState<Update | null>(null)
@@ -137,12 +137,13 @@ export function SettingsView({
   }
 
   const handleSimulateUpdate = () => {
+    const nextVer = currentVersion && currentVersion !== '开发版' ? `${currentVersion}.preview` : 'v1.4.5-preview'
     const mockInfo: AppUpdateInfo = {
       currentVersion: currentVersion,
-      latestVersion: '1.4.1',
+      latestVersion: nextVer,
       hasUpdate: true,
-      releaseName: '刷吧 v1.4.1 战术突击升级',
-      releaseNotes: `### 🌟 v1.4.1 更新亮点
+      releaseName: `刷吧 ${nextVer} 战术突击升级`,
+      releaseNotes: `### 🌟 ${nextVer} 更新亮点
 1. **数一天梯排位赛季深化**：新增周赛季严格限定与天梯段位详细说明；
 2. **HLTV Rating 3.0 算法升级**：全面提高六维能力与火力高分门槛，杜绝虚高；
 3. **1v1 战力对决雷达优化**：支持与好友实时对比六维战术优势；
@@ -157,7 +158,7 @@ export function SettingsView({
     }
     setUpdateResult(mockInfo)
     setShowUpdateModal(true)
-    notify('🎉 模拟检测到新版本 v1.4.1！')
+    notify(`🎉 模拟检测到新版本 ${nextVer}！`)
   }
 
   const loadBackups = useCallback(async () => {

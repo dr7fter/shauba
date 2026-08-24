@@ -642,6 +642,8 @@ export type FriendDimensions = {
 
 export type FriendProfile = {
   id: string
+  /** 稳定的本机/好友身份；好友码修改后仍保持不变。 */
+  profileId?: string
   friendCode: string
   nickname: string
   avatar: string
@@ -662,6 +664,25 @@ export type FriendProfile = {
   isSelf?: boolean
   eloChangeToday?: number
   seasonName?: string
+  /** 以下字段只用于本地同步状态，不会被好友快照公开。 */
+  syncStatus?: FriendSyncStatus
+  lastSyncedAt?: string
+  lastSnapshotHash?: string
+  lastSnapshotExportedAt?: string
+  lastSyncError?: string
+}
+
+export type FriendSyncStatus = 'pending' | 'synced' | 'unchanged' | 'failed' | 'invalid'
+
+export type FriendSyncState = {
+  friendCode: string
+  profileId?: string
+  status: FriendSyncStatus
+  lastAttemptAt?: string
+  lastSyncedAt?: string
+  lastSnapshotHash?: string
+  lastSnapshotExportedAt?: string
+  lastError?: string
 }
 
 export type FriendActivity = {
@@ -681,11 +702,145 @@ export type FriendsSystemData = {
   activities: FriendActivity[]
 }
 
+export type FriendPresenceState =
+  | 'online'
+  | 'in_match'
+  | 'idle'
+  | 'offline'
+  | 'unknown'
+
+export type FriendPresence = {
+  state: FriendPresenceState
+  currentActivity?: string | null
+  currentMatchId?: string | null
+  heartbeatAt: string
+  expiresAt: string
+}
+
+export type FriendPublicActivity = {
+  id: string
+  profileId: string
+  friendCode: string
+  type:
+    | 'match_finished'
+    | 'rank_up'
+    | 'donk_burst'
+    | 'exam_finish'
+    | 'daily_streak'
+  title: string
+  content: string
+  timestamp: string
+
+  matchId?: string
+  questionCount?: number
+  correctCount?: number
+  accuracy?: number
+  durationSeconds?: number
+
+  rating?: number
+  ratingDelta?: number
+  eloDelta?: number
+
+  reportId?: string
+  reportAvailable?: boolean
+}
+
+export type FriendPublicMatch = {
+  publicMatchId: string
+  startedAt: string
+  finishedAt: string
+  mode: string
+  title?: string
+
+  questionCount: number
+  correctCount: number
+  accuracy: number
+  durationSeconds: number
+
+  rating: number
+  ratingDelta?: number
+  eloBefore?: number
+  eloAfter?: number
+  eloDelta?: number
+
+  result: 'win' | 'loss' | 'mixed' | 'uncertain'
+  reportId?: string
+  reportAvailable: boolean
+}
+
+export type FriendPublicReportQuestion = {
+  index: number
+  result: 'correct' | 'partial' | 'incorrect' | 'uncertain'
+  earliestError?: string | null
+  errorTags: string[]
+  weaknessTags: string[]
+  advice?: string | null
+  betterSolution?: string | null
+}
+
+export type FriendPublicReport = {
+  reportId: string
+  publicMatchId: string
+  createdAt: string
+
+  summary: string
+  rating: number
+  accuracy: number
+  durationSeconds: number
+
+  dimensions?: FriendDimensions
+  strengths: string[]
+  weaknesses: string[]
+  errorTags: string[]
+  weaknessTags: string[]
+
+  advice?: string | null
+  betterSolution?: string | null
+
+  questionSummaries: FriendPublicReportQuestion[]
+}
+
 export type FriendShareSnapshot = {
   schemaVersion: 1
   kind: 'shuaba-friend-profile'
   exportedAt: string
   profile: FriendProfile
+  snapshotId?: string
+}
+
+export type FriendShareSnapshotV2 = {
+  schemaVersion: 2
+  kind: 'shuaba-friend-public'
+  snapshotId: string
+  profileId: string
+  friendCode: string
+  revision: number
+  exportedAt: string
+
+  profile: FriendProfile
+  presence: FriendPresence
+  activities: FriendPublicActivity[]
+  matches: FriendPublicMatch[]
+  reports: FriendPublicReport[]
+}
+
+export type BlockedFriendIdentity = {
+  profileId?: string
+  friendCodes: string[]
+  blockedAt: string
+  reason?: string
+}
+
+export type FriendInvitationPayload = {
+  schemaVersion: 1
+  kind: 'shuaba-friend-invitation'
+  endpoint: string
+  folder: string
+  friendCode: string
+  profileId: string
+  nickname: string
+  avatar: string
+  createdAt: string
 }
 
 export type FriendSyncConfig = {
@@ -700,4 +855,14 @@ export type FriendSyncRemoteSnapshot = {
   payload: string
 }
 
-
+export type FriendSyncResult = {
+  /** 保留字段，表示本次实际发生变化的好友数。 */
+  updated: number
+  /** 本次尝试检查的好友码/远端文件数。 */
+  checked: number
+  unchanged: number
+  pending: number
+  invalid: number
+  unrecognizedFiles: number
+  failedFiles: string[]
+}

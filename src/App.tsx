@@ -32,6 +32,7 @@ import {
   bootstrap,
   checkAppUpdate,
   clearPracticeSession,
+  getAppVersion,
   getMasteryMap,
   getPressureGradingReport,
   getQuestion,
@@ -52,9 +53,12 @@ import { PressureLearningReportView } from './components/GradingReportModal'
 import { KeyboardHelpModal } from './components/KeyboardHelpModal'
 import { formatElapsed } from './utils'
 import type { BlitzExamResult } from './data/motivation'
+import { recordMyPublicMatch, sanitizeGradingReportToPublic } from './data/friendPublicData'
+import { addFriendActivity, getSavedMyCustomProfile } from './data/friendsService'
 import type {
   AttemptMode,
   BootstrapData,
+  FriendPublicMatch,
   GradingReport,
   MasteryChapter,
   PracticeSessionState,
@@ -89,7 +93,20 @@ function LoadingScreen() {
   )
 }
 
-function Sidebar({ view, setView }: { view: View; setView: (v: View) => void }) {
+function Sidebar({
+  view,
+  setView,
+  appVersion,
+}: {
+  view: View
+  setView: (v: View) => void
+  appVersion: string
+}) {
+  const versionLabel = appVersion
+    ? appVersion.startsWith('v')
+      ? appVersion
+      : `v${appVersion}`
+    : '开发版'
   return (
     <aside className="sidebar">
       <div className="brand">
@@ -120,7 +137,7 @@ function Sidebar({ view, setView }: { view: View; setView: (v: View) => void }) 
         >
           <Settings size={18} strokeWidth={1.8} />
           <span>设置</span>
-          <span className="sidebar-version-tag">v1.4.0</span>
+          <span className="sidebar-version-tag">{versionLabel}</span>
         </button>
         <div
           className="status-info"
@@ -130,7 +147,7 @@ function Sidebar({ view, setView }: { view: View; setView: (v: View) => void }) 
         >
           <span className="status-dot" />
           <div>
-            <strong>题库已就绪 · v1.4.0</strong>
+            <strong>题库已就绪 · {versionLabel}</strong>
             <small>数据仅保存在本机</small>
           </div>
         </div>
@@ -516,6 +533,12 @@ export default function App() {
       .catch(() => undefined)
   }, [])
 
+  const [appVersion, setAppVersion] = useState<string>('开发版')
+
+  useEffect(() => {
+    void getAppVersion().then(setAppVersion).catch(() => undefined)
+  }, [])
+
   const openPressureReport = useCallback(
     async ({ sessionId, taskId }: { sessionId?: string; taskId?: string }) => {
       setPressureReportLoading(true)
@@ -563,6 +586,46 @@ export default function App() {
         setPressureReportSession(session)
         setPressureReport(report)
         setPressureReportOpen(true)
+
+        // 自动同步脱敏公开战报到本地公开快照缓存
+        try {
+          const publicMatchId = session.sessionId || `match-${Date.now()}`
+          const sanitizedReport = sanitizeGradingReportToPublic(report, publicMatchId)
+          const correctCount = (report.grades || []).filter((g) => g.verdict === 'correct').length
+          const questionCount = Math.max(1, (report.grades || []).length)
+          const accuracy = report.summary?.accuracy ?? Math.round((correctCount / questionCount) * 100)
+          const avgRating = (report.grades || []).reduce((sum, g) => sum + (g.rating ?? 1.0), 0) / questionCount
+          const myCustom = getSavedMyCustomProfile()
+          const match: FriendPublicMatch = {
+            publicMatchId,
+            startedAt: new Date(session.startTime || Date.now() - 600000).toISOString(),
+            finishedAt: new Date(session.endTime || Date.now()).toISOString(),
+            mode: session.mode || 'pressure',
+            title: '高压演练',
+            questionCount,
+            correctCount,
+            accuracy,
+            durationSeconds: session.totalDuration || report.summary?.totalDuration || 600,
+            rating: Number.isFinite(avgRating) ? Number(avgRating.toFixed(2)) : 1.15,
+            result: accuracy >= 80 ? 'win' : accuracy <= 40 ? 'loss' : 'mixed',
+            reportId: sanitizedReport.reportId,
+            reportAvailable: true,
+          }
+          recordMyPublicMatch(match, sanitizedReport)
+          addFriendActivity({
+            id: `act-${publicMatchId}`,
+            friendCode: myCustom.friendCode,
+            nickname: myCustom.nickname,
+            avatar: myCustom.avatar,
+            type: 'exam_finish',
+            title: `完成了高压演练 (${questionCount}题 · ${accuracy}% 正确率)`,
+            content: report.summary?.suggestions?.join('；') || '完成了一组战术高压演练，状态良好。',
+            timestamp: new Date().toISOString(),
+          })
+        } catch {
+          // ignore
+        }
+
         return true
       } catch (error) {
         setNotice(`无法加载学习报告：${String(error)}`)
@@ -866,7 +929,7 @@ export default function App() {
 
   return (
     <div className={`app-shell ${isZenMode ? 'zen-mode' : ''}`}>
-      <Sidebar view={view} setView={setView} />
+      <Sidebar view={view} setView={setView} appVersion={appVersion} />
       <main className="main-area">
         <Topbar
           view={view}

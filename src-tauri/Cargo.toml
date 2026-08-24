@@ -1,6 +1,6 @@
 [package]
 name = "shuaba"
-version = "1.4.2"
+version = "1.4.5"
 description = "刷吧 - 数一纸笔训练与智能推荐"
 authors = ["Codex"]
 license = ""
@@ -30,3 +30,5 @@ chrono = { version = "0.4", features = ["serde"] }
 base64 = "0.22"
 rand = "0.9"
 reqwest = { version = "0.12", default-features = false, features = ["blocking", "json", "rustls-tls"] }
+quick-xml = "0.41"
+percent-encoding = "2.3"

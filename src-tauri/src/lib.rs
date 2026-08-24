@@ -7294,7 +7294,9 @@ pub struct FriendSyncRemoteSnapshot {
 
 fn sanitize_friend_sync_code(value: &str) -> Result<String, String> {
     let code = value.trim().to_uppercase();
-    if code.is_empty() || code.len() > 64 || !code.chars().all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_') {
+    if code.len() < 2
+        || code.len() > 64
+        || !code.chars().all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_') {
         return Err("好友码包含不安全字符".to_string());
     }
     Ok(code)
@@ -7316,6 +7318,9 @@ fn friend_sync_base_url(config: &FriendSyncConfig) -> Result<Url, String> {
     if url.scheme() != "https" && url.scheme() != "http" {
         return Err("WebDAV 地址必须使用 http 或 https".to_string());
     }
+    if url.query().is_some() || url.fragment().is_some() {
+        return Err("WebDAV 地址不能包含查询参数或片段（请删除 ?... 或 #...）".to_string());
+    }
     let mut path = url.path().trim_end_matches('/').to_string();
     if path.is_empty() {
         path.push('/');
@@ -7331,7 +7336,13 @@ fn friend_sync_folder_url(config: &FriendSyncConfig) -> Result<Url, String> {
     {
         let mut segments = url.path_segments_mut().map_err(|_| "WebDAV 地址不可用于路径拼接".to_string())?;
         for segment in config.folder.trim_matches('/').split('/').filter(|s| !s.is_empty()) {
-            if segment == "." || segment == ".." || segment.contains('\\') || segment.contains(':') {
+            if segment == "."
+                || segment == ".."
+                || segment.contains('\\')
+                || segment.contains(':')
+                || segment.contains('?')
+                || segment.contains('#')
+            {
                 return Err("共享文件夹路径只能填写坚果云里的文件夹名，例如 shuaba-friends；不要填写 E:\\... 这样的电脑本地路径或完整网址".to_string());
             }
             segments.push(segment);
@@ -7399,33 +7410,92 @@ fn friend_sync_folder_url_without_trailing_slash(url: &Url) -> Url {
     candidate
 }
 
-fn friend_sync_href_values(xml: &str) -> Vec<String> {
+fn friend_sync_href_values(xml: &str) -> Result<Vec<String>, String> {
+    use quick_xml::{escape::unescape, events::Event, Reader};
+
+    let mut reader = Reader::from_str(xml);
+    reader.config_mut().trim_text(true);
     let mut values = Vec::new();
-    let mut cursor = 0usize;
-    while let Some(relative_start) = xml[cursor..].find('<') {
-        let start = cursor + relative_start;
-        let Some(relative_end) = xml[start..].find('>') else { break };
-        let tag = &xml[start + 1..start + relative_end];
-        let tag_name = tag.split_whitespace().next().unwrap_or("").trim_start_matches('/');
-        if tag_name.rsplit(':').next().unwrap_or(tag_name).eq_ignore_ascii_case("href") {
-            let content_start = start + relative_end + 1;
-            let close = format!("</{}>", tag_name);
-            if let Some(relative_close) = xml[content_start..].find(&close) {
-                let value = xml[content_start..content_start + relative_close]
-                    .trim()
-                    .replace("&amp;", "&")
-                    .replace("&lt;", "<")
-                    .replace("&gt;", ">")
-                    .replace("&quot;", "\"")
-                    .replace("&apos;", "'");
-                if !value.is_empty() { values.push(value); }
-                cursor = content_start + relative_close + close.len();
-                continue;
+    let mut in_href = false;
+    let mut current = String::new();
+
+    loop {
+        match reader.read_event() {
+            Ok(Event::Start(event))
+                if event.local_name().as_ref().eq_ignore_ascii_case(b"href") =>
+            {
+                in_href = true;
+                current.clear();
             }
+            Ok(Event::Text(event)) if in_href => {
+                let text = event
+                    .decode()
+                    .map_err(|e| format!("解析 WebDAV href 失败：{e}"))?;
+                current.push_str(&text);
+            }
+            Ok(Event::CData(event)) if in_href => {
+                current.push_str(&String::from_utf8_lossy(event.as_ref()));
+            }
+            Ok(Event::GeneralRef(event)) if in_href => {
+                let reference = event
+                    .decode()
+                    .map_err(|e| format!("解析 WebDAV href 失败：{e}"))?;
+                let escaped = format!("&{reference};");
+                let text = unescape(&escaped)
+                    .map_err(|e| format!("解析 WebDAV href 失败：{e}"))?;
+                current.push_str(&text);
+            }
+            Ok(Event::End(event))
+                if in_href && event.local_name().as_ref().eq_ignore_ascii_case(b"href") =>
+            {
+                let value = current.trim();
+                if !value.is_empty() {
+                    values.push(value.to_string());
+                }
+                in_href = false;
+                current.clear();
+            }
+            Ok(Event::Eof) => break,
+            Ok(_) => {}
+            Err(error) => return Err(format!("解析 WebDAV XML 失败：{error}")),
         }
-        cursor = start + relative_end + 1;
     }
-    values
+
+    Ok(values)
+}
+
+fn friend_sync_decode_path_segment(value: &str) -> Option<String> {
+    percent_encoding::percent_decode_str(value)
+        .decode_utf8()
+        .ok()
+        .map(|decoded| decoded.into_owned())
+}
+
+fn friend_sync_decoded_path_segments(url: &Url) -> Option<Vec<String>> {
+    let mut segments = url
+        .path_segments()?
+        .map(friend_sync_decode_path_segment)
+        .collect::<Option<Vec<_>>>()?;
+    // Url::path_segments() includes a final empty segment for a collection URL
+    // ending with '/', but empty segments in the middle remain significant.
+    if segments.last().is_some_and(String::is_empty) {
+        segments.pop();
+    }
+    Some(segments)
+}
+
+fn friend_sync_same_origin(left: &Url, right: &Url) -> bool {
+    left.scheme() == right.scheme()
+        && left.host_str() == right.host_str()
+        && left.port_or_known_default() == right.port_or_known_default()
+}
+
+fn friend_sync_href_url(base: &Url, href: &str) -> Option<Url> {
+    let candidate = Url::parse(href).ok().or_else(|| base.join(href).ok())?;
+    if !friend_sync_same_origin(base, &candidate) || candidate.query().is_some() || candidate.fragment().is_some() {
+        return None;
+    }
+    Some(candidate)
 }
 
 fn friend_sync_discover_folder_url(client: &Client, config: &FriendSyncConfig) -> Result<Option<Url>, String> {
@@ -7435,20 +7505,30 @@ fn friend_sync_discover_folder_url(client: &Client, config: &FriendSyncConfig) -
         return Ok(None);
     }
     let body = response.text().map_err(|e| format!("读取坚果云目录失败：{e}"))?;
-    let wanted = config.folder.trim_matches('/').split('/').filter(|s| !s.is_empty()).last().unwrap_or("");
-    for href in friend_sync_href_values(&body) {
-        let Ok(mut candidate) = root.join(&href) else { continue };
-        let last_segment = candidate
-            .path()
-            .trim_end_matches('/')
-            .rsplit('/')
-            .next()
-            .unwrap_or("");
-        if last_segment == wanted {
-            let mut path = candidate.path().trim_end_matches('/').to_string();
+    let hrefs = friend_sync_href_values(&body)?;
+    let root_segments = friend_sync_decoded_path_segments(&root).unwrap_or_default();
+    let wanted_segments: Vec<String> = config
+        .folder
+        .trim_matches('/')
+        .split('/')
+        .filter(|segment| !segment.is_empty())
+        .map(|segment| segment.to_string())
+        .collect();
+    if wanted_segments.is_empty() {
+        return Ok(None);
+    }
+
+    for href in hrefs {
+        let Some(candidate) = friend_sync_href_url(&root, &href) else { continue };
+        let Some(candidate_segments) = friend_sync_decoded_path_segments(&candidate) else { continue };
+        let mut expected = root_segments.clone();
+        expected.extend(wanted_segments.iter().cloned());
+        if candidate_segments == expected {
+            let mut folder = candidate;
+            let mut path = folder.path().trim_end_matches('/').to_string();
             path.push('/');
-            candidate.set_path(&path);
-            return Ok(Some(candidate));
+            folder.set_path(&path);
+            return Ok(Some(folder));
         }
     }
     Ok(None)
@@ -7459,47 +7539,241 @@ fn friend_sync_resolve_folder_url(client: &Client, config: &FriendSyncConfig) ->
         .unwrap_or(friend_sync_folder_url(config)?))
 }
 
-#[tauri::command]
-fn test_friend_sync(config: FriendSyncConfig) -> Result<String, String> {
-    let folder_url = friend_sync_folder_url(&config)?;
-    let client = friend_sync_client()?;
-    let response = friend_sync_propfind(&client, folder_url.clone(), &config)?;
-    if response.status().is_success() {
-        return Ok("坚果云连接正常，共享文件夹可访问".to_string());
+fn friend_sync_directory_diagnostic(
+    client: &Client,
+    config: &FriendSyncConfig,
+    folder_url: &Url,
+    initial_status: StatusCode,
+) -> Result<String, String> {
+    if initial_status.is_success() {
+        return Ok("通过".to_string());
     }
 
-    // 坚果云部分 WebDAV 节点对 collection 末尾的斜杠处理不一致；
-    // 同一个文件夹无斜杠请求成功时，后续文件上传仍使用带斜杠的规范路径。
-    if response.status() == StatusCode::CONFLICT {
-        let without_slash = friend_sync_folder_url_without_trailing_slash(&folder_url);
-        let fallback = friend_sync_propfind(&client, without_slash, &config)?;
+    if initial_status == StatusCode::CONFLICT {
+        let without_slash = friend_sync_folder_url_without_trailing_slash(folder_url);
+        let fallback = friend_sync_propfind(client, without_slash, config)?;
         if fallback.status().is_success() {
-            return Ok("坚果云连接正常，共享文件夹可访问".to_string());
+            return Ok("通过（兼容目录末尾斜杠）".to_string());
         }
-
-        // 如果根目录列表中能找到该文件夹，说明账号和云端路径均已被识别；
-        // 某些坚果云节点只对 collection 的 PROPFIND 返回 409，但不影响文件 PUT/GET。
-        if let Some(discovered) = friend_sync_discover_folder_url(&client, &config)? {
-            let discovered_response = friend_sync_propfind(&client, discovered, &config)?;
-            if discovered_response.status().is_success() || discovered_response.status() == StatusCode::CONFLICT {
-                return Ok("坚果云账号和共享文件夹已识别，已跳过坚果云对目录 PROPFIND 的 409 兼容性问题".to_string());
+        if let Some(discovered) = friend_sync_discover_folder_url(client, config)? {
+            if discovered == *folder_url {
+                return Ok("已识别（目录 PROPFIND 返回 409，已通过实际文件读写继续验证）".to_string());
             }
         }
-
-        // 根目录可访问但目录列表中找不到目标文件夹，才判定为路径或共享权限问题。
-        let root_response = friend_sync_propfind(&client, friend_sync_base_url(&config)?, &config)?;
+        let root_response = friend_sync_propfind(client, friend_sync_base_url(config)?, config)?;
         if root_response.status().is_success() {
-            return Err(
-                "坚果云账号可用，但 WebDAV 根目录中找不到目标文件夹。请确认文件夹名称、层级和共享权限".to_string(),
-            );
+            return Err("坚果云账号可用，但 WebDAV 根目录中找不到目标文件夹。请确认文件夹名称、层级和共享权限".to_string());
+        }
+        return Ok("未能读取目录（PROPFIND 409，已通过实际文件读写继续验证）".to_string());
+    }
+
+    if initial_status == StatusCode::NOT_FOUND {
+        let root_response = friend_sync_propfind(client, friend_sync_base_url(config)?, config)?;
+        if root_response.status().is_success() && friend_sync_discover_folder_url(client, config)?.is_none() {
+            return Err("坚果云账号可用，但 WebDAV 根目录中找不到目标文件夹。请确认文件夹名称、层级和共享权限".to_string());
         }
     }
 
-    Err(friend_sync_status_error("连接坚果云", response.status()))
+    Err(friend_sync_status_error("访问共享文件夹", initial_status))
+}
+
+fn friend_sync_delete_probe(client: &Client, config: &FriendSyncConfig, probe_url: &Url) -> Result<(), String> {
+    let response = friend_sync_auth(
+        client.request(Method::from_bytes(b"DELETE").expect("DELETE is a valid HTTP method"), probe_url.clone()),
+        config,
+    )
+    .send()
+    .map_err(|e| format!("删除测试探针失败：{e}"))?;
+    if response.status().is_success() || response.status() == StatusCode::NOT_FOUND {
+        Ok(())
+    } else {
+        Err(friend_sync_status_error("删除测试探针", response.status()))
+    }
+}
+
+fn friend_sync_probe_put(
+    client: &Client,
+    config: &FriendSyncConfig,
+    folder_url: &Url,
+    file_url: &Url,
+    payload: &str,
+) -> Result<(), String> {
+    let send_put = |url: Url, body: String| {
+        friend_sync_auth(client.put(url), config)
+            .header("Content-Type", "application/json; charset=utf-8")
+            .body(body)
+            .send()
+    };
+
+    let response = match send_put(file_url.clone(), payload.to_string()) {
+        Ok(response) => response,
+        Err(error) => {
+            // PUT 可能在服务端已经落盘后才因超时/连接中断返回错误，
+            // 因此失败也必须尽量删除随机探针，避免云端残留临时文件。
+            if let Err(cleanup_error) = friend_sync_delete_probe(client, config, file_url) {
+                log::warn!("测试探针上传请求失败后的清理也失败：{cleanup_error}");
+            }
+            return Err(format!("上传测试探针失败：{error}（已尝试清理测试探针）"));
+        }
+    };
+    if response.status().is_success() {
+        return Ok(());
+    }
+
+    if response.status() != StatusCode::NOT_FOUND && response.status() != StatusCode::CONFLICT {
+        if let Err(cleanup_error) = friend_sync_delete_probe(client, config, file_url) {
+            log::warn!("测试探针上传失败后的清理也失败：{cleanup_error}");
+        }
+        return Err(format!(
+            "{}（已尝试清理测试探针）",
+            friend_sync_status_error("上传测试探针", response.status())
+        ));
+    }
+
+    let mkcol = match friend_sync_auth(
+        client.request(Method::from_bytes(b"MKCOL").expect("MKCOL is a valid HTTP method"), folder_url.clone()),
+        config,
+    )
+    .send()
+    {
+        Ok(response) => response,
+        Err(error) => {
+            if let Err(cleanup_error) = friend_sync_delete_probe(client, config, file_url) {
+                log::warn!("创建共享目录请求失败后的测试探针清理也失败：{cleanup_error}");
+            }
+            return Err(format!("创建共享目录失败：{error}（已尝试清理测试探针）"));
+        }
+    };
+    if !(mkcol.status().is_success()
+        || mkcol.status() == StatusCode::METHOD_NOT_ALLOWED
+        || mkcol.status() == StatusCode::CONFLICT)
+    {
+        if let Err(cleanup_error) = friend_sync_delete_probe(client, config, file_url) {
+            log::warn!("创建共享目录失败后的测试探针清理也失败：{cleanup_error}");
+        }
+        return Err(format!(
+            "{}（已尝试清理测试探针）",
+            friend_sync_status_error("创建共享目录", mkcol.status())
+        ));
+    }
+
+    let retry = match send_put(file_url.clone(), payload.to_string()) {
+        Ok(response) => response,
+        Err(error) => {
+            if let Err(cleanup_error) = friend_sync_delete_probe(client, config, file_url) {
+                log::warn!("重试上传请求失败后的测试探针清理也失败：{cleanup_error}");
+            }
+            return Err(format!("重试上传测试探针失败：{error}（已尝试清理测试探针）"));
+        }
+    };
+    if retry.status().is_success() {
+        Ok(())
+    } else {
+        if let Err(cleanup_error) = friend_sync_delete_probe(client, config, file_url) {
+            log::warn!("重试上传失败后的测试探针清理也失败：{cleanup_error}");
+        }
+        Err(format!(
+            "{}（已尝试清理测试探针）",
+            friend_sync_status_error("上传测试探针", retry.status())
+        ))
+    }
+}
+
+fn friend_sync_payload_from_response(response: reqwest::blocking::Response, action: &str) -> Result<String, String> {
+    const MAX_PAYLOAD_BYTES: usize = 256 * 1024;
+    if let Some(length) = response.content_length() {
+        if length > MAX_PAYLOAD_BYTES as u64 {
+            return Err(format!("{action}失败：好友数据超过 256 KB 大小限制"));
+        }
+    }
+    let bytes = response
+        .bytes()
+        .map_err(|e| format!("{action}失败：读取响应失败：{e}"))?;
+    if bytes.len() > MAX_PAYLOAD_BYTES {
+        return Err(format!("{action}失败：好友数据超过 256 KB 大小限制"));
+    }
+    String::from_utf8(bytes.to_vec()).map_err(|_| format!("{action}失败：响应不是有效 UTF-8 JSON"))
+}
+
+#[tauri::command]
+fn test_friend_sync(config: FriendSyncConfig) -> Result<String, String> {
+    let client = friend_sync_client()?;
+
+    let root_response = friend_sync_propfind(&client, friend_sync_base_url(&config)?, &config)?;
+    let auth_status = root_response.status();
+    if auth_status == StatusCode::UNAUTHORIZED || auth_status == StatusCode::FORBIDDEN {
+        return Err(friend_sync_status_error("账号认证", auth_status));
+    }
+    if !auth_status.is_success() && auth_status != StatusCode::CONFLICT {
+        return Err(friend_sync_status_error("账号认证/访问 WebDAV 根目录", auth_status));
+    }
+    let auth_label = if auth_status.is_success() {
+        "通过"
+    } else {
+        "通过（根目录 PROPFIND 返回 409，继续用实际读写验证）"
+    };
+    let folder_url = friend_sync_resolve_folder_url(&client, &config)?;
+
+    let directory_response = friend_sync_propfind(&client, folder_url.clone(), &config)?;
+    let directory_label = friend_sync_directory_diagnostic(
+        &client,
+        &config,
+        &folder_url,
+        directory_response.status(),
+    )?;
+
+    let probe_name = format!(".shuaba-connection-test-{:016x}.tmp", rand::rng().random::<u64>());
+    let probe_url = folder_url
+        .join(&probe_name)
+        .map_err(|_| "无法拼接坚果云测试探针路径".to_string())?;
+    let probe_payload = format!(r#"{{"probe":"shuaba","id":"{}"}}"#, probe_name);
+
+    let write_result = friend_sync_probe_put(&client, &config, &folder_url, &probe_url, &probe_payload);
+    if let Err(error) = write_result {
+        return Err(format!(
+            "账号认证：{auth_label}；目标目录：{directory_label}；写入：失败。{error}"
+        ));
+    }
+
+    let read_result = match friend_sync_auth(client.get(probe_url.clone()), &config).send() {
+        Ok(response) if response.status().is_success() => {
+            match friend_sync_payload_from_response(response, "读取测试探针") {
+                Ok(payload) if payload == probe_payload => Ok(()),
+                Ok(_) => Err("读取测试探针失败：返回内容与上传内容不一致".to_string()),
+                Err(error) => Err(error),
+            }
+        }
+        Ok(response) => Err(friend_sync_status_error("读取测试探针", response.status())),
+        Err(error) => Err(format!("读取测试探针失败：{error}")),
+    };
+
+    let delete_result = friend_sync_delete_probe(&client, &config, &probe_url);
+
+    if let Err(error) = read_result {
+        if let Err(delete_error) = delete_result {
+            log::warn!("测试探针读取失败后的清理也失败：{delete_error}");
+        }
+        return Err(format!(
+            "账号认证：{auth_label}；目标目录：{directory_label}；写入：通过；读取：失败。{error}（测试探针已尝试清理）"
+        ));
+    }
+
+    match delete_result {
+        Ok(()) => Ok(format!(
+            "账号认证：{auth_label}；目标目录：{directory_label}；读取：通过；写入：通过；删除：通过。坚果云实际读写权限正常"
+        )),
+        Err(error) => Ok(format!(
+            "账号认证：{auth_label}；目标目录：{directory_label}；读取：通过；写入：通过；删除：失败。{error}；同步仍可用，但共享目录可能无法清理临时文件"
+        )),
+    }
 }
 
 #[tauri::command]
 fn publish_friend_snapshot(config: FriendSyncConfig, friend_code: String, payload: String) -> Result<String, String> {
+    const MAX_PAYLOAD_BYTES: usize = 256 * 1024;
+    if payload.len() > MAX_PAYLOAD_BYTES {
+        return Err("上传好友数据失败：好友数据超过 256 KB 大小限制".to_string());
+    }
     let client = friend_sync_client()?;
     let folder_url = friend_sync_resolve_folder_url(&client, &config)?;
     let file_name = friend_sync_file_name(&friend_code)?;
@@ -7513,16 +7787,17 @@ fn publish_friend_snapshot(config: FriendSyncConfig, friend_code: String, payloa
         return Ok(file_name);
     }
 
-    // WebDAV 在目标 collection 尚未创建时，PUT 文件通常返回 404 或 409。
-    // 先尝试创建目录；目录已存在时 Nutstore 可能返回 405，此时继续重试 PUT。
     if response.status() == StatusCode::NOT_FOUND || response.status() == StatusCode::CONFLICT {
         let mkcol = friend_sync_auth(
-            client.request(Method::from_bytes(b"MKCOL").unwrap(), folder_url.clone()),
+            client.request(Method::from_bytes(b"MKCOL").expect("MKCOL is a valid HTTP method"), folder_url.clone()),
             &config,
         )
         .send()
         .map_err(|e| format!("创建共享目录失败：{e}"))?;
-        if !(mkcol.status().is_success() || mkcol.status() == StatusCode::METHOD_NOT_ALLOWED) {
+        if !(mkcol.status().is_success()
+            || mkcol.status() == StatusCode::METHOD_NOT_ALLOWED
+            || mkcol.status() == StatusCode::CONFLICT)
+        {
             return Err(friend_sync_status_error("创建共享目录", mkcol.status()));
         }
 
@@ -7541,52 +7816,82 @@ fn publish_friend_snapshot(config: FriendSyncConfig, friend_code: String, payloa
     }
 }
 
+fn friend_sync_file_from_href(folder_url: &Url, href: &str) -> Option<(String, Url)> {
+    let candidate = friend_sync_href_url(folder_url, href)?;
+    let folder_segments = friend_sync_decoded_path_segments(folder_url)?;
+    let candidate_segments = friend_sync_decoded_path_segments(&candidate)?;
+    if candidate_segments.len() != folder_segments.len() + 1
+        || candidate_segments[..folder_segments.len()] != folder_segments[..]
+    {
+        return None;
+    }
+
+    let file_name = candidate_segments.last()?.as_str();
+    let prefix = "shuaba-friend-";
+    let code = file_name.strip_prefix(prefix)?.strip_suffix(".json")?;
+    let normalized_code = sanitize_friend_sync_code(code).ok()?;
+    let canonical_name = friend_sync_file_name(&normalized_code).ok()?;
+    Some((canonical_name, candidate))
+}
+
 #[tauri::command]
 fn pull_friend_snapshots(config: FriendSyncConfig, friend_codes: Vec<String>) -> Result<Vec<FriendSyncRemoteSnapshot>, String> {
     let client = friend_sync_client()?;
     let folder_url = friend_sync_resolve_folder_url(&client, &config)?;
-    let mut file_names = std::collections::HashSet::new();
+    let mut files = std::collections::BTreeMap::<String, Url>::new();
 
-    // 1. 自动漫游发现：尝试通过 PROPFIND Depth: 1 列出共享目录中所有好友数据文件
-    if let Ok(propfind_resp) = friend_sync_auth(
-        client.request(Method::from_bytes(b"PROPFIND").unwrap(), folder_url.clone()),
-        &config,
-    )
-    .header("Depth", "1")
-    .send() {
-        if propfind_resp.status().is_success() {
-            if let Ok(xml_text) = propfind_resp.text() {
-                // 扫描所有匹配 shuaba-friend-*.json 的文件名
-                for segment in xml_text.split("shuaba-friend-").skip(1) {
-                    if let Some(end_idx) = segment.find(".json") {
-                        let code = &segment[..end_idx];
-                        if !code.is_empty() && code.len() <= 64 && code.chars().all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_') {
-                            file_names.insert(format!("shuaba-friend-{}.json", code));
+    // 自动发现只接受 XML href 指向目标共享目录的直接子文件，避免把 XML 文本中的
+    // 任意片段误当成好友文件；文件名统一规范化后去重。
+    match friend_sync_propfind_with_depth(&client, folder_url.clone(), &config, "1") {
+        Ok(response) if response.status().is_success() => match response.text() {
+            Ok(xml) => match friend_sync_href_values(&xml) {
+                Ok(hrefs) => {
+                    for href in hrefs {
+                        if let Some((file_name, file_url)) = friend_sync_file_from_href(&folder_url, &href) {
+                            files.entry(file_name).or_insert(file_url);
                         }
                     }
                 }
-            }
-        }
+                Err(error) => log::warn!("好友同步自动发现失败：{error}"),
+            },
+            Err(error) => log::warn!("好友同步读取目录失败：{error}"),
+        },
+        Ok(response) => log::warn!("好友同步自动发现跳过：{}", friend_sync_status_error("列出好友文件", response.status())),
+        Err(error) => log::warn!("好友同步自动发现请求失败：{error}"),
     }
 
-    // 2. 显式好友码补充（定向兜底）
+    // 显式好友码是自动发现不可用时的定向兜底，也使用同一套安全规则。
     for code in friend_codes {
-        if let Ok(file_name) = friend_sync_file_name(&code) {
-            file_names.insert(file_name);
+        match friend_sync_file_name(&code) {
+            Ok(file_name) => {
+                if let Ok(file_url) = folder_url.join(&file_name) {
+                    files.entry(file_name).or_insert(file_url);
+                }
+            }
+            Err(error) => log::warn!("跳过不安全好友码：{error}"),
         }
     }
 
     let mut snapshots = Vec::new();
-    for file_name in file_names {
-        let file_url = folder_url.join(&file_name).map_err(|_| "无法拼接好友数据文件路径".to_string())?;
+    for (file_name, file_url) in files {
         let response = match friend_sync_auth(client.get(file_url), &config).send() {
-            Ok(r) => r,
-            Err(_) => continue,
+            Ok(response) => response,
+            Err(error) => {
+                log::warn!("好友文件 {file_name} 下载失败：{error}");
+                continue;
+            }
         };
-        if response.status() == StatusCode::NOT_FOUND { continue; }
-        if !response.status().is_success() { continue; }
-        if let Ok(payload) = response.text() {
-            snapshots.push(FriendSyncRemoteSnapshot { file_name, payload });
+        if response.status() == StatusCode::NOT_FOUND {
+            log::debug!("好友文件 {file_name} 尚未发布");
+            continue;
+        }
+        if !response.status().is_success() {
+            log::warn!("好友文件 {file_name} 下载失败：{}", friend_sync_status_error("读取好友数据", response.status()));
+            continue;
+        }
+        match friend_sync_payload_from_response(response, "读取好友数据") {
+            Ok(payload) => snapshots.push(FriendSyncRemoteSnapshot { file_name, payload }),
+            Err(error) => log::warn!("好友文件 {file_name} 无法使用：{error}"),
         }
     }
     Ok(snapshots)
@@ -7599,9 +7904,14 @@ fn get_user_profile(state: State<AppState>) -> Result<UserProfileSettings, Strin
     let friend_code = setting(&conn, "user_friend_code", "");
     let target_school = setting(&conn, "target_school", "考研数学一 · 目标985");
     let avatar = setting(&conn, "user_avatar", "🚀");
+    let normalized_friend_code = if friend_code.is_empty() {
+        None
+    } else {
+        sanitize_friend_sync_code(&friend_code).ok()
+    };
     Ok(UserProfileSettings {
         nickname,
-        friend_code: if friend_code.is_empty() { None } else { Some(friend_code) },
+        friend_code: normalized_friend_code,
         target_school: Some(target_school),
         avatar: Some(avatar),
     })
@@ -7609,6 +7919,11 @@ fn get_user_profile(state: State<AppState>) -> Result<UserProfileSettings, Strin
 
 #[tauri::command]
 fn set_user_profile(profile: UserProfileSettings, state: State<AppState>) -> Result<(), String> {
+    let normalized_friend_code = profile
+        .friend_code
+        .as_deref()
+        .map(sanitize_friend_sync_code)
+        .transpose()?;
     let conn = state.db.lock().map_err(|e| e.to_string())?;
     conn.execute(
         "INSERT INTO settings(key,value) VALUES('user_nickname',?1)
@@ -7616,7 +7931,7 @@ fn set_user_profile(profile: UserProfileSettings, state: State<AppState>) -> Res
         [&profile.nickname],
     )
     .map_err(|e| e.to_string())?;
-    if let Some(friend_code) = profile.friend_code {
+    if let Some(friend_code) = normalized_friend_code {
         conn.execute(
             "INSERT INTO settings(key,value) VALUES('user_friend_code',?1)
              ON CONFLICT(key) DO UPDATE SET value=excluded.value",
@@ -7800,6 +8115,85 @@ pub fn run() {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn friend_sync_code_is_normalized_and_rejects_path_characters() {
+        assert_eq!(sanitize_friend_sync_code(" sb-ab_12 ").unwrap(), "SB-AB_12");
+        assert!(sanitize_friend_sync_code("SB/AB").is_err());
+        assert!(sanitize_friend_sync_code("SB AB").is_err());
+        assert!(sanitize_friend_sync_code("A").is_err());
+        assert!(sanitize_friend_sync_code(&"A".repeat(65)).is_err());
+    }
+
+    #[test]
+    fn friend_sync_endpoint_rejects_query_fragment_and_unsafe_folder_segments() {
+        let config = |endpoint: &str, folder: &str| FriendSyncConfig {
+            endpoint: endpoint.to_string(),
+            username: "user@example.com".to_string(),
+            app_password: "app-password".to_string(),
+            folder: folder.to_string(),
+        };
+
+        assert!(friend_sync_base_url(&config("https://dav.example/dav/?x=1", "shuaba-friends")).is_err());
+        assert!(friend_sync_base_url(&config("https://dav.example/dav/#folder", "shuaba-friends")).is_err());
+        assert!(friend_sync_folder_url(&config("https://dav.example/dav/", "E:\\刷吧")).is_err());
+        assert!(friend_sync_folder_url(&config("https://dav.example/dav/", "../other")).is_err());
+        assert!(friend_sync_folder_url(&config("https://dav.example/dav/", "folder?name")).is_err());
+        assert!(friend_sync_folder_url(&config("https://dav.example/dav/", "folder#name")).is_err());
+    }
+
+    #[test]
+    fn friend_sync_href_parser_handles_namespaces_entities_and_cdata() {
+        let xml = r#"<?xml version="1.0"?>
+            <D:multistatus xmlns:D="DAV:">
+              <D:response><D:href>/dav/shuaba-friends/</D:href></D:response>
+              <d:response><d:href>/dav/shuaba-friends/shuaba-friend-SB&amp;A.json</d:href></d:response>
+              <response><href><![CDATA[/dav/shuaba-friends/shuaba-friend-SB-B.json]]></href></response>
+            </D:multistatus>"#;
+        let hrefs = friend_sync_href_values(xml).unwrap();
+        assert_eq!(hrefs.len(), 3);
+        assert_eq!(hrefs[0], "/dav/shuaba-friends/");
+        assert_eq!(hrefs[1], "/dav/shuaba-friends/shuaba-friend-SB&A.json");
+        assert_eq!(hrefs[2], "/dav/shuaba-friends/shuaba-friend-SB-B.json");
+        assert!(friend_sync_href_values("<multistatus><href>&bogus;</href></multistatus>").is_err());
+    }
+
+    #[test]
+    fn friend_sync_href_file_requires_same_origin_and_direct_child() {
+        let folder = Url::parse("https://dav.example/dav/shuaba-friends/").unwrap();
+        let discovered = friend_sync_file_from_href(
+            &folder,
+            "https://dav.example/dav/shuaba-friends/shuaba-friend-sb%2Dabc.json",
+        )
+        .unwrap();
+        assert_eq!(discovered.0, "shuaba-friend-SB-ABC.json");
+        assert_eq!(discovered.1.path(), "/dav/shuaba-friends/shuaba-friend-sb%2Dabc.json");
+        assert!(friend_sync_file_from_href(
+            &folder,
+            "https://evil.example/dav/shuaba-friends/shuaba-friend-SB-ABC.json"
+        )
+        .is_none());
+        assert!(friend_sync_file_from_href(
+            &folder,
+            "/dav/shuaba-friends/nested/shuaba-friend-SB-ABC.json"
+        )
+        .is_none());
+        assert!(friend_sync_file_from_href(
+            &folder,
+            "/dav/other/shuaba-friend-SB-ABC.json"
+        )
+        .is_none());
+        assert!(friend_sync_file_from_href(
+            &folder,
+            "/dav/shuaba-friends/shuaba-friend-SB-ABC.json?rev=1"
+        )
+        .is_none());
+        assert!(friend_sync_file_from_href(
+            &folder,
+            "/dav/shuaba-friends/shuaba-friend-SB-ABC.json#fragment"
+        )
+        .is_none());
+    }
 
     fn insert_test_question(conn: &Connection, id: i64, category_path: &str) {
         conn.execute(

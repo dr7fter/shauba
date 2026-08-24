@@ -21,6 +21,7 @@ import { pullFriendSnapshots, publishFriendSnapshot, setUserProfile } from '../a
 import { predictedExamScore, rankLetterForElo } from '../utils'
 import {
   addBlockedIdentity,
+  clearAllBlockedIdentities,
   createFriendInvitation,
   getBlockedIdentities,
   dedupeIdentitiesConnected,
@@ -36,6 +37,7 @@ import {
 } from './friendPublicData'
 
 export {
+  clearAllBlockedIdentities,
   createFriendInvitation,
   getBlockedIdentities,
   importFriendInvitation,

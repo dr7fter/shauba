@@ -19,6 +19,7 @@ import { useEffect, useMemo, useRef, useState, type ChangeEvent } from 'react'
 import {
   addFriendCode,
   addFriendSnapshot,
+  clearAllBlockedIdentities,
   createFriendInvitation,
   createFriendShareSnapshot,
   getBlockedIdentities,
@@ -886,8 +887,21 @@ export function FriendsLadderView({
               {/* Blocked Friends List */}
               {getBlockedIdentities().length > 0 && (
                 <div style={{ marginTop: '16px', paddingTop: '12px', borderTop: '1px solid var(--line)' }}>
-                  <div style={{ fontSize: 'var(--fs-xs)', fontWeight: 600, color: 'var(--muted)', marginBottom: '8px' }}>
-                    🛡️ 已屏蔽的好友名单 ({getBlockedIdentities().length}) · 点击解除屏蔽可重新添加
+                  <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '8px' }}>
+                    <span style={{ fontSize: 'var(--fs-xs)', fontWeight: 600, color: 'var(--muted)' }}>
+                      🛡️ 已屏蔽的好友名单 ({getBlockedIdentities().length}) · 点击解除屏蔽可重新添加
+                    </span>
+                    <button
+                      className="secondary-button compact"
+                      style={{ padding: '2px 8px', fontSize: 'var(--fs-xs)' }}
+                      onClick={() => {
+                        clearAllBlockedIdentities()
+                        notify('已清空全部屏蔽名单')
+                        setData(loadFriendsSystemData(tacticalData, bootstrapData, eloStatus))
+                      }}
+                    >
+                      全部解除
+                    </button>
                   </div>
                   <div style={{ display: 'flex', flexDirection: 'column', gap: '6px', maxHeight: '120px', overflowY: 'auto' }}>
                     {getBlockedIdentities().map((item, idx) => {

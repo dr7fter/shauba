@@ -108,15 +108,22 @@ export function addBlockedIdentity(profileId: string | undefined, friendCodes: s
   saveBlockedIdentities(current)
 }
 
-export function unblockIdentity(code: string, profileId?: string): void {
-  const cleanCode = code.trim().toUpperCase()
-  const cleanProfileId = profileId?.trim()
+export function unblockIdentity(codeOrId: string, profileId?: string): void {
+  const clean = codeOrId.trim().toUpperCase()
+  const cleanPid = profileId?.trim().toUpperCase()
   const current = getBlockedIdentities()
   const filtered = current.filter((item) => {
-    if (cleanProfileId && item.profileId === cleanProfileId) return false
-    return !item.friendCodes.includes(cleanCode)
+    if (cleanPid && item.profileId && item.profileId.toUpperCase() === cleanPid) return false
+    if (item.profileId && item.profileId.toUpperCase() === clean) return false
+    if (item.friendCodes.some((c) => c.toUpperCase() === clean)) return false
+    if (cleanPid && item.friendCodes.some((c) => c.toUpperCase() === cleanPid)) return false
+    return true
   })
   saveBlockedIdentities(filtered)
+}
+
+export function clearAllBlockedIdentities(): void {
+  saveBlockedIdentities([])
 }
 
 // ============ 本机公开比赛与公开报告 ============

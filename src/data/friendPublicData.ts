@@ -164,39 +164,52 @@ export function recordMyPublicMatch(match: FriendPublicMatch, report?: FriendPub
 
 // ============ 好友报告与比赛缓存 ============
 
-export function getFriendCachedMatches(friendCodeOrProfileId: string): FriendPublicMatch[] {
+export function getFriendCachedMatches(primaryKey: string, secondaryKey?: string): FriendPublicMatch[] {
   const raw = readStorage(STORAGE_KEY_FRIEND_MATCHES_CACHE)
   const parsed = parseJson<Record<string, FriendPublicMatch[]>>(raw)
-  return (parsed && parsed[friendCodeOrProfileId]) || []
+  if (!parsed) return []
+  if (parsed[primaryKey]?.length) return parsed[primaryKey]
+  if (secondaryKey && parsed[secondaryKey]?.length) return parsed[secondaryKey]
+  return []
 }
 
-export function saveFriendCachedMatches(friendCodeOrProfileId: string, matches: FriendPublicMatch[]): void {
+export function saveFriendCachedMatches(primaryKey: string, matches: FriendPublicMatch[], secondaryKey?: string): void {
   const raw = readStorage(STORAGE_KEY_FRIEND_MATCHES_CACHE)
   const map = parseJson<Record<string, FriendPublicMatch[]>>(raw) || {}
-  map[friendCodeOrProfileId] = matches.slice(0, MAX_MATCHES)
+  const sliced = matches.slice(0, MAX_MATCHES)
+  map[primaryKey] = sliced
+  if (secondaryKey && secondaryKey !== primaryKey) {
+    map[secondaryKey] = sliced
+  }
   writeStorage(STORAGE_KEY_FRIEND_MATCHES_CACHE, map)
 }
 
-export function getFriendCachedReports(friendCodeOrProfileId: string): FriendPublicReport[] {
+export function getFriendCachedReports(primaryKey: string, secondaryKey?: string): FriendPublicReport[] {
   const raw = readStorage(STORAGE_KEY_FRIEND_REPORTS_CACHE)
   const parsed = parseJson<Record<string, FriendPublicReport[]>>(raw)
-  return (parsed && parsed[friendCodeOrProfileId]) || []
+  if (!parsed) return []
+  if (parsed[primaryKey]?.length) return parsed[primaryKey]
+  if (secondaryKey && parsed[secondaryKey]?.length) return parsed[secondaryKey]
+  return []
 }
 
-export function saveFriendCachedReports(friendCodeOrProfileId: string, reports: FriendPublicReport[]): void {
+export function saveFriendCachedReports(primaryKey: string, reports: FriendPublicReport[], secondaryKey?: string): void {
   const raw = readStorage(STORAGE_KEY_FRIEND_REPORTS_CACHE)
   const map = parseJson<Record<string, FriendPublicReport[]>>(raw) || {}
-  map[friendCodeOrProfileId] = reports.slice(0, MAX_REPORTS)
+  const sliced = reports.slice(0, MAX_REPORTS)
+  map[primaryKey] = sliced
+  if (secondaryKey && secondaryKey !== primaryKey) {
+    map[secondaryKey] = sliced
+  }
   writeStorage(STORAGE_KEY_FRIEND_REPORTS_CACHE, map)
 }
 
-export function getPublicReportById(friendCodeOrProfileId: string, reportId: string): FriendPublicReport | null {
+export function getPublicReportById(primaryKey: string, reportId: string, secondaryKey?: string): FriendPublicReport | null {
   const myReports = getMyPublicReports()
   const myMatch = myReports.find((r) => r.reportId === reportId)
   if (myMatch) return myMatch
-
-  const friendReports = getFriendCachedReports(friendCodeOrProfileId)
-  return friendReports.find((r) => r.reportId === reportId) || null
+  const cached = getFriendCachedReports(primaryKey, secondaryKey)
+  return cached.find((r) => r.reportId === reportId) || null
 }
 
 // ============ 报告脱敏转换 (Sanitize) ============

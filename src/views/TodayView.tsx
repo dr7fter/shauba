@@ -49,6 +49,7 @@ import {
   undoLastAttempt,
 } from '../api'
 import { playCorrectSound } from '../data/audio'
+import { triggerBackgroundSync } from '../data/friendsService'
 import {
   clampAttemptDuration,
   determineAttemptEvidence,
@@ -498,6 +499,7 @@ export function TodayView({
         fluencyRating: rating,
         confidence: 1.0,
       })
+      void triggerBackgroundSync('attempt_recorded')
 
       if (correct) playCorrectSound()
 

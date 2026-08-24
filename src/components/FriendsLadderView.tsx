@@ -22,10 +22,11 @@ import {
   clearAllBlockedIdentities,
   createFriendInvitation,
   createFriendShareSnapshot,
+  buildMyFriendProfile,
   getBlockedIdentities,
   getSavedFriendSyncConfig,
-  getSavedFriends,
   importFriendInvitation,
+  isSyncConfigReady,
   loadFriendsSystemData,
   normalizeFriendCode,
   publishMyFriendSnapshot,
@@ -37,7 +38,7 @@ import {
 } from '../data/friendsService'
 import { FriendVsRadarModal } from './FriendVsRadarModal'
 import { FriendPublicProfileModal } from './FriendPublicProfileModal'
-import { getEloStatus, getTacticalDashboardStats, testFriendSync } from '../api'
+import { bootstrap, getEloStatus, getTacticalDashboardStats, testFriendSync } from '../api'
 import { getRankDescription } from '../utils'
 import type { BootstrapData, EloStatus, FriendProfile, FriendSyncConfig, FriendsSystemData, TacticalDashboardData } from '../types'
 
@@ -57,10 +58,6 @@ const DEFAULT_SYNC_CONFIG: FriendSyncConfig = {
   username: '',
   appPassword: '',
   folder: 'shuaba-friends',
-}
-
-function isSyncConfigReady(config: FriendSyncConfig | null | undefined): config is FriendSyncConfig {
-  return Boolean(config?.endpoint.trim() && config.username.trim() && config.appPassword.trim())
 }
 
 function formatError(error: unknown): string {
@@ -145,9 +142,9 @@ export function FriendsLadderView({
 
   useEffect(() => {
     let cancelled = false
-    void Promise.all([getTacticalDashboardStats(), getEloStatus()])
-      .then(([nextTacticalData, nextEloStatus]) => {
-        if (!cancelled) setData(loadFriendsSystemData(nextTacticalData, bootstrapData, nextEloStatus))
+    void Promise.all([getTacticalDashboardStats(), bootstrap(), getEloStatus()])
+      .then(([nextTacticalData, nextBootData, nextEloStatus]) => {
+        if (!cancelled) setData(loadFriendsSystemData(nextTacticalData, nextBootData, nextEloStatus))
       })
       .catch(() => undefined)
     return () => {
@@ -184,7 +181,13 @@ export function FriendsLadderView({
         setSyncStats(null)
         setSyncDetail('正在上传自己的好友数据…')
       }
-      await publishMyFriendSnapshot(dataRef.current.myProfile, requestConfig)
+      const [freshTactical, freshBoot, freshElo] = await Promise.all([
+        getTacticalDashboardStats().catch(() => null),
+        bootstrap().catch(() => null),
+        getEloStatus().catch(() => null),
+      ])
+      const freshMyProfile = buildMyFriendProfile(freshTactical, freshBoot, freshElo)
+      await publishMyFriendSnapshot(freshMyProfile, requestConfig)
       outcome.publish = 'success'
       if (mountedRef.current && isCurrentRequest()) {
         setSyncPhase('pulling')
@@ -196,7 +199,7 @@ export function FriendsLadderView({
       outcome.updated = result.updated
       outcome.status = 'success'
       if (mountedRef.current && isCurrentRequest()) {
-        setData((prev) => ({ ...prev, friends: getSavedFriends() }))
+        setData(loadFriendsSystemData(freshTactical, freshBoot, freshElo))
         setLastSyncAt(new Date().toISOString())
         setSyncStats({ checked: result.checked, updated: result.updated })
         setSyncPhase('success')

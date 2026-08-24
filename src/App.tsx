@@ -54,7 +54,7 @@ import { KeyboardHelpModal } from './components/KeyboardHelpModal'
 import { formatElapsed } from './utils'
 import type { BlitzExamResult } from './data/motivation'
 import { recordMyPublicMatch, sanitizeGradingReportToPublic } from './data/friendPublicData'
-import { addFriendActivity, getSavedMyCustomProfile } from './data/friendsService'
+import { addFriendActivity, getSavedMyCustomProfile, triggerBackgroundSync } from './data/friendsService'
 import type {
   AttemptMode,
   BootstrapData,
@@ -501,6 +501,24 @@ export default function App() {
     if (view !== 'today') setPracticeStartIndex(0)
   }, [view])
 
+  // 全局坚果云后台数据静默同步与实时快照发布
+  useEffect(() => {
+    let timer: number | undefined
+    const doAutoSync = () => {
+      if (document.visibilityState === 'visible') {
+        void triggerBackgroundSync('auto_interval')
+      }
+    }
+    const initTimer = window.setTimeout(doAutoSync, 3000)
+    timer = window.setInterval(doAutoSync, 60_000)
+    document.addEventListener('visibilitychange', doAutoSync)
+    return () => {
+      window.clearTimeout(initTimer)
+      if (timer) window.clearInterval(timer)
+      document.removeEventListener('visibilitychange', doAutoSync)
+    }
+  }, [])
+
   const refresh = useCallback(async () => {
     setLoading(true)
     try {
@@ -622,6 +640,7 @@ export default function App() {
             content: report.summary?.suggestions?.join('；') || '完成了一组战术高压演练，状态良好。',
             timestamp: new Date().toISOString(),
           })
+          void triggerBackgroundSync('match_graded')
         } catch {
           // ignore
         }

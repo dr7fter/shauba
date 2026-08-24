@@ -17,7 +17,14 @@ import type {
   FriendsSystemData,
   TacticalDashboardData,
 } from '../types'
-import { pullFriendSnapshots, publishFriendSnapshot, setUserProfile } from '../api'
+import {
+  bootstrap,
+  getEloStatus,
+  getTacticalDashboardStats,
+  pullFriendSnapshots,
+  publishFriendSnapshot,
+  setUserProfile,
+} from '../api'
 import { predictedExamScore, rankLetterForElo } from '../utils'
 import {
   addBlockedIdentity,
@@ -35,6 +42,20 @@ import {
   saveFriendCachedReports,
   unblockIdentity,
 } from './friendPublicData'
+
+export function isSyncConfigReady(config: FriendSyncConfig | null | undefined): config is FriendSyncConfig {
+  return Boolean(
+    config &&
+      config.endpoint &&
+      config.username &&
+      config.appPassword &&
+      config.folder &&
+      config.endpoint.trim().length > 0 &&
+      config.username.trim().length > 0 &&
+      config.appPassword.trim().length > 0 &&
+      config.folder.trim().length > 0
+  )
+}
 
 export {
   clearAllBlockedIdentities,
@@ -507,6 +528,29 @@ export async function publishMyFriendSnapshot(profile: FriendProfile, config: Fr
   return publishFriendSnapshot(config, current.friendCode, createFriendShareSnapshot(current))
 }
 
+let backgroundSyncInProgress = false
+
+export async function triggerBackgroundSync(reason?: string): Promise<void> {
+  const config = getSavedFriendSyncConfig()
+  if (!isSyncConfigReady(config)) return
+  if (backgroundSyncInProgress) return
+  backgroundSyncInProgress = true
+  try {
+    const [tacticalData, bootData, eloStatus] = await Promise.all([
+      getTacticalDashboardStats().catch(() => null),
+      bootstrap().catch(() => null),
+      getEloStatus().catch(() => null),
+    ])
+    const profile = buildMyFriendProfile(tacticalData, bootData, eloStatus)
+    await publishMyFriendSnapshot(profile, config)
+    await syncFriendSnapshots(config)
+  } catch (err) {
+    console.debug(`Background sync (${reason || 'unspecified'}) error:`, err)
+  } finally {
+    backgroundSyncInProgress = false
+  }
+}
+
 export async function syncFriendSnapshots(config: FriendSyncConfig): Promise<FriendSyncResult> {
   const requestedCodes = getSavedFriendCodes()
   if (!requestedCodes.length) {
@@ -947,10 +991,10 @@ export function addFriendSnapshot(
   // 缓存远端传来的 matches 和 reports
   const friendKey = profile.profileId || profile.friendCode
   if (matches && matches.length > 0) {
-    saveFriendCachedMatches(friendKey, matches)
+    saveFriendCachedMatches(friendKey, matches, profile.friendCode)
   }
   if (reports && reports.length > 0) {
-    saveFriendCachedReports(friendKey, reports)
+    saveFriendCachedReports(friendKey, reports, profile.friendCode)
   }
   if (activities && activities.length > 0) {
     for (const a of activities) {

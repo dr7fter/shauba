@@ -75,7 +75,7 @@ export function FriendPublicProfileModal({
   const handleOpenReport = (match: FriendPublicMatch) => {
     if (!match.reportId) return
     const fKey = friend.profileId || friend.friendCode
-    const rep = getPublicReportById(fKey, match.reportId)
+    const rep = getPublicReportById(fKey, match.reportId, friend.friendCode)
     if (rep) {
       setSelectedReport(rep)
     }
@@ -84,7 +84,7 @@ export function FriendPublicProfileModal({
   const { polygonPoints, gridCircles, dataPoints, labelPoints, dimValues, friendMatches, friendActivities, presenceInfo } = useMemo(() => {
     const pInfo = calculatePresenceState(presence, friend.lastSyncedAt, friend.lastActiveAt)
     const fKey = friend.profileId || friend.friendCode
-    const fMatches = getFriendCachedMatches(fKey)
+    const fMatches = getFriendCachedMatches(fKey, friend.friendCode)
     const fActivities = activities.filter((a) => a.friendCode === friend.friendCode)
 
     const dims = friend.dimensions

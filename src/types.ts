@@ -661,6 +661,7 @@ export type FriendProfile = {
   dimensions: FriendDimensions
   isSelf?: boolean
   eloChangeToday?: number
+  seasonName?: string
 }
 
 export type FriendActivity = {

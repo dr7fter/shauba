@@ -4244,13 +4244,13 @@ const ELO_START: f64 = 1400.0;
 const ELO_K_CALIBRATION: f64 = 30.0;
 const ELO_CALIBRATION_SETTLEMENTS: i64 = 10;
 const ELO_K: f64 = 10.0;
-/// 期望基准：章节掌握度 1（薄弱）期望 0.70，每升一级 −0.10；
-/// 难度系数每 +0.01 期望 −0.025，最后收敛到 [0.30, 0.78]。
-const ELO_EXPECTED_BASE: f64 = 0.70;
-const ELO_EXPECTED_MASTERY_STEP: f64 = 0.10;
-const ELO_EXPECTED_DIFFICULTY_STEP: f64 = 2.5;
-const ELO_EXPECTED_MIN: f64 = 0.30;
-const ELO_EXPECTED_MAX: f64 = 0.78;
+/// 期望基准：均值性能（Rating 1.00 折算 score 0.50）对应基准期望 0.50；
+/// 掌握度越高（熟题）期望略微提高 +0.04；难度系数越大（难题）期望降低 −0.25，收敛到 [0.20, 0.80]。
+const ELO_EXPECTED_BASE: f64 = 0.50;
+const ELO_EXPECTED_MASTERY_STEP: f64 = 0.04;
+const ELO_EXPECTED_DIFFICULTY_STEP: f64 = 0.25;
+const ELO_EXPECTED_MIN: f64 = 0.20;
+const ELO_EXPECTED_MAX: f64 = 0.80;
 const ELO_REVIEW_BONUS: f64 = 0.06;
 const ELO_MOMENTUM_MULTIPLIER: f64 = 1.15;
 const ELO_MOMENTUM_MIN_STREAK: usize = 3;
@@ -4321,7 +4321,7 @@ fn settle_elo(
             })
     };
     let score = (performance / 2.0).clamp(0.0, 1.25);
-    // 期望由题目难度与章节掌握度共同决定：薄弱章节的难题期望最低，收益最大
+    // 期望由题目难度与章节掌握度共同决定：薄弱章节的难题期望更低，攻克收益最大
     let mastery: f64 = conn
         .query_row(
             "SELECT mastery FROM progress WHERE question_id=?1",
@@ -4332,9 +4332,11 @@ fn settle_elo(
         .map_err(|e| e.to_string())?
         .unwrap_or(2.0);
     let dm = input.difficulty_multiplier.unwrap_or(1.0);
+    let mastery_offset = mastery - 2.0;
+    let diff_offset = dm - 1.0;
     let mut expected = ELO_EXPECTED_BASE
-        - ELO_EXPECTED_MASTERY_STEP * (mastery - 1.0)
-        - ELO_EXPECTED_DIFFICULTY_STEP * (dm - 1.0);
+        + ELO_EXPECTED_MASTERY_STEP * mastery_offset
+        - ELO_EXPECTED_DIFFICULTY_STEP * diff_offset;
     if input.mode.as_deref() == Some("review") {
         expected += ELO_REVIEW_BONUS;
     }
@@ -4756,33 +4758,38 @@ fn season_status(conn: &Connection) -> Result<SeasonStatus, String> {
     };
     let this_monday_rfc = this_monday.to_rfc3339();
 
-    let mut index: i64 = setting(conn, "season_index", "1").parse().unwrap_or(1);
-    if index < 1 {
-        index = 1;
-    }
-    let saved_start_rfc = setting(conn, "season_start", &this_monday_rfc);
+    // 全局周赛季确定性基准纪元：2026-08-17 (周一) 为 S1 起点，当前 2026-08-24 为 S2
+    let epoch_monday = chrono::NaiveDate::from_ymd_opt(2026, 8, 17).unwrap();
+    let days_from_epoch = (this_monday.date_naive() - epoch_monday).num_days();
+    let global_season_index = ((days_from_epoch / 7).max(0) + 1) as i64;
 
     let (_, mut current) = current_elo(conn)?;
 
-    // 检查是否跨周结算：若 saved_start 所在时间小于当前这周一 00:00，则自动结算并进入新赛季
-    if let Ok(saved_dt) = chrono::DateTime::parse_from_rfc3339(&saved_start_rfc) {
-        let saved_local = saved_dt.with_timezone(&Local);
-        if saved_local < this_monday {
-            let days_diff = (this_monday.date_naive() - saved_local.date_naive()).num_days();
-            let weeks_elapsed = (days_diff / 7).max(1);
+    let saved_season_index: i64 = setting(conn, "season_index", "0").parse().unwrap_or(0);
+    let last_settled_season: i64 = if saved_season_index == 0 {
+        // 首次初始化：标记为当前全球赛季
+        let _ = conn.execute(
+            "INSERT INTO settings(key, value) VALUES('season_index', ?1), ('season_start', ?2)
+             ON CONFLICT(key) DO UPDATE SET value=excluded.value",
+            params![global_season_index.to_string(), this_monday_rfc],
+        );
+        global_season_index
+    } else {
+        saved_season_index
+    };
 
-            let old_end_naive = (saved_local.date_naive() + chrono::Duration::days(6))
-                .and_hms_opt(23, 59, 59)
-                .unwrap();
-            let old_end = match now.timezone().from_local_datetime(&old_end_naive) {
-                chrono::LocalResult::Single(dt) => dt.to_rfc3339(),
-                _ => this_monday_rfc.clone(),
-            };
+    // 自动跨周结算与段位软重置（若本地记录赛季落后于全球日历赛季）
+    if last_settled_season < global_season_index {
+        for s in last_settled_season..global_season_index {
+            let s_start_date = epoch_monday + chrono::Duration::days((s - 1) * 7);
+            let s_end_date = s_start_date + chrono::Duration::days(6);
+            let s_start_rfc = s_start_date.and_hms_opt(0, 0, 0).unwrap().to_string();
+            let s_end_rfc = s_end_date.and_hms_opt(23, 59, 59).unwrap().to_string();
 
             let peak: f64 = conn
                 .query_row(
                     "SELECT COALESCE(MAX(rating_after), ?1) FROM elo_events WHERE created_at >= ?2 AND created_at <= ?3",
-                    params![current, saved_start_rfc, old_end],
+                    params![current, s_start_rfc, s_end_rfc],
                     |r| r.get(0),
                 )
                 .unwrap_or(current);
@@ -4791,36 +4798,33 @@ fn season_status(conn: &Connection) -> Result<SeasonStatus, String> {
                 "INSERT INTO season_history(season_name, started_at, ended_at, peak_rating, final_rating, rank_index)
                  VALUES(?1, ?2, ?3, ?4, ?5, ?6)",
                 params![
-                    format!("S{}", index),
-                    saved_start_rfc,
-                    old_end,
+                    format!("S{}", s),
+                    s_start_rfc,
+                    s_end_rfc,
                     peak,
                     current,
                     services::rating::rank_band_index(current) as i64,
                 ],
             );
 
-            // 软重置：向 1000 ELO 基准收敛 25%
-            let new_current = ELO_START + (current - ELO_START) * SEASON_RESET_PULL;
-            let _ = conn.execute(
-                "INSERT INTO elo_events(question_id, delta, rating_after, performance, expected, created_at, session_id, reason)
-                 VALUES(0, ?1, ?2, 0, 0, ?3, NULL, 'season_reset')",
-                params![new_current - current, new_current, this_monday_rfc],
-            );
-            current = new_current;
-
-            index += weeks_elapsed;
-            let _ = conn.execute(
-                "INSERT INTO settings(key, value) VALUES('season_index', ?1), ('season_start', ?2)
-                 ON CONFLICT(key) DO UPDATE SET value=excluded.value",
-                params![index.to_string(), this_monday_rfc],
-            );
+            // 软重置：向 1400 ELO 基准收敛 25%
+            let (settlements, current_val) = current_elo(conn)?;
+            if settlements > 0 {
+                let new_current = ELO_START + (current_val - ELO_START) * SEASON_RESET_PULL;
+                let delta = new_current - current_val;
+                let _ = conn.execute(
+                    "INSERT INTO elo_events(question_id, delta, rating_after, performance, expected, created_at, session_id, reason)
+                     VALUES(0, ?1, ?2, 0, 0, ?3, NULL, 'season_reset')",
+                    params![delta, new_current, this_monday_rfc],
+                );
+                current = new_current;
+            }
         }
-    } else {
+
         let _ = conn.execute(
-            "INSERT INTO settings(key, value) VALUES('season_index', '1'), ('season_start', ?1)
+            "INSERT INTO settings(key, value) VALUES('season_index', ?1), ('season_start', ?2)
              ON CONFLICT(key) DO UPDATE SET value=excluded.value",
-            params![this_monday_rfc],
+            params![global_season_index.to_string(), this_monday_rfc],
         );
     }
 
@@ -4843,8 +4847,8 @@ fn season_status(conn: &Connection) -> Result<SeasonStatus, String> {
         .map_err(|e| e.to_string())?;
 
     Ok(SeasonStatus {
-        name: format!("S{}", index),
-        index,
+        name: format!("S{}", global_season_index),
+        index: global_season_index,
         started_at: this_monday_rfc,
         current_elo: current,
         history,
@@ -4860,60 +4864,6 @@ fn get_season_status(state: State<AppState>) -> Result<SeasonStatus, String> {
 #[tauri::command]
 fn advance_season(state: State<AppState>) -> Result<SeasonStatus, String> {
     let conn = state.db.lock().map_err(|e| e.to_string())?;
-    let index: i64 = setting(&conn, "season_index", "1").parse().unwrap_or(1);
-    let (settlements, current) = current_elo(&conn)?;
-    let now = Local::now();
-    let now_rfc = now.to_rfc3339();
-    let started_at = setting(&conn, "season_start", &now_rfc);
-
-    // 严格限定一周一次赛季更新
-    if let Ok(saved_dt) = chrono::DateTime::parse_from_rfc3339(&started_at) {
-        let saved_local = saved_dt.with_timezone(&Local);
-        let days_elapsed = (now.date_naive() - saved_local.date_naive()).num_days();
-        if days_elapsed < 7 {
-            let days_left = 7 - days_elapsed;
-            return Err(format!(
-                "本赛季（S{}）正在进行中（已开启 {} 天）。赛季每周仅可更新结算一次，距离下周一自动结算还剩 {} 天。",
-                index, days_elapsed, days_left
-            ));
-        }
-    }
-
-    if settlements > 0 {
-        let peak: f64 = conn
-            .query_row(
-                "SELECT COALESCE(MAX(rating_after),?1) FROM elo_events WHERE created_at>=?2",
-                params![current, started_at],
-                |r| r.get(0),
-            )
-            .unwrap_or(current);
-        conn.execute(
-            "INSERT INTO season_history(season_name,started_at,ended_at,peak_rating,final_rating,rank_index)
-             VALUES(?1,?2,?3,?4,?5,?6)",
-            params![
-                format!("S{}", index),
-                started_at,
-                now_rfc,
-                peak,
-                current,
-                services::rating::rank_band_index(current) as i64
-            ],
-        )
-        .map_err(|e| e.to_string())?;
-        let new_current = ELO_START + (current - ELO_START) * SEASON_RESET_PULL;
-        conn.execute(
-            "INSERT INTO elo_events(question_id,delta,rating_after,performance,expected,created_at,session_id,reason)
-             VALUES(0,?1,?2,0,0,?3,NULL,'season_reset')",
-            params![new_current - current, new_current, now_rfc],
-        )
-        .map_err(|e| e.to_string())?;
-    }
-    conn.execute(
-        "INSERT INTO settings(key,value) VALUES('season_index',?1),('season_start',?2)
-         ON CONFLICT(key) DO UPDATE SET value=excluded.value",
-        params![(index + 1).to_string(), now_rfc],
-    )
-    .map_err(|e| e.to_string())?;
     season_status(&conn)
 }
 
@@ -7595,19 +7545,49 @@ fn publish_friend_snapshot(config: FriendSyncConfig, friend_code: String, payloa
 fn pull_friend_snapshots(config: FriendSyncConfig, friend_codes: Vec<String>) -> Result<Vec<FriendSyncRemoteSnapshot>, String> {
     let client = friend_sync_client()?;
     let folder_url = friend_sync_resolve_folder_url(&client, &config)?;
-    let mut snapshots = Vec::new();
-    for code in friend_codes {
-        let file_name = friend_sync_file_name(&code)?;
-        let file_url = folder_url.join(&file_name).map_err(|_| "无法拼接好友数据文件路径".to_string())?;
-        let response = friend_sync_auth(client.get(file_url), &config)
-            .send()
-            .map_err(|e| format!("读取好友数据失败：{e}"))?;
-        if response.status() == StatusCode::NOT_FOUND { continue; }
-        if !response.status().is_success() {
-            return Err(format!("读取好友数据失败：HTTP {}", response.status()));
+    let mut file_names = std::collections::HashSet::new();
+
+    // 1. 自动漫游发现：尝试通过 PROPFIND Depth: 1 列出共享目录中所有好友数据文件
+    if let Ok(propfind_resp) = friend_sync_auth(
+        client.request(Method::from_bytes(b"PROPFIND").unwrap(), folder_url.clone()),
+        &config,
+    )
+    .header("Depth", "1")
+    .send() {
+        if propfind_resp.status().is_success() {
+            if let Ok(xml_text) = propfind_resp.text() {
+                // 扫描所有匹配 shuaba-friend-*.json 的文件名
+                for segment in xml_text.split("shuaba-friend-").skip(1) {
+                    if let Some(end_idx) = segment.find(".json") {
+                        let code = &segment[..end_idx];
+                        if !code.is_empty() && code.len() <= 64 && code.chars().all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_') {
+                            file_names.insert(format!("shuaba-friend-{}.json", code));
+                        }
+                    }
+                }
+            }
         }
-        let payload = response.text().map_err(|e| format!("读取好友数据内容失败：{e}"))?;
-        snapshots.push(FriendSyncRemoteSnapshot { file_name, payload });
+    }
+
+    // 2. 显式好友码补充（定向兜底）
+    for code in friend_codes {
+        if let Ok(file_name) = friend_sync_file_name(&code) {
+            file_names.insert(file_name);
+        }
+    }
+
+    let mut snapshots = Vec::new();
+    for file_name in file_names {
+        let file_url = folder_url.join(&file_name).map_err(|_| "无法拼接好友数据文件路径".to_string())?;
+        let response = match friend_sync_auth(client.get(file_url), &config).send() {
+            Ok(r) => r,
+            Err(_) => continue,
+        };
+        if response.status() == StatusCode::NOT_FOUND { continue; }
+        if !response.status().is_success() { continue; }
+        if let Ok(payload) = response.text() {
+            snapshots.push(FriendSyncRemoteSnapshot { file_name, payload });
+        }
     }
     Ok(snapshots)
 }
@@ -8283,10 +8263,10 @@ mod tests {
             },
         )
         .unwrap();
-        // calibration K=30，无进度记录按掌握度 2 → 期望 0.60 → +30*(1.6/2-0.60) = +6
+        // calibration K=30，掌握度 2 期望 0.50 → +30*(1.6/2 - 0.50) = +9.0
         let (settlements, current) = current_elo(&conn).unwrap();
         assert_eq!(settlements, 1);
-        assert_eq!(current, ELO_START + 6.0);
+        assert_eq!(current, ELO_START + 9.0);
 
         record_attempt_row(
             &conn,

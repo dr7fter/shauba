@@ -203,6 +203,7 @@ export function buildMyFriendProfile(
     lastActiveAt: new Date().toISOString(),
     eloChangeToday: Math.round(eloStatus?.lastDelta ?? 12),
     isSelf: true,
+    seasonName: tacticalData?.currentSeason || 'S2',
     dimensions: {
       rigor: dimsMap.rigor,
       computation: dimsMap.computation,

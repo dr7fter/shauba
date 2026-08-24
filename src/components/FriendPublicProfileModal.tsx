@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useState, useMemo } from 'react'
 import { AnimatePresence, motion } from 'framer-motion'
 import {
   Activity,
@@ -45,6 +45,13 @@ function formatDate(iso: string): string {
   }
 }
 
+const RADAR_CONFIG = {
+  center: { x: 125, y: 110 },
+  maxR: 75,
+  angles: [0, 60, 120, 180, 240, 300].map((deg) => (deg - 90) * (Math.PI / 180)),
+  labels: ['严谨性', '计算力', '作答速度', '建模转化', '方法运用', '应试策略'],
+}
+
 export function FriendPublicProfileModal({
   friend,
   activities,
@@ -65,54 +72,81 @@ export function FriendPublicProfileModal({
 
   if (!friend) return null
 
-  const presenceInfo = calculatePresenceState(presence, friend.lastSyncedAt, friend.lastActiveAt)
-  const friendKey = friend.profileId || friend.friendCode
-  const friendMatches = getFriendCachedMatches(friendKey)
-  const friendActivities = activities.filter((a) => a.friendCode === friend.friendCode)
-
   const handleOpenReport = (match: FriendPublicMatch) => {
     if (!match.reportId) return
-    const rep = getPublicReportById(friendKey, match.reportId)
+    const fKey = friend.profileId || friend.friendCode
+    const rep = getPublicReportById(fKey, match.reportId)
     if (rep) {
       setSelectedReport(rep)
     }
   }
 
-  // Radar points
-  const dims = friend.dimensions
-  const dimValues = [
-    dims.rigor || 60,
-    dims.computation || 60,
-    dims.speed || 60,
-    dims.modeling || 60,
-    dims.methodUse || 60,
-    dims.strategyInsight || 60,
-  ]
-  const labels = ['严谨性', '计算力', '作答速度', '建模转化', '方法运用', '应试策略']
+  const { polygonPoints, gridCircles, dataPoints, labelPoints, dimValues, friendMatches, friendActivities, presenceInfo } = useMemo(() => {
+    const pInfo = calculatePresenceState(presence, friend.lastSyncedAt, friend.lastActiveAt)
+    const fKey = friend.profileId || friend.friendCode
+    const fMatches = getFriendCachedMatches(fKey)
+    const fActivities = activities.filter((a) => a.friendCode === friend.friendCode)
 
-  const center = { x: 125, y: 110 }
-  const maxR = 75
-  const angles = [0, 60, 120, 180, 240, 300].map((deg) => (deg - 90) * (Math.PI / 180))
+    const dims = friend.dimensions
+    const dValues = [
+      dims.rigor || 60,
+      dims.computation || 60,
+      dims.speed || 60,
+      dims.modeling || 60,
+      dims.methodUse || 60,
+      dims.strategyInsight || 60,
+    ]
 
-  const polygonPoints = dimValues
-    .map((val, i) => {
-      const r = (val / 100) * maxR
-      const x = center.x + r * Math.cos(angles[i])
-      const y = center.y + r * Math.sin(angles[i])
-      return `${x.toFixed(1)},${y.toFixed(1)}`
-    })
-    .join(' ')
+    const { center, maxR, angles, labels } = RADAR_CONFIG
 
-  const gridCircles = [0.25, 0.5, 0.75, 1.0].map((frac) => {
-    return angles
-      .map((ang) => {
-        const r = frac * maxR
-        const x = center.x + r * Math.cos(ang)
-        const y = center.y + r * Math.sin(ang)
+    const pPoints = dValues
+      .map((val, i) => {
+        const r = (val / 100) * maxR
+        const x = center.x + r * Math.cos(angles[i])
+        const y = center.y + r * Math.sin(angles[i])
         return `${x.toFixed(1)},${y.toFixed(1)}`
       })
       .join(' ')
-  })
+
+    const gCircles = [0.25, 0.5, 0.75, 1.0].map((frac) => {
+      return angles
+        .map((ang) => {
+          const r = frac * maxR
+          const x = center.x + r * Math.cos(ang)
+          const y = center.y + r * Math.sin(ang)
+          return `${x.toFixed(1)},${y.toFixed(1)}`
+        })
+        .join(' ')
+    })
+
+    const dPoints = dValues.map((val, i) => {
+      const r = (val / 100) * maxR
+      return {
+        x: center.x + r * Math.cos(angles[i]),
+        y: center.y + r * Math.sin(angles[i]),
+      }
+    })
+
+    const lPoints = labels.map((label, i) => {
+      const r = maxR + 18
+      return {
+        label,
+        x: center.x + r * Math.cos(angles[i]),
+        y: center.y + r * Math.sin(angles[i]) + 4,
+      }
+    })
+
+    return {
+      polygonPoints: pPoints,
+      gridCircles: gCircles,
+      dataPoints: dPoints,
+      labelPoints: lPoints,
+      dimValues: dValues,
+      friendMatches: fMatches,
+      friendActivities: fActivities,
+      presenceInfo: pInfo,
+    }
+  }, [friend, presence, activities])
 
   return (
     <>
@@ -252,13 +286,13 @@ export function FriendPublicProfileModal({
                         ))}
 
                         {/* Spokes */}
-                        {angles.map((ang, i) => (
+                        {RADAR_CONFIG.angles.map((ang, i) => (
                           <line
                             key={i}
-                            x1={center.x}
-                            y1={center.y}
-                            x2={center.x + maxR * Math.cos(ang)}
-                            y2={center.y + maxR * Math.sin(ang)}
+                            x1={RADAR_CONFIG.center.x}
+                            y1={RADAR_CONFIG.center.y}
+                            x2={RADAR_CONFIG.center.x + RADAR_CONFIG.maxR * Math.cos(ang)}
+                            y2={RADAR_CONFIG.center.y + RADAR_CONFIG.maxR * Math.sin(ang)}
                             stroke="rgba(255,255,255,0.08)"
                             strokeWidth="1"
                           />
@@ -273,46 +307,36 @@ export function FriendPublicProfileModal({
                         />
 
                         {/* Data Points */}
-                        {dimValues.map((val, i) => {
-                          const r = (val / 100) * maxR
-                          const x = center.x + r * Math.cos(angles[i])
-                          const y = center.y + r * Math.sin(angles[i])
-                          return (
-                            <circle
-                              key={i}
-                              cx={x}
-                              cy={y}
-                              r="3.5"
-                              fill="#10b981"
-                              stroke="#ffffff"
-                              strokeWidth="1.5"
-                            />
-                          )
-                        })}
+                        {dataPoints.map((pt, i) => (
+                          <circle
+                            key={i}
+                            cx={pt.x}
+                            cy={pt.y}
+                            r="3.5"
+                            fill="#10b981"
+                            stroke="#ffffff"
+                            strokeWidth="1.5"
+                          />
+                        ))}
 
                         {/* Labels */}
-                        {labels.map((label, i) => {
-                          const r = maxR + 18
-                          const x = center.x + r * Math.cos(angles[i])
-                          const y = center.y + r * Math.sin(angles[i]) + 4
-                          return (
-                            <text
-                              key={i}
-                              x={x}
-                              y={y}
-                              textAnchor="middle"
-                              fill="rgba(255,255,255,0.7)"
-                              fontSize="11"
-                            >
-                              {label}
-                            </text>
-                          )
-                        })}
+                        {labelPoints.map((item, i) => (
+                          <text
+                            key={i}
+                            x={item.x}
+                            y={item.y}
+                            textAnchor="middle"
+                            fill="rgba(255,255,255,0.7)"
+                            fontSize="11"
+                          >
+                            {item.label}
+                          </text>
+                        ))}
                       </svg>
                     </div>
 
                     <div className="dimension-bars-list">
-                      {labels.map((lbl, idx) => {
+                      {RADAR_CONFIG.labels.map((lbl, idx) => {
                         const val = dimValues[idx]
                         return (
                           <div key={lbl} className="dim-bar-row">

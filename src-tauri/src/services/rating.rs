@@ -13,6 +13,7 @@ use rusqlite::Connection;
 
 pub const RATING_MIN: f64 = 0.0;
 pub const RATING_MAX: f64 = 2.50;
+#[allow(dead_code)]
 pub const RATING_AVERAGE: f64 = 1.0;
 
 const DIFFICULTY_MULTIPLIER_MIN: f64 = 0.94;
@@ -81,15 +82,15 @@ pub fn attempt_rating(outcome: &str, fluency: i32, duration_seconds: i64, benchm
     rating_curve(performance, 1.0)
 }
 
-struct AttemptEvidence {
-    outcome: String,
-    fluency: i32,
-    duration_seconds: Option<i64>,
-    benchmark_seconds: i64,
-    ai_rating: Option<f64>,
-    dims: DimensionEvidence,
-    difficulty_multiplier: Option<f64>,
-    attempted_date: Option<NaiveDate>,
+pub struct AttemptEvidence {
+    pub outcome: String,
+    pub fluency: i32,
+    pub duration_seconds: Option<i64>,
+    pub benchmark_seconds: i64,
+    pub ai_rating: Option<f64>,
+    pub dims: DimensionEvidence,
+    pub difficulty_multiplier: Option<f64>,
+    pub attempted_date: Option<NaiveDate>,
 }
 
 /// Fold one question's recent attempts into a single decay-weighted rating.
@@ -422,6 +423,7 @@ pub fn hltv_rating(
 }
 
 /// 考场 150 分预测分映射算法 (单调平滑分段函数)
+#[allow(dead_code)]
 pub fn predicted_exam_score(rating: f64, kast: Option<f64>) -> i32 {
     let k = kast.unwrap_or(75.0).clamp(40.0, 100.0) / 100.0;
     let r = rating.clamp(0.0, RATING_MAX);

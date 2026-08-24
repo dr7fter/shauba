@@ -1,3 +1,4 @@
+import { useMemo } from 'react'
 import { AnimatePresence, motion } from 'framer-motion'
 import { Swords, X } from 'lucide-react'
 import type { FriendProfile } from '../types'
@@ -38,21 +39,26 @@ export function FriendVsRadarModal({
     return { x, y }
   }
 
-  const myPoints = DIMENSION_CONFIG.map((d, i) => getCoordinates(myProfile.dimensions[d.key], i))
-  const friendPoints = DIMENSION_CONFIG.map((d, i) => getCoordinates(friend.dimensions[d.key], i))
+  const { myPolygonStr, friendPolygonStr, myWins, friendWins } = useMemo(() => {
+    const myPoints = DIMENSION_CONFIG.map((d, i) => getCoordinates(myProfile.dimensions[d.key] ?? 50, i))
+    const friendPoints = DIMENSION_CONFIG.map((d, i) => getCoordinates(friend.dimensions[d.key] ?? 50, i))
 
-  const myPolygonStr = myPoints.map((p) => `${p.x},${p.y}`).join(' ')
-  const friendPolygonStr = friendPoints.map((p) => `${p.x},${p.y}`).join(' ')
+    let wins = 0
+    let fWins = 0
+    DIMENSION_CONFIG.forEach((d) => {
+      const myVal = myProfile.dimensions[d.key] ?? 50
+      const friendVal = friend.dimensions[d.key] ?? 50
+      if (myVal > friendVal) wins++
+      else if (friendVal > myVal) fWins++
+    })
 
-  // Calculate Win / Loss counts
-  let myWins = 0
-  let friendWins = 0
-  DIMENSION_CONFIG.forEach((d) => {
-    const myVal = myProfile.dimensions[d.key]
-    const friendVal = friend.dimensions[d.key]
-    if (myVal > friendVal) myWins++
-    else if (friendVal > myVal) friendWins++
-  })
+    return {
+      myPolygonStr: myPoints.map((p) => `${p.x},${p.y}`).join(' '),
+      friendPolygonStr: friendPoints.map((p) => `${p.x},${p.y}`).join(' '),
+      myWins: wins,
+      friendWins: fWins,
+    }
+  }, [myProfile.dimensions, friend.dimensions])
 
   return (
     <AnimatePresence>
@@ -223,9 +229,10 @@ export function FriendVsRadarModal({
                   <span>对手</span>
                 </div>
                 {DIMENSION_CONFIG.map((d) => {
-                  const myVal = myProfile.dimensions[d.key]
-                  const friendVal = friend.dimensions[d.key]
+                  const myVal = Number(myProfile.dimensions[d.key] ?? 50)
+                  const friendVal = Number(friend.dimensions[d.key] ?? 50)
                   const diff = myVal - friendVal
+                  const diffStr = Math.abs(diff).toFixed(1)
                   return (
                     <div key={d.key} className="vs-dim-row">
                       <div className="dim-name-cell">
@@ -233,19 +240,19 @@ export function FriendVsRadarModal({
                         <span>{d.desc}</span>
                       </div>
                       <div className={`dim-val-cell my-val ${diff > 0 ? 'win' : ''}`}>
-                        {myVal}
+                        {myVal.toFixed(1)}
                       </div>
                       <div className="dim-diff-cell">
-                        {diff > 0 ? (
-                          <span className="diff-badge win">+{diff} 胜</span>
-                        ) : diff < 0 ? (
-                          <span className="diff-badge lose">{diff} 负</span>
+                        {diff > 0.05 ? (
+                          <span className="diff-badge win">+{diffStr} 胜</span>
+                        ) : diff < -0.05 ? (
+                          <span className="diff-badge lose">-{diffStr} 负</span>
                         ) : (
                           <span className="diff-badge draw">平</span>
                         )}
                       </div>
-                      <div className={`dim-val-cell friend-val ${diff < 0 ? 'win' : ''}`}>
-                        {friendVal}
+                      <div className={`dim-val-cell friend-val ${diff < -0.05 ? 'win' : ''}`}>
+                        {friendVal.toFixed(1)}
                       </div>
                     </div>
                   )

@@ -116,6 +116,7 @@ struct AttemptDimensions {
 }
 
 impl AttemptDimensions {
+    #[allow(dead_code)]
     fn is_empty(&self) -> bool {
         self.rigor.is_none()
             && self.computation.is_none()
@@ -4572,7 +4573,7 @@ fn fetch_rating_rows(conn: &Connection, filter: &str, param: &str) -> Result<Vec
     drop(stmt);
     Ok(rows
         .into_iter()
-        .map(|(question_id, stem, outcome, fluency, ai_rating, duration, qtype, rigor, computation, modeling, method_use, speed, strategy, technique, dm)| RatingRow {
+        .map(|(question_id, stem, outcome, fluency, ai_rating, duration, qtype, rigor, computation, modeling, method_use, speed, strategy, technique, _dm)| RatingRow {
             question_id,
             stem,
             outcome,

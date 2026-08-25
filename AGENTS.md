@@ -1,7 +1,7 @@
 # 刷吧 · AI Agent 通用工作契约
 
 > 任何 AI Agent（Codex / Claude Code / Cursor / ZCode 等）在本仓库工作时，以本文件为唯一权威入口。
-> 版本：v1.5.2 · 更新：2026-08-25
+> 版本：v1.5.3 · 更新：2026-08-25
 
 ## 一、项目是什么
 
@@ -36,7 +36,7 @@ cd src-tauri && cargo test --locked   # Rust 测试门禁（当前 88 个）
 src-tauri/src/lib.rs        # 后端核心（~1.1万行）：Tauri command、ELO 结算、学习中心双引擎、WebDAV 同步
 src-tauri/src/services/rating.rs  # 评分内核：HLTV 合成、特征曲线、段位表（纯函数+测试）
 src/views/                  # TodayView(训练) InsightsView(数据) ReviewView(复盘) LibraryView(题库) SettingsView(设置) LearningCenterView(学习中心)
-src/components/             # GradingReportModal(模考报告) FriendsLadderView(好友天梯) FriendVsRadarModal(1v1对决) UpdateModal(应用内更新) MathText(KaTeX) 等
+src/components/             # GradingReportModal(模考报告) FriendsLadderView(好友天梯) FriendVsRadarModal(1v1对决) FriendShareCardModal(战力名片) UpdateModal(应用内更新) MathText(KaTeX) 等
 src/api.ts / types.ts       # 前端 API 封装与类型（与 lib.rs serde camelCase 对应）
 src/data/friendsService.ts  # 好友战绩卡与 WebDAV 同步服务（v1.4.0+ / v1.5.0+ 增强）
 src/data/friendPublicData.ts # 好友公开主页、Presence 心跳计算与脱敏战报

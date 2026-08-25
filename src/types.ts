@@ -851,7 +851,7 @@ export type LearningIntegrity = {
 }
 
 export type LearningCenterNavigationTarget =
-  | { type: 'today'; questionId?: number | null; objectiveId?: string }
+  | { type: 'today'; questionId?: number | null; objectiveId?: string; queueQuestionIds?: number[] }
   | { type: 'review'; questionId?: number | null; mistakeChainId?: string }
   | { type: 'mastery'; categoryId?: number | null }
   | { type: 'insights' }

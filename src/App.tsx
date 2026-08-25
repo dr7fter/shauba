@@ -1009,7 +1009,29 @@ export default function App() {
                 onNavigate={(target) => {
                   switch (target.type) {
                     case 'today':
-                      if (target.questionId) {
+                      if (target.queueQuestionIds && target.queueQuestionIds.length > 0) {
+                        Promise.all(target.queueQuestionIds.map((id) => getQuestion(id)))
+                          .then((qs) => {
+                            const validQuestions = qs.filter((q): q is NonNullable<typeof q> => Boolean(q))
+                            if (validQuestions.length > 0) {
+                              setPracticeQueue(
+                                validQuestions.map((q) => ({
+                                  question: q,
+                                  score: 100,
+                                  reason: '来自学习中心今日起手式合流',
+                                  reasonCode: 'target',
+                                }))
+                              )
+                              setPracticeStartIndex(0)
+                              setAttemptMode('paper')
+                              setView('today')
+                              setNotice(`已开启今日起手式合流训练（共 ${validQuestions.length} 题）`)
+                            } else {
+                              setView('today')
+                            }
+                          })
+                          .catch(() => setView('today'))
+                      } else if (target.questionId) {
                         getQuestion(target.questionId)
                           .then((q) => {
                             if (q) {

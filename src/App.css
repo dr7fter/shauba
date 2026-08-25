@@ -8340,3 +8340,285 @@
   color: var(--muted);
   border: 1px solid var(--line);
 }
+
+/* ========================================================
+   📸 战术名片分享弹窗 (Share Card Modal)
+   ======================================================== */
+.share-card-modal {
+  max-width: 460px;
+  width: 90vw;
+}
+
+.share-title-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.share-title-row h2 {
+  margin: 0;
+  font-size: var(--fs-lg);
+  font-weight: 800;
+  color: var(--ink);
+}
+
+.share-title-row p {
+  margin: 2px 0 0;
+  font-size: var(--fs-xs);
+  color: var(--muted);
+}
+
+.share-card-modal-body {
+  padding: 20px;
+  display: flex;
+  justify-content: center;
+}
+
+.tactical-share-card {
+  width: 100%;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: var(--r-lg);
+  padding: 20px;
+  box-shadow: var(--shadow-2);
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  position: relative;
+  overflow: hidden;
+}
+
+.card-top-glow {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 4px;
+  background: linear-gradient(90deg, var(--green), var(--gold), var(--cyan));
+}
+
+.card-header-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.card-user-info {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.card-avatar {
+  font-size: 32px;
+  line-height: 1;
+}
+
+.card-nickname {
+  margin: 0;
+  font-size: var(--fs-lg);
+  font-weight: 800;
+  color: var(--ink);
+}
+
+.card-school {
+  font-size: var(--fs-xs);
+  color: var(--muted);
+}
+
+.card-rank-badge-wrap {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  background: color-mix(in srgb, var(--gold) 15%, transparent);
+  border: 1px solid color-mix(in srgb, var(--gold) 35%, transparent);
+  padding: 4px 10px;
+  border-radius: var(--r-sm);
+}
+
+.card-rank-letter {
+  font-size: var(--fs-md);
+  font-weight: 800;
+  color: var(--gold);
+}
+
+.card-rank-title {
+  font-size: 10px;
+  color: var(--muted);
+}
+
+.card-stats-row {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 8px;
+  background: var(--sunken);
+  padding: 10px;
+  border-radius: var(--r-md);
+}
+
+.card-stat-box {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+}
+
+.card-stat-label {
+  font-size: 10px;
+  color: var(--quiet);
+}
+
+.card-stat-val {
+  font-size: var(--fs-sm);
+  font-weight: 800;
+  color: var(--ink);
+}
+
+.card-radar-section {
+  display: flex;
+  justify-content: center;
+}
+
+.card-radar-canvas {
+  display: grid;
+  place-items: center;
+}
+
+.card-radar-ring {
+  fill: none;
+  stroke: var(--line);
+  stroke-width: 1;
+}
+
+.card-radar-axis {
+  stroke: var(--line);
+  stroke-width: 1;
+  stroke-dasharray: 2 2;
+}
+
+.card-radar-poly {
+  fill: color-mix(in srgb, var(--green) 35%, transparent);
+  stroke: var(--green);
+  stroke-width: 2;
+}
+
+.card-radar-label {
+  font-size: 10px;
+  font-weight: 700;
+  fill: var(--muted);
+}
+
+.card-footer-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  border-top: 1px dashed var(--line);
+  padding-top: 12px;
+}
+
+.card-code-block {
+  display: flex;
+  flex-direction: column;
+}
+
+.card-code-label {
+  font-size: 10px;
+  color: var(--quiet);
+}
+
+.card-code-val {
+  font-size: var(--fs-sm);
+  font-weight: 800;
+  color: var(--ink);
+  letter-spacing: 0.5px;
+}
+
+.card-brand-tag {
+  font-size: var(--fs-xs);
+  font-weight: 700;
+  color: var(--gold);
+}
+
+.share-modal-footer {
+  display: flex;
+  justify-content: flex-end;
+  gap: 10px;
+  padding: 14px 20px;
+  border-top: 1px solid var(--line);
+}
+
+/* ========================================================
+   🛡️ 错题排雷六步状态机进度条 (Defusal Step Progress)
+   ======================================================== */
+.defusal-step-progress {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  position: relative;
+  margin: 12px 0 6px;
+  padding: 0 4px;
+}
+
+.step-node-item {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  position: relative;
+  z-index: 2;
+}
+
+.step-dot {
+  width: 20px;
+  height: 20px;
+  border-radius: var(--r-full);
+  background: var(--sunken);
+  border: 2px solid var(--line);
+  display: grid;
+  place-items: center;
+  font-size: 10px;
+  font-weight: 800;
+  color: var(--quiet);
+  transition: all 0.2s ease;
+}
+
+.step-node-item.active .step-dot {
+  border-color: var(--gold);
+  background: color-mix(in srgb, var(--gold) 20%, transparent);
+  color: var(--gold);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--gold) 20%, transparent);
+}
+
+.step-node-item.completed .step-dot {
+  border-color: var(--green);
+  background: var(--green);
+  color: var(--surface);
+}
+
+.step-node-label {
+  font-size: 10px;
+  font-weight: 700;
+  color: var(--quiet);
+  white-space: nowrap;
+}
+
+.step-node-item.active .step-node-label {
+  color: var(--gold);
+}
+
+.step-node-item.completed .step-node-label {
+  color: var(--green);
+}
+
+.step-connector-line {
+  flex: 1;
+  height: 2px;
+  background: var(--line);
+  margin: -16px 4px 0;
+  position: relative;
+  z-index: 1;
+}
+
+.step-connector-line.completed {
+  background: var(--green);
+}

@@ -13,6 +13,7 @@ import {
   Trophy,
   Users,
   X,
+  Zap,
 } from 'lucide-react'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { getLearningCenterSnapshot } from '../api'
@@ -185,6 +186,28 @@ function EvidenceDrawer({ metric, evidence, onClose }: { metric: LearningMetric 
   </aside></div>
 }
 
+function DefusalStepProgress({ chain }: { chain: MistakeChain }) {
+  const steps = [
+    { label: '诊断', done: chain.stage !== 'exposed', active: chain.stage === 'exposed' },
+    { label: '原题', done: chain.originalRetryPassed, active: chain.stage === 'diagnosed' || chain.stage === 'original_retry' },
+    { label: '相似', done: chain.similarPassed, active: chain.stage === 'similar_check' },
+    { label: '变式', done: chain.transferPassed, active: chain.stage === 'transfer_check' },
+    { label: '延迟', done: chain.delayedReviewPassed, active: chain.stage === 'delayed_review' },
+    { label: '🛡️排雷', done: Boolean(chain.stableClosedAt), active: chain.stage === 'closed' },
+  ]
+
+  return (
+    <div className="defusal-step-progress">
+      {steps.map((step, idx) => (
+        <div key={step.label} className={`step-node-item ${step.done ? 'completed' : step.active ? 'active' : ''}`}>
+          <div className="step-dot">{step.done ? '✓' : idx + 1}</div>
+          <span className="step-node-label">{step.label}</span>
+        </div>
+      ))}
+    </div>
+  )
+}
+
 export function LearningCenterView({ initialData = null, featureFlags, onNavigate, onNotify, onRefresh }: LearningCenterViewProps) {
   const flags = featureFlags ?? {
     learningCenterV1: isFeatureEnabled('learningCenterV1'), learningEvidenceProjectionV1: isFeatureEnabled('learningEvidenceProjectionV1'), lowConfidenceGateV1: isFeatureEnabled('lowConfidenceGateV1'), nonPressureBatchGradingV1: isFeatureEnabled('nonPressureBatchGradingV1'), shadowRecommendationPlanV1: isFeatureEnabled('shadowRecommendationPlanV1'), rankedOnlyEloV1: isFeatureEnabled('rankedOnlyEloV1'), friendBroadcastsV1: isFeatureEnabled('friendBroadcastsV1'),
@@ -261,10 +284,37 @@ export function LearningCenterView({ initialData = null, featureFlags, onNavigat
     {integrityMessage ? <div className="learning-alert learning-alert-info" role="status"><ShieldCheck size={16} /><span>{integrityMessage}</span></div> : null}
     {sectionErrors.length > 0 ? <div className="learning-section-errors" role="status">{sectionErrors.map((item) => <div className="learning-alert learning-alert-warn" key={item.section}><AlertTriangle size={15} /><span>{item.section}：{item.message}</span></div>)}</div> : null}
     {!snapshot ? <div className="learning-card learning-full-error" role="alert"><AlertTriangle size={24} /><h2>暂时无法读取学习中心</h2><p>{error ?? '没有可用的本地学习快照。'}</p><button type="button" className="learning-primary-button" onClick={() => void load(true)}>重新读取</button></div> : <>
-      <section className="learning-card learning-objectives-card" aria-labelledby="learning-objectives-title"><div className="learning-section-heading"><div><span className="learning-eyebrow">今日起手式</span><h2 id="learning-objectives-title">今天只做三件事</h2></div><span className="learning-progress-summary">{snapshot.today?.completedCount ?? 0}/{snapshot.today?.totalCount ?? 0} 项 · {snapshot.today?.completedMinutes ?? 0}/{snapshot.today?.plannedMinutes ?? 0} 分钟</span></div>{objectives.length === 0 ? <EmptySection title="暂无今日目标" detail="后端没有返回可执行目标；学习中心不会在前端自行生成计划。" /> : <div className="learning-objectives-grid">{objectives.slice(0, 3).map((objective) => <ObjectiveCard key={objective.id} objective={objective} onOpen={() => openObjective(objective)} />)}</div>}</section>
+      <section className="learning-card learning-objectives-card" aria-labelledby="learning-objectives-title">
+        <div className="learning-section-heading">
+          <div><span className="learning-eyebrow">今日起手式</span><h2 id="learning-objectives-title">今天只做三件事</h2></div>
+          <div className="learning-header-actions">
+            <span className="learning-progress-summary">{snapshot.today?.completedCount ?? 0}/{snapshot.today?.totalCount ?? 0} 项 · {snapshot.today?.completedMinutes ?? 0}/{snapshot.today?.plannedMinutes ?? 0} 分钟</span>
+            {objectives.length > 0 && (
+              <button
+                type="button"
+                className="learning-primary-button compact"
+                onClick={() => {
+                  const allQids = objectives.flatMap((o) => o.questionIds).filter(Boolean)
+                  if (allQids.length > 0) {
+                    onNavigate({ type: 'today', questionId: allQids[0], queueQuestionIds: allQids })
+                  } else {
+                    openObjective(objectives[0])
+                  }
+                }}
+              >
+                <Zap size={14} /> ⚡ 一键合流开练 ({objectives.length}项)
+              </button>
+            )}
+          </div>
+        </div>
+        {objectives.length === 0 ? <EmptySection title="暂无今日目标" detail="后端没有返回可执行目标；学习中心不会在前端自行生成计划。" /> : <div className="learning-objectives-grid">{objectives.slice(0, 3).map((objective) => <ObjectiveCard key={objective.id} objective={objective} onOpen={() => openObjective(objective)} />)}</div>}
+      </section>
       <MetricStrip metrics={metrics} projectionEnabled={flags.learningEvidenceProjectionV1} onOpen={setSelectedMetric} />
       <div className="learning-main-grid">
-        <section className="learning-card" aria-labelledby="learning-chains-title"><div className="learning-section-heading"><div><span className="learning-eyebrow">错题闭环</span><h2 id="learning-chains-title">错题状态链</h2></div><button type="button" className="learning-link-button" onClick={() => onNavigate({ type: 'review' })}>打开复盘 <ArrowRight size={14} /></button></div>{chains.length === 0 ? <EmptySection title="暂无活跃错题链" detail="没有足够的确定性证据形成状态链。" /> : <div className="learning-chain-list">{chains.slice(0, 5).map((chain) => <article className="learning-chain" key={chain.id}><div className="learning-chain-head"><div><strong>{chain.label}</strong><small>{chain.categoryPath}</small></div><span className={'learning-chain-stage learning-chain-' + chain.stage}>{chain.statusLabel || STAGE_LABELS[chain.stage] || chain.stage}</span></div><div className="learning-chain-steps"><span className={chain.stage !== 'exposed' ? 'done' : ''}>诊断</span><i /><span className={chain.originalRetryPassed ? 'done' : ''}>原题</span><i /><span className={chain.similarPassed ? 'done' : ''}>相似</span><i /><span className={chain.transferPassed ? 'done' : ''}>变式</span><i /><span className={chain.delayedReviewPassed ? 'done' : ''}>延迟</span><i /><span className={chain.stableClosedAt ? 'done' : ''}>稳定</span></div><p><MathText value={chain.blockedReason ?? chain.advice ?? ('证据 ' + chain.evidenceCount + ' 条 · ' + formatConfidence(chain.confidence))} /></p><button type="button" className="learning-link-button" onClick={() => openChain(chain)}>查看状态链 <ChevronRight size={14} /></button></article>)}</div>}</section>
+        <section className="learning-card" aria-labelledby="learning-chains-title">
+          <div className="learning-section-heading"><div><span className="learning-eyebrow">错题闭环</span><h2 id="learning-chains-title">错题状态链</h2></div><button type="button" className="learning-link-button" onClick={() => onNavigate({ type: 'review' })}>打开复盘 <ArrowRight size={14} /></button></div>
+          {chains.length === 0 ? <EmptySection title="暂无活跃错题链" detail="没有足够的确定性证据形成状态链。" /> : <div className="learning-chain-list">{chains.slice(0, 5).map((chain) => <article className="learning-chain" key={chain.id}><div className="learning-chain-head"><div><strong>{chain.label}</strong><small>{chain.categoryPath}</small></div><span className={'learning-chain-stage learning-chain-' + chain.stage}>{chain.statusLabel || STAGE_LABELS[chain.stage] || chain.stage}</span></div><DefusalStepProgress chain={chain} /><p><MathText value={chain.blockedReason ?? chain.advice ?? ('证据 ' + chain.evidenceCount + ' 条 · ' + formatConfidence(chain.confidence))} /></p><button type="button" className="learning-link-button" onClick={() => openChain(chain)}>查看状态链 <ChevronRight size={14} /></button></article>)}</div>}
+        </section>
         <section className="learning-card" aria-labelledby="learning-recommendations-title"><div className="learning-section-heading"><div><span className="learning-eyebrow">Shadow Plan</span><h2 id="learning-recommendations-title">四轨推荐影子计划</h2></div><span className="learning-shadow-badge">只展示 · 不写入队列</span></div>{!flags.shadowRecommendationPlanV1 ? <EmptySection title="影子计划未开启" detail="打开 shadowRecommendationPlanV1 后展示后端返回的四轨候选，不替换今日队列。" /> : recommendations.length === 0 ? <EmptySection title="暂无候选题目" detail={snapshot?.shadowPlan?.emptyReason ?? snapshot?.recommendations?.emptyReason ?? '后端没有返回可用的影子推荐；不会用旧推荐或假题目填充。'} /> : <><div className="learning-track-weights">{(Object.keys(TRACK_LABELS) as LearningCenterTrack[]).map((track) => <span key={track}><b>{TRACK_LABELS[track]}</b> {Math.round(recommendationWeights[track] ?? 0)}%</span>)}</div><div className="learning-recommendation-list">{recommendations.slice(0, 5).map((item) => <article className="learning-recommendation" key={item.id}><div className="learning-recommendation-head"><span className={'learning-track-pill learning-track-' + item.track}>{TRACK_LABELS[item.track]}</span><span>{item.estimatedMinutes} 分钟</span></div><strong><MathText value={item.title} /></strong><small>{item.categoryPath ?? '未提供章节路径'}</small><p><MathText value={item.reason.evidenceText || item.reason.goalText || '后端未提供推荐理由。'} /></p><button type="button" className="learning-link-button" onClick={() => openRecommendation(item)} disabled={item.state !== 'available' && item.state !== 'ready'}>{item.state === 'available' || item.state === 'ready' ? '跳转现有训练' : item.state} <ArrowRight size={14} /></button></article>)}</div></>}</section>
       </div>
       <section className="learning-card learning-ledgers-card" aria-labelledby="learning-ledgers-title"><div className="learning-section-heading"><div><span className="learning-eyebrow">边界说明</span><h2 id="learning-ledgers-title">三账分离</h2></div><span className="learning-muted">本页只读，不写训练计划、ELO 或好友数据</span></div><div className="learning-ledger-grid"><article className="learning-ledger learning-ledger-training"><div className="learning-ledger-icon"><Target size={18} /></div><h3>训练账</h3><p>记录学习证据、诊断、复习链和计划完成度。</p><strong>{snapshot.training?.todayProblems ?? 0} 题 · {snapshot.training?.todayMinutes ?? 0} 分钟</strong><small>到期复习 {snapshot.training?.dueReviews ?? 0} · 活跃错题链 {snapshot.training?.activeMistakeChains ?? 0}</small><button type="button" className="learning-link-button" onClick={() => onNavigate({ type: 'today' })}>去今日训练 <ArrowRight size={14} /></button></article><article className="learning-ledger learning-ledger-competitive"><div className="learning-ledger-icon"><Gauge size={18} /></div><h3>竞技账</h3><p>{snapshot.capabilities?.rankedOnlyCompetitiveLedger ? '仅有效压力 / 排位结算影响 Rating 与 ELO，日常训练不会混入。' : '当前只读展示历史竞技账；旧版非压力结算尚未迁移，不能宣称已经完全分账。'}</p><strong>{snapshot.competitive?.rating ?? '—'} Rating · {snapshot.competitive?.elo ?? '—'} ELO</strong><small>{snapshot.competitive?.rank ?? '暂无段位'} · 历史结算 {snapshot.competitive?.settlementCount ?? 0} 次</small><button type="button" className="learning-link-button" onClick={() => onNavigate({ type: 'insights' })}>去现有数据页 <ArrowRight size={14} /></button></article><article className="learning-ledger learning-ledger-incentive"><div className="learning-ledger-icon"><Trophy size={18} /></div><h3>激励账</h3><p>XP、连续天数和成就只负责反馈，不代表考试战力。</p><strong>{incentiveAvailable ? `${incentive?.xp} XP · ${incentive?.streakDays ?? '—'} 天连续` : '激励账不可用 · XP 暂无'}</strong><small>本周目标 {incentiveAvailable ? `${incentive?.weeklyGoalCompleted ?? '—'}/${incentive?.weeklyGoalTotal ?? '—'}` : '暂不可读'}</small><button type="button" className="learning-link-button" onClick={() => onNotify('激励账首版只提供摘要，暂不开放独立写入入口')}>查看说明 <ArrowRight size={14} /></button></article></div><div className="learning-ledger-warning"><ShieldCheck size={15} /> 强制说明：学习中心的投影不会修改 attempts、progress、elo_events、好友快照或任何正式训练队列。</div></section>

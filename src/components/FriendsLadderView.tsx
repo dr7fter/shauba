@@ -38,6 +38,7 @@ import {
 } from '../data/friendsService'
 import { FriendVsRadarModal } from './FriendVsRadarModal'
 import { FriendPublicProfileModal } from './FriendPublicProfileModal'
+import { FriendShareCardModal } from './FriendShareCardModal'
 import { MathText } from './MathText'
 import { bootstrap, getEloStatus, getTacticalDashboardStats, testFriendSync } from '../api'
 import { getRankDescription } from '../utils'
@@ -166,19 +167,22 @@ export function FriendsLadderView({
     }
   }, [bootstrapData])
 
+  const [showShareCardModal, setShowShareCardModal] = useState(false)
+
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
       if (e.key === 'Escape') {
         if (showAddModal) setShowAddModal(false)
         else if (showEditProfileModal) setShowEditProfileModal(false)
         else if (showSyncModal) setShowSyncModal(false)
+        else if (showShareCardModal) setShowShareCardModal(false)
         else if (selectedFriendForProfile) setSelectedFriendForProfile(null)
         else if (selectedVsFriend) setSelectedVsFriend(null)
       }
     }
     window.addEventListener('keydown', handleKeyDown)
     return () => window.removeEventListener('keydown', handleKeyDown)
-  }, [showAddModal, showEditProfileModal, showSyncModal, selectedFriendForProfile, selectedVsFriend])
+  }, [showAddModal, showEditProfileModal, showSyncModal, showShareCardModal, selectedFriendForProfile, selectedVsFriend])
 
   const syncConfigured = isSyncConfigReady(activeSyncConfig)
 
@@ -786,12 +790,22 @@ export function FriendsLadderView({
               <div className="my-card-info">
                 <div className="my-card-name-row">
                   <strong>{data.myProfile.nickname}</strong>
-                  <button
-                    className="edit-profile-icon-btn"
-                    onClick={() => setShowEditProfileModal(true)}
-                  >
-                    <Edit3 size={13} />
-                  </button>
+                  <div className="action-buttons-group">
+                    <button
+                      className="edit-profile-icon-btn"
+                      onClick={() => setShowShareCardModal(true)}
+                      title="生成并分享我的战术名片"
+                    >
+                      <Share2 size={13} />
+                    </button>
+                    <button
+                      className="edit-profile-icon-btn"
+                      onClick={() => setShowEditProfileModal(true)}
+                      title="编辑我的名片"
+                    >
+                      <Edit3 size={13} />
+                    </button>
+                  </div>
                 </div>
                 <span className="my-school-badge">{data.myProfile.targetSchool}</span>
               </div>
@@ -877,6 +891,14 @@ export function FriendsLadderView({
           myProfile={data.myProfile}
           friend={selectedVsFriend}
           onClose={() => setSelectedVsFriend(null)}
+        />
+      )}
+
+      {/* Share Card Modal */}
+      {showShareCardModal && (
+        <FriendShareCardModal
+          profile={data.myProfile}
+          onClose={() => setShowShareCardModal(false)}
         />
       )}
 

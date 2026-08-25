@@ -46,7 +46,7 @@ export function FriendVsRadarModal({
     return { x, y }
   }
 
-  const { myPolygonStr, friendPolygonStr, myWins, friendWins } = useMemo(() => {
+  const { myPolygonStr, friendPolygonStr, myWins, friendWins, topStrengths, topWeaknesses } = useMemo(() => {
     const myPoints = DIMENSION_CONFIG.map((d, i) => getCoordinates(myProfile.dimensions[d.key] ?? 50, i))
     const friendPoints = DIMENSION_CONFIG.map((d, i) => getCoordinates(friend.dimensions[d.key] ?? 50, i))
 
@@ -59,11 +59,21 @@ export function FriendVsRadarModal({
       else if (friendVal > myVal) fWins++
     })
 
+    const diffs = DIMENSION_CONFIG.map((d) => {
+      const myVal = Number(myProfile.dimensions[d.key] ?? 50)
+      const friendVal = Number(friend.dimensions[d.key] ?? 50)
+      return { label: d.label, key: d.key, diff: myVal - friendVal, myVal, friendVal }
+    })
+    const strengths = diffs.filter((d) => d.diff > 0.5).sort((a, b) => b.diff - a.diff)
+    const weaknesses = diffs.filter((d) => d.diff < -0.5).sort((a, b) => a.diff - b.diff)
+
     return {
       myPolygonStr: myPoints.map((p) => `${p.x},${p.y}`).join(' '),
       friendPolygonStr: friendPoints.map((p) => `${p.x},${p.y}`).join(' '),
       myWins: wins,
       friendWins: fWins,
+      topStrengths: strengths,
+      topWeaknesses: weaknesses,
     }
   }, [myProfile.dimensions, friend.dimensions])
 
@@ -271,9 +281,21 @@ export function FriendVsRadarModal({
           <div className="modal-footer vs-modal-footer">
             <div className="vs-footer-tip">
               💡 <strong>战术建议：</strong>{' '}
-              {myWins >= friendWins
-                ? `你在「${DIMENSION_CONFIG.find((d) => myProfile.dimensions[d.key] > friend.dimensions[d.key])?.label || '综合'}」上占据压制优势，保持节奏！`
-                : `可在「${DIMENSION_CONFIG.find((d) => myProfile.dimensions[d.key] < friend.dimensions[d.key])?.label || '薄弱项'}」上向 ${friend.nickname} 学习专项秒杀解法！`}
+              {topStrengths.length > 0 && topWeaknesses.length > 0 ? (
+                <>
+                  你在<strong>「{topStrengths[0].label}」</strong>（+{topStrengths[0].diff.toFixed(1)}）占据核心压制，但在<strong>「{topWeaknesses[0].label}」</strong>（{topWeaknesses[0].diff.toFixed(1)}）略逊一筹，建议针对性补强！
+                </>
+              ) : topStrengths.length > 0 ? (
+                <>
+                  你在<strong>「{topStrengths[0].label}」</strong>等多个维度全面领跑，状态绝佳，保持考场手感！
+                </>
+              ) : topWeaknesses.length > 0 ? (
+                <>
+                  对手在<strong>「{topWeaknesses[0].label}」</strong>（{topWeaknesses[0].diff.toFixed(1)}）优势明显，建议向 {friend.nickname} 学习专项秒杀解法！
+                </>
+              ) : (
+                <>双方在各项能力维度势均力敌，胜负取决于高难题与细节处理！</>
+              )}
             </div>
             <button className="primary-button compact" onClick={onClose}>
               确定返回

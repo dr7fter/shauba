@@ -60,6 +60,7 @@ export function FriendPublicProfileModal({
   onClose,
   onOpenVsRadar,
   onRemoveFriend,
+  onStartGhostMatch,
 }: {
   friend: FriendProfile | null
   activities: FriendActivity[]
@@ -67,6 +68,7 @@ export function FriendPublicProfileModal({
   onClose: () => void
   onOpenVsRadar: (friend: FriendProfile) => void
   onRemoveFriend: (friendId: string) => void
+  onStartGhostMatch?: (friend: FriendProfile, match: FriendPublicMatch) => void
 }) {
   const [activeTab, setActiveTab] = useState<'overview' | 'matches' | 'activities'>('overview')
   const [selectedReport, setSelectedReport] = useState<FriendPublicReport | null>(null)
@@ -402,15 +404,27 @@ export function FriendPublicProfileModal({
                               <span className="friend-match-time">{formatDate(m.finishedAt)}</span>
                             </div>
 
-                            {m.reportAvailable && m.reportId && (
-                              <button
-                                className="secondary-button compact report-btn"
-                                onClick={() => handleOpenReport(m)}
-                              >
-                                <FileText size={13} />
-                                <span>阅读公开报告</span>
-                              </button>
-                            )}
+                            <div className="match-card-actions">
+                              {onStartGhostMatch && friend && (
+                                <button
+                                  className="primary-button compact ghost-challenge-btn"
+                                  onClick={() => onStartGhostMatch(friend, m)}
+                                  title="载入好友本次模考同款题组发起挑战"
+                                >
+                                  <Swords size={13} />
+                                  <span>⚔️ 影子挑战</span>
+                                </button>
+                              )}
+                              {m.reportAvailable && m.reportId && (
+                                <button
+                                  className="secondary-button compact report-btn"
+                                  onClick={() => handleOpenReport(m)}
+                                >
+                                  <FileText size={13} />
+                                  <span>阅读战报</span>
+                                </button>
+                              )}
+                            </div>
                           </div>
 
                           <div className="match-metrics-row">

@@ -2480,13 +2480,14 @@ export function TodayView({
 
       {/* 压力模拟确认对话框 */}
       {showPressurePrompt && (
-        <div className="ui-overlay modal-backdrop" style={{ zIndex: 100 }}>
+        <div className="ui-overlay modal-backdrop" style={{ zIndex: 100 }} onClick={() => setShowPressurePrompt(false)}>
           <div
             className="ui-modal modal-card pressure-confirm-modal"
             role="dialog"
             aria-modal="true"
             aria-labelledby="pressure-confirm-title"
             aria-describedby="pressure-confirm-description"
+            onClick={(e) => e.stopPropagation()}
           >
             <div className="pressure-confirm-head">
               <div className="pressure-confirm-heading">
@@ -2575,11 +2576,12 @@ export function TodayView({
 
       {/* 压力模拟批改结果对话框 */}
       {showPressureResult && (
-        <div className="ui-overlay modal-backdrop" style={{ zIndex: 100 }}>
+        <div className="ui-overlay modal-backdrop" style={{ zIndex: 100 }} onClick={() => void closePressureResult()}>
           <div
             className="ui-modal modal-card pressure-result-modal"
             role="dialog"
             aria-modal="true"
+            onClick={(e) => e.stopPropagation()}
           >
             <div className="modal-head">
               <h3>压力模拟已完成！</h3>

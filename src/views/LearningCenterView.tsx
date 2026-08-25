@@ -220,6 +220,8 @@ export function LearningCenterView({ initialData = null, featureFlags, onNavigat
   const [refreshing, setRefreshing] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [selectedMetric, setSelectedMetric] = useState<LearningMetric | null>(null)
+  const [chainTab, setChainTab] = useState<'active' | 'trophy'>('active')
+  const [selectedRecIds, setSelectedRecIds] = useState<Set<string>>(new Set())
 
   const load = useCallback(async (initial = false) => {
     if (!flags.learningCenterV1) return
@@ -259,6 +261,8 @@ export function LearningCenterView({ initialData = null, featureFlags, onNavigat
   const recommendations = flags.shadowRecommendationPlanV1 ? (snapshot?.shadowPlan?.items ?? snapshot?.recommendations?.items ?? []) : []
   const recommendationWeights = flags.shadowRecommendationPlanV1 ? (snapshot?.shadowPlan?.weights ?? snapshot?.recommendations?.weights ?? { repair: 0, consolidate: 0, transfer: 0, challenge: 0 }) : { repair: 0, consolidate: 0, transfer: 0, challenge: 0 }
   const chains = snapshot?.mistakeChains ?? []
+  const activeChains = chains.filter((c) => c.stage !== 'closed' && !c.stableClosedAt)
+  const trophyChains = chains.filter((c) => c.stage === 'closed' || Boolean(c.stableClosedAt))
   const recentEvidence = snapshot?.recentEvidence ?? []
   const incentive = snapshot?.incentive
   const incentiveAvailable = Boolean(incentive?.available && snapshot?.capabilities?.canReadIncentiveLedger && incentive.xp !== null)
@@ -274,6 +278,28 @@ export function LearningCenterView({ initialData = null, featureFlags, onNavigat
     onNavigate({ type: 'review', mistakeChainId: chain.id, questionId: Number.isFinite(qid) ? qid : null })
   }
   const openFriend = (event: FriendBroadcastEvent) => onNavigate({ type: 'friends', friendProfileId: event.friendProfileId || null })
+
+  const toggleRecSelect = (id: string) => {
+    setSelectedRecIds((prev) => {
+      const next = new Set(prev)
+      if (next.has(id)) next.delete(id)
+      else next.add(id)
+      return next
+    })
+  }
+
+  const handleMergeShadowQueue = () => {
+    const selectedItems = recommendations.filter((r) => selectedRecIds.has(r.id) && r.questionId)
+    const qids = selectedItems.map((r) => r.questionId as number)
+    if (qids.length > 0) {
+      onNavigate({
+        type: 'today',
+        questionId: qids[0],
+        queueQuestionIds: qids,
+      })
+      onNotify(`已将选中的 ${qids.length} 道影子推荐题混编载入今日训练队列`)
+    }
+  }
 
   if (!flags.learningCenterV1) return null
   if (loading && !snapshot) return <LoadingSkeleton />
@@ -312,10 +338,152 @@ export function LearningCenterView({ initialData = null, featureFlags, onNavigat
       <MetricStrip metrics={metrics} projectionEnabled={flags.learningEvidenceProjectionV1} onOpen={setSelectedMetric} />
       <div className="learning-main-grid">
         <section className="learning-card" aria-labelledby="learning-chains-title">
-          <div className="learning-section-heading"><div><span className="learning-eyebrow">错题闭环</span><h2 id="learning-chains-title">错题状态链</h2></div><button type="button" className="learning-link-button" onClick={() => onNavigate({ type: 'review' })}>打开复盘 <ArrowRight size={14} /></button></div>
-          {chains.length === 0 ? <EmptySection title="暂无活跃错题链" detail="没有足够的确定性证据形成状态链。" /> : <div className="learning-chain-list">{chains.slice(0, 5).map((chain) => <article className="learning-chain" key={chain.id}><div className="learning-chain-head"><div><strong>{chain.label}</strong><small>{chain.categoryPath}</small></div><span className={'learning-chain-stage learning-chain-' + chain.stage}>{chain.statusLabel || STAGE_LABELS[chain.stage] || chain.stage}</span></div><DefusalStepProgress chain={chain} /><p><MathText value={chain.blockedReason ?? chain.advice ?? ('证据 ' + chain.evidenceCount + ' 条 · ' + formatConfidence(chain.confidence))} /></p><button type="button" className="learning-link-button" onClick={() => openChain(chain)}>查看状态链 <ChevronRight size={14} /></button></article>)}</div>}
+          <div className="learning-section-heading">
+            <div>
+              <span className="learning-eyebrow">错题闭环</span>
+              <h2 id="learning-chains-title">
+                {chainTab === 'active' ? `在办排雷 (${activeChains.length})` : `🛡️ 排雷功勋档案 (${trophyChains.length})`}
+              </h2>
+            </div>
+            <div className="learning-header-actions">
+              <button
+                type="button"
+                className={`learning-chain-tab ${chainTab === 'active' ? 'active' : ''}`}
+                onClick={() => setChainTab('active')}
+              >
+                在办排雷
+              </button>
+              <button
+                type="button"
+                className={`learning-chain-tab ${chainTab === 'trophy' ? 'active' : ''}`}
+                onClick={() => setChainTab('trophy')}
+              >
+                🛡️ 功勋墙 ({trophyChains.length})
+              </button>
+              <button type="button" className="learning-link-button" onClick={() => onNavigate({ type: 'review' })}>打开复盘 <ArrowRight size={14} /></button>
+            </div>
+          </div>
+          {chainTab === 'active' ? (
+            activeChains.length === 0 ? (
+              <EmptySection title="暂无在办错题链" detail="当前错题已全部攻克或尚未形成闭环证据。" />
+            ) : (
+              <div className="learning-chain-list">
+                {activeChains.slice(0, 5).map((chain) => (
+                  <article className="learning-chain" key={chain.id}>
+                    <div className="learning-chain-head">
+                      <div>
+                        <strong>{chain.label}</strong>
+                        <small>{chain.categoryPath}</small>
+                      </div>
+                      <span className={'learning-chain-stage learning-chain-' + chain.stage}>
+                        {chain.statusLabel || STAGE_LABELS[chain.stage] || chain.stage}
+                      </span>
+                    </div>
+                    <DefusalStepProgress chain={chain} />
+                    <p><MathText value={chain.blockedReason ?? chain.advice ?? ('证据 ' + chain.evidenceCount + ' 条 · ' + formatConfidence(chain.confidence))} /></p>
+                    <button type="button" className="learning-link-button" onClick={() => openChain(chain)}>
+                      推进排雷 <ChevronRight size={14} />
+                    </button>
+                  </article>
+                ))}
+              </div>
+            )
+          ) : (
+            trophyChains.length === 0 ? (
+              <EmptySection title="功勋墙暂无记录" detail="完成六步排雷闭环后，已攻克的硬骨头题目会永久陈列在此。" />
+            ) : (
+              <div className="learning-chain-list trophy-chain-list">
+                {trophyChains.map((chain) => (
+                  <article className="learning-chain learning-chain-trophy" key={chain.id}>
+                    <div className="learning-chain-head">
+                      <div>
+                        <strong>🛡️ {chain.label} · 彻底排雷</strong>
+                        <small>{chain.categoryPath} · 闭环于 {formatDateTime(chain.stableClosedAt)}</small>
+                      </div>
+                      <span className="learning-chain-stage learning-chain-closed">
+                        已攻克闭环
+                      </span>
+                    </div>
+                    <DefusalStepProgress chain={chain} />
+                    <p><MathText value={chain.advice ?? '防线已牢不可破，已掌握该题型核心秒杀解法。'} /></p>
+                    <button type="button" className="learning-link-button" onClick={() => openChain(chain)}>
+                      翻阅排雷档案 <ChevronRight size={14} />
+                    </button>
+                  </article>
+                ))}
+              </div>
+            )
+          )}
         </section>
-        <section className="learning-card" aria-labelledby="learning-recommendations-title"><div className="learning-section-heading"><div><span className="learning-eyebrow">Shadow Plan</span><h2 id="learning-recommendations-title">四轨推荐影子计划</h2></div><span className="learning-shadow-badge">只展示 · 不写入队列</span></div>{!flags.shadowRecommendationPlanV1 ? <EmptySection title="影子计划未开启" detail="打开 shadowRecommendationPlanV1 后展示后端返回的四轨候选，不替换今日队列。" /> : recommendations.length === 0 ? <EmptySection title="暂无候选题目" detail={snapshot?.shadowPlan?.emptyReason ?? snapshot?.recommendations?.emptyReason ?? '后端没有返回可用的影子推荐；不会用旧推荐或假题目填充。'} /> : <><div className="learning-track-weights">{(Object.keys(TRACK_LABELS) as LearningCenterTrack[]).map((track) => <span key={track}><b>{TRACK_LABELS[track]}</b> {Math.round(recommendationWeights[track] ?? 0)}%</span>)}</div><div className="learning-recommendation-list">{recommendations.slice(0, 5).map((item) => <article className="learning-recommendation" key={item.id}><div className="learning-recommendation-head"><span className={'learning-track-pill learning-track-' + item.track}>{TRACK_LABELS[item.track]}</span><span>{item.estimatedMinutes} 分钟</span></div><strong><MathText value={item.title} /></strong><small>{item.categoryPath ?? '未提供章节路径'}</small><p><MathText value={item.reason.evidenceText || item.reason.goalText || '后端未提供推荐理由。'} /></p><button type="button" className="learning-link-button" onClick={() => openRecommendation(item)} disabled={item.state !== 'available' && item.state !== 'ready'}>{item.state === 'available' || item.state === 'ready' ? '跳转现有训练' : item.state} <ArrowRight size={14} /></button></article>)}</div></>}</section>
+        <section className="learning-card" aria-labelledby="learning-recommendations-title">
+          <div className="learning-section-heading">
+            <div>
+              <span className="learning-eyebrow">Shadow Plan</span>
+              <h2 id="learning-recommendations-title">四轨推荐影子计划</h2>
+            </div>
+            <div className="learning-header-actions">
+              {selectedRecIds.size > 0 && (
+                <button
+                  type="button"
+                  className="learning-primary-button compact"
+                  onClick={handleMergeShadowQueue}
+                >
+                  📥 混编入队 ({selectedRecIds.size}题)
+                </button>
+              )}
+              <span className="learning-shadow-badge">智能混编</span>
+            </div>
+          </div>
+          {!flags.shadowRecommendationPlanV1 ? (
+            <EmptySection title="影子计划未开启" detail="打开 shadowRecommendationPlanV1 后展示后端返回的四轨候选，不替换今日队列。" />
+          ) : recommendations.length === 0 ? (
+            <EmptySection title="暂无候选题目" detail={snapshot?.shadowPlan?.emptyReason ?? snapshot?.recommendations?.emptyReason ?? '后端没有返回可用的影子推荐；不会用旧推荐或假题目填充。'} />
+          ) : (
+            <>
+              <div className="learning-track-weights">
+                {(Object.keys(TRACK_LABELS) as LearningCenterTrack[]).map((track) => (
+                  <span key={track}><b>{TRACK_LABELS[track]}</b> {Math.round(recommendationWeights[track] ?? 0)}%</span>
+                ))}
+              </div>
+              <div className="learning-recommendation-list">
+                {recommendations.slice(0, 6).map((item) => {
+                  const isSelected = selectedRecIds.has(item.id)
+                  const canSelect = item.state === 'available' || item.state === 'ready'
+                  return (
+                    <article className={`learning-recommendation ${isSelected ? 'selected' : ''}`} key={item.id}>
+                      <div className="learning-recommendation-head">
+                        {canSelect && (
+                          <input
+                            type="checkbox"
+                            className="learning-rec-checkbox"
+                            checked={isSelected}
+                            onChange={() => toggleRecSelect(item.id)}
+                            aria-label={`勾选题目 ${item.title}`}
+                          />
+                        )}
+                        <span className={'learning-track-pill learning-track-' + item.track}>{TRACK_LABELS[item.track]}</span>
+                        <span>{item.estimatedMinutes} 分钟</span>
+                      </div>
+                      <strong><MathText value={item.title} /></strong>
+                      <small>{item.categoryPath ?? '未提供章节路径'}</small>
+                      <p><MathText value={item.reason.evidenceText || item.reason.goalText || '后端未提供推荐理由。'} /></p>
+                      <div className="learning-rec-actions">
+                        <button
+                          type="button"
+                          className="learning-link-button"
+                          onClick={() => openRecommendation(item)}
+                          disabled={!canSelect}
+                        >
+                          {canSelect ? '直接跳转' : item.state} <ArrowRight size={14} />
+                        </button>
+                      </div>
+                    </article>
+                  )
+                })}
+              </div>
+            </>
+          )}
+        </section>
       </div>
       <section className="learning-card learning-ledgers-card" aria-labelledby="learning-ledgers-title"><div className="learning-section-heading"><div><span className="learning-eyebrow">边界说明</span><h2 id="learning-ledgers-title">三账分离</h2></div><span className="learning-muted">本页只读，不写训练计划、ELO 或好友数据</span></div><div className="learning-ledger-grid"><article className="learning-ledger learning-ledger-training"><div className="learning-ledger-icon"><Target size={18} /></div><h3>训练账</h3><p>记录学习证据、诊断、复习链和计划完成度。</p><strong>{snapshot.training?.todayProblems ?? 0} 题 · {snapshot.training?.todayMinutes ?? 0} 分钟</strong><small>到期复习 {snapshot.training?.dueReviews ?? 0} · 活跃错题链 {snapshot.training?.activeMistakeChains ?? 0}</small><button type="button" className="learning-link-button" onClick={() => onNavigate({ type: 'today' })}>去今日训练 <ArrowRight size={14} /></button></article><article className="learning-ledger learning-ledger-competitive"><div className="learning-ledger-icon"><Gauge size={18} /></div><h3>竞技账</h3><p>{snapshot.capabilities?.rankedOnlyCompetitiveLedger ? '仅有效压力 / 排位结算影响 Rating 与 ELO，日常训练不会混入。' : '当前只读展示历史竞技账；旧版非压力结算尚未迁移，不能宣称已经完全分账。'}</p><strong>{snapshot.competitive?.rating ?? '—'} Rating · {snapshot.competitive?.elo ?? '—'} ELO</strong><small>{snapshot.competitive?.rank ?? '暂无段位'} · 历史结算 {snapshot.competitive?.settlementCount ?? 0} 次</small><button type="button" className="learning-link-button" onClick={() => onNavigate({ type: 'insights' })}>去现有数据页 <ArrowRight size={14} /></button></article><article className="learning-ledger learning-ledger-incentive"><div className="learning-ledger-icon"><Trophy size={18} /></div><h3>激励账</h3><p>XP、连续天数和成就只负责反馈，不代表考试战力。</p><strong>{incentiveAvailable ? `${incentive?.xp} XP · ${incentive?.streakDays ?? '—'} 天连续` : '激励账不可用 · XP 暂无'}</strong><small>本周目标 {incentiveAvailable ? `${incentive?.weeklyGoalCompleted ?? '—'}/${incentive?.weeklyGoalTotal ?? '—'}` : '暂不可读'}</small><button type="button" className="learning-link-button" onClick={() => onNotify('激励账首版只提供摘要，暂不开放独立写入入口')}>查看说明 <ArrowRight size={14} /></button></article></div><div className="learning-ledger-warning"><ShieldCheck size={15} /> 强制说明：学习中心的投影不会修改 attempts、progress、elo_events、好友快照或任何正式训练队列。</div></section>
       <section className="learning-card learning-bottom-grid"><div><div className="learning-section-heading"><div><span className="learning-eyebrow">证据与完整性</span><h2>最近证据</h2></div><span className="learning-muted">{recentEvidence.length} 条引用</span></div>{!flags.learningEvidenceProjectionV1 ? <EmptySection title="证据投影未开启" detail="原始数据不会在前端臆测成学习结论。" /> : recentEvidence.length === 0 ? <EmptySection title="暂无最近证据" detail="完成并确认有效作答后，后端才会提供证据引用。" /> : <div className="learning-recent-evidence">{recentEvidence.slice(0, 4).map((item) => <div className="learning-recent-evidence-row" key={item.id}><span className="learning-evidence-dot" /><div><strong>{item.source} · 题目 {item.questionId ?? '—'}</strong><small>{formatDateTime(item.observedAt)} · {formatConfidence(item.confidence)}</small></div><span>{item.accepted ? '已采纳' : '待确认'}</span></div>)}</div>}</div><div><div className="learning-section-heading"><div><span className="learning-eyebrow">好友广播</span><h2>好友动态</h2></div><Users size={18} aria-hidden="true" /></div>{!flags.friendBroadcastsV1 || !snapshot.capabilities?.canReadFriendEvents ? <EmptySection title="好友动态首版暂不可用" detail="保留入口，但不展示未授权或未同步的好友数据。" /> : snapshot.friendEvents.length === 0 ? <EmptySection title="暂无可公开动态" detail="低置信度诊断、普通单题和未确认回传不会播报。" /> : <div className="learning-friend-list">{snapshot.friendEvents.slice(0, 4).map((event) => <button type="button" className="learning-friend-event" key={event.id} onClick={() => openFriend(event)}><div><strong>{event.title}</strong><small>{event.friendName} · {formatDateTime(event.occurredAt)}</small></div><span>{event.ratingDelta === null ? '学习动态' : (event.ratingDelta > 0 ? '+' : '') + event.ratingDelta.toFixed(2) + ' Rating'}</span></button>)}</div>}<button type="button" className="learning-secondary-button learning-friends-link" onClick={() => onNavigate({ type: 'friends' })}>打开好友页 <ArrowRight size={14} /></button></div></section>

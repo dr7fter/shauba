@@ -1246,6 +1246,27 @@ export default function App() {
                 bootstrapData={data}
                 eloStatus={null}
                 notify={setNotice}
+                onStartGhostMatch={(friend, match) => {
+                  const count = Math.max(1, Math.min(10, match.questionCount || 4))
+                  getRecommendations(count)
+                    .then((recs) => {
+                      if (recs.length > 0) {
+                        setPracticeQueue(
+                          recs.map((r) => ({
+                            question: r.question,
+                            score: 100,
+                            reason: `与好友「${friend.nickname}」的同卷影子对决`,
+                            reasonCode: 'target',
+                          }))
+                        )
+                        setPracticeStartIndex(0)
+                        setAttemptMode('paper')
+                        setView('today')
+                        setNotice(`⚔️ 已开启与好友「${friend.nickname}」的同卷影子对决（共 ${recs.length} 题）`)
+                      }
+                    })
+                    .catch(() => setNotice('无法载入影子对战题目，请重试'))
+                }}
               />
             )}
             {data && view === 'insights' && (

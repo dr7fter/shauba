@@ -13,7 +13,7 @@ import {
   X,
 } from 'lucide-react'
 import { AnimatePresence } from 'framer-motion'
-import { useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { addToCustomQueue, getQuestion, toggleFavorite } from '../api'
 import {
   CS_RATING_MAX,
@@ -49,6 +49,19 @@ export function PressureLearningReportView({
   const [detailQuestion, setDetailQuestion] = useState<Question | null>(null)
   const [favoriteMap, setFavoriteMap] = useState<Record<number, boolean>>({})
   const [toastMsg, setToastMsg] = useState<string | null>(null)
+  const onCloseRef = useRef(onClose)
+  onCloseRef.current = onClose
+
+  useEffect(() => {
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') {
+        event.preventDefault()
+        onCloseRef.current()
+      }
+    }
+    window.addEventListener('keydown', handleKeyDown)
+    return () => window.removeEventListener('keydown', handleKeyDown)
+  }, [])
 
   const handleToggleFav = async (qId: number) => {
     try {
@@ -179,8 +192,9 @@ export function PressureLearningReportView({
       role="dialog"
       aria-modal="true"
       aria-labelledby="pressure-learning-report-title"
+      onClick={onClose}
     >
-      <div className="pressure-report-wrap">
+      <div className="pressure-report-wrap" onClick={(e) => e.stopPropagation()}>
         <div className="pressure-report">
           <div className="report-header tactical-report-header">
             <div>

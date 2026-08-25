@@ -42,7 +42,7 @@ import { FriendShareCardModal } from './FriendShareCardModal'
 import { MathText } from './MathText'
 import { bootstrap, getEloStatus, getTacticalDashboardStats, testFriendSync } from '../api'
 import { getRankDescription } from '../utils'
-import type { BootstrapData, EloStatus, FriendProfile, FriendSyncConfig, FriendsSystemData, TacticalDashboardData } from '../types'
+import type { BootstrapData, EloStatus, FriendProfile, FriendPublicMatch, FriendSyncConfig, FriendsSystemData, TacticalDashboardData } from '../types'
 
 type SyncPhase = 'idle' | 'publishing' | 'pulling' | 'success' | 'partial' | 'failed'
 
@@ -104,11 +104,13 @@ export function FriendsLadderView({
   bootstrapData,
   eloStatus,
   notify,
+  onStartGhostMatch,
 }: {
   tacticalData: TacticalDashboardData | null
   bootstrapData: BootstrapData | null
   eloStatus: EloStatus | null
   notify: (msg: string) => void
+  onStartGhostMatch?: (friend: FriendProfile, match: FriendPublicMatch) => void
 }) {
   const [data, setData] = useState<FriendsSystemData>(() =>
     loadFriendsSystemData(tacticalData, bootstrapData, eloStatus)
@@ -883,6 +885,10 @@ export function FriendsLadderView({
           activities={data.activities}
           onClose={() => setSelectedFriendForProfile(null)}
           onOpenVsRadar={(f) => setSelectedVsFriend(f)}
+          onStartGhostMatch={(f, m) => {
+            setSelectedFriendForProfile(null)
+            onStartGhostMatch?.(f, m)
+          }}
           onRemoveFriend={(id) => {
             const next = removeFriendById(id)
             setData((prev) => ({ ...prev, friends: next }))

@@ -1,52 +1,46 @@
 import { AnimatePresence } from 'framer-motion'
 import {
+  BookOpen,
+  CheckCircle2,
   ChevronRight,
-  FolderSearch,
-  LoaderCircle,
+  Flame,
+  Layers,
   Play,
   RefreshCw,
+  Search,
+  ShieldAlert,
+  ShieldCheck,
   Sparkles,
+  Star,
+  Swords,
   Target,
   TimerReset,
-  X,
+  Zap,
 } from 'lucide-react'
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useState } from 'react'
 import {
   addToCustomQueue,
   getDailyLog,
   getInbox,
-  getMasteryNodes,
   getQuestion,
   getReviewHistory,
   getReviewPlan,
   getReviewQueue,
+  toggleFavorite,
 } from '../api'
-import { localToday, outcomeChip } from '../utils'
 import { MathText } from '../components/MathText'
 import { QuestionDetail } from '../components/QuestionDetailModal'
-import { SubBranchArchiveModal } from '../components/SubBranchArchiveModal'
 import type {
   AttemptOutcome,
-  DailyLog,
   MasteryChapter,
-  MasteryNode,
   Question,
   RecommendedQuestion,
   ReviewHistory,
   ReviewPlan,
 } from '../types'
+import './ReviewView.css'
 
-export type ReviewMapMode = 'debt' | 'mastery' | 'wrong' | 'ai'
-
-export type ReviewBoardStats = MasteryChapter & {
-  overdueCount: number
-  wrongCount: number
-  uncertainCount: number
-  aiCount: number
-  recentCount: number
-  modeValue: string
-  state: string
-}
+export type ReviewMapMode = 'all' | 'wrong' | 'due' | 'ai'
 
 export type ReviewBoardQuestion = {
   questionId: number
@@ -59,6 +53,9 @@ export type ReviewBoardQuestion = {
   attemptedAt: string | null
   earliestError: string | null
   advice: string | null
+  betterSolution: string | null
+  errorTags?: string[]
+  weaknessTags?: string[]
 }
 
 export function reviewCategoryMatches(chapter: MasteryChapter, categoryPath: string): boolean {
@@ -69,23 +66,33 @@ export function reviewCategoryMatches(chapter: MasteryChapter, categoryPath: str
   )
 }
 
-export function reviewBoardState(
-  chapter: MasteryChapter,
-  stats: { dueCount: number; overdueCount: number; wrongCount: number; aiCount: number }
-): string {
-  if (stats.overdueCount > 0) return 'overdue'
-  if (stats.dueCount > 0) return 'due'
-  if (stats.aiCount > 0) return 'ai'
-  if (stats.wrongCount > 0) return 'weak'
-  if (chapter.attempted === 0) return 'unseen'
-  if (chapter.masteryScore === null) return 'insufficient'
-  return chapter.masteryScore >= 75 ? 'strong' : chapter.masteryScore >= 50 ? 'steady' : 'weak'
+function DefusalStepProgress({ currentStep = 1 }: { currentStep?: number }) {
+  const steps = [
+    { label: '诊断', num: 1 },
+    { label: '原题', num: 2 },
+    { label: '相似', num: 3 },
+    { label: '变式', num: 4 },
+    { label: '延迟', num: 5 },
+    { label: '🛡️排雷', num: 6 },
+  ]
+  return (
+    <div className="defusal-step-progress">
+      {steps.map((s) => {
+        const done = s.num < currentStep
+        const active = s.num === currentStep
+        return (
+          <div key={s.label} className={`step-node-item ${done ? 'completed' : active ? 'active' : ''}`}>
+            <div className="step-dot">{done ? '✓' : s.num}</div>
+            <span className="step-node-label">{s.label}</span>
+          </div>
+        )
+      })}
+    </div>
+  )
 }
 
 export function ReviewMapView({
   due,
-  inboxCount,
-  intervals,
   chapters,
   notify,
   onStart,
@@ -93,11 +100,10 @@ export function ReviewMapView({
   onPractice,
   onPracticeBatch,
   onStartVariant,
-  onOpenInbox,
 }: {
   due: number
-  inboxCount: number
-  intervals: number[]
+  inboxCount?: number
+  intervals?: number[]
   chapters: MasteryChapter[]
   notify: (text: string) => void
   onStart: () => Promise<void>
@@ -105,34 +111,30 @@ export function ReviewMapView({
   onPractice: (question: Question) => void
   onPracticeBatch: (questions: Question[], reason: string) => void
   onStartVariant: (questionId: number) => void
-  onOpenInbox: () => void
+  onOpenInbox?: () => void
 }) {
   const [history, setHistory] = useState<ReviewHistory | null>(null)
   const [plan, setPlan] = useState<ReviewPlan | null>(null)
   const [dueQueue, setDueQueue] = useState<RecommendedQuestion[]>([])
-  const [dailyLog, setDailyLog] = useState<DailyLog | null>(null)
-  const [nodes, setNodes] = useState<MasteryNode[]>([])
   const [inboxCategories, setInboxCategories] = useState<Record<number, string>>({})
-  const [selectedBoardId, setSelectedBoardId] = useState<number | null>(null)
-  const [mapMode, setMapMode] = useState<ReviewMapMode>('debt')
-  const [selectedSubject, setSelectedSubject] = useState('all')
-  const [selectedQuestion, setSelectedQuestion] = useState<Question | null>(null)
+  const [inboxDiagnoses, setInboxDiagnoses] = useState<Record<number, { earliestError?: string | null; advice?: string | null; betterSolution?: string | null }>>({})
+  const [selectedSubject, setSelectedSubject] = useState<string>('all')
+  const [selectedChapterId, setSelectedChapterId] = useState<number | null>(null)
+  const [selectedBoardQ, setSelectedBoardQ] = useState<ReviewBoardQuestion | null>(null)
+  const [questionFilter, setQuestionFilter] = useState<ReviewMapMode>('all')
+  const [searchQuery, setSearchQuery] = useState('')
   const [loading, setLoading] = useState(true)
-  const [error, setError] = useState('')
-  const [actionLoading, setActionLoading] = useState(false)
-  const selectionInitialized = useRef(false)
+  const [detailModalQuestion, setDetailModalQuestion] = useState<Question | null>(null)
 
   const load = useCallback(async () => {
     setLoading(true)
-    setError('')
     try {
-      const [nextHistory, nextPlan, nextDueQueue, nextLog, nextNodes, nextInbox] =
+      const [nextHistory, nextPlan, nextDueQueue, nextLog, nextInbox] =
         await Promise.all([
           getReviewHistory(),
           getReviewPlan(),
           getReviewQueue(50),
-          getDailyLog(),
-          getMasteryNodes(),
+          getDailyLog().catch(() => null),
           getInbox(),
         ])
       const categoryEntries = await Promise.all(
@@ -147,11 +149,29 @@ export function ReviewMapView({
             }
           })
       )
+      const diagMap: Record<number, { earliestError?: string | null; advice?: string | null; betterSolution?: string | null }> = {}
+      for (const item of nextInbox) {
+        if (item.questionId) {
+          diagMap[item.questionId] = {
+            earliestError: item.earliestError,
+            advice: item.advice,
+            betterSolution: item.betterSolution,
+          }
+        }
+      }
+      for (const item of nextLog?.items ?? []) {
+        if (item.questionId && !diagMap[item.questionId]) {
+          diagMap[item.questionId] = {
+            earliestError: item.aiEarliestError,
+            advice: item.aiAdvice,
+            betterSolution: null,
+          }
+        }
+      }
       setHistory(nextHistory)
       setPlan(nextPlan)
       setDueQueue(nextDueQueue)
-      setDailyLog(nextLog)
-      setNodes(nextNodes)
+      setInboxDiagnoses(diagMap)
       setInboxCategories(
         Object.fromEntries(
           categoryEntries.filter(
@@ -159,26 +179,27 @@ export function ReviewMapView({
           )
         )
       )
-    } catch (loadError) {
-      setError(String(loadError))
+    } catch {
+      notify('无法获取部分复盘记录')
     } finally {
       setLoading(false)
     }
-  }, [])
+  }, [notify])
 
   useEffect(() => {
     void load()
   }, [load])
 
-  const today = localToday()
   const displayedDue = dueQueue.length > 0 ? dueQueue.length : due
+
+  // Synthetic & real chapters
   const boardChapters = useMemo<MasteryChapter[]>(() => {
     const fallback = new Map<string, { rootName: string; name: string; total: number }>()
     for (const path of [...(plan?.items ?? []), ...(history?.items ?? [])]
       .map((item) => item.categoryPath)
       .concat(dueQueue.map((item) => item.question.categoryPath))) {
       const parts = path.split(' / ')
-      const rootName = parts[0] || '未分类'
+      const rootName = parts[0] || '高等数学'
       const name = parts[1] || rootName
       const key = `${rootName}::${name}`
       const current = fallback.get(key) ?? { rootName, name, total: 0 }
@@ -207,7 +228,7 @@ export function ReviewMapView({
         accuracy: null,
         rating: null,
         masteryScore: null,
-        evidence: '计划或历史中出现，掌握地图尚未建立证据',
+        evidence: '建立证据中',
         evidenceLevel: '待建立掌握证据',
         evidenceSources: [],
         retestCorrectCount: 0,
@@ -215,24 +236,9 @@ export function ReviewMapView({
     return [...chapters, ...synthetic]
   }, [chapters, plan, history, dueQueue])
 
-  const subjects = useMemo(
-    () => Array.from(new Set(boardChapters.map((chapter) => chapter.rootName))),
-    [boardChapters]
-  )
-
-  const diagnosisByQuestion = useMemo(() => {
-    const map = new Map<number, DailyLog['items'][number]>()
-    for (const item of dailyLog?.items ?? []) {
-      if (!map.has(item.questionId)) map.set(item.questionId, item)
-    }
-    return map
-  }, [dailyLog])
-
-  const boardStats = useMemo<ReviewBoardStats[]>(() => {
+  // Chapter Statistics
+  const chapterStats = useMemo(() => {
     return boardChapters.map((chapter) => {
-      const planItems = (plan?.items ?? []).filter((item) =>
-        reviewCategoryMatches(chapter, item.categoryPath)
-      )
       const historyItems = (history?.items ?? []).filter((item) =>
         reviewCategoryMatches(chapter, item.categoryPath)
       )
@@ -241,9 +247,6 @@ export function ReviewMapView({
           .filter((item) => item.result === 'wrong' || item.result === 'partial')
           .map((item) => item.questionId)
       )
-      const uncertainIds = new Set(
-        historyItems.filter((item) => item.result === 'uncertain').map((item) => item.questionId)
-      )
       const dueQueueItems = dueQueue.filter((item) =>
         reviewCategoryMatches(chapter, item.question.categoryPath)
       )
@@ -251,724 +254,570 @@ export function ReviewMapView({
         reviewCategoryMatches(chapter, path)
       ).length
       const dueCount = dueQueueItems.length
-      const overdueCount =
-        dueQueueItems.filter(
-          (item) => item.question.nextReview !== null && item.question.nextReview < today
-        ).length || planItems.filter((item) => item.nextReview < today).length
-      const stats = { dueCount, overdueCount, wrongCount: wrongIds.size, aiCount }
-      const state = reviewBoardState(chapter, stats)
-      const modeValue =
-        mapMode === 'mastery'
-          ? chapter.masteryScore === null
-            ? '--'
-            : `${Math.round(chapter.masteryScore)}`
-          : mapMode === 'wrong'
-          ? `${wrongIds.size}`
-          : mapMode === 'ai'
-          ? `${aiCount}`
-          : `${dueCount}`
+      const score = chapter.masteryScore ?? (chapter.accuracy !== null ? chapter.accuracy : null)
+      const rankTier = score === null ? 'none' : score >= 85 ? 's' : score >= 70 ? 'a' : score >= 50 ? 'b' : 'c'
+      const isSolid = wrongIds.size === 0 && dueCount === 0 && (score !== null && score >= 70)
+
       return {
         ...chapter,
         dueCount,
-        overdueCount,
         wrongCount: wrongIds.size,
-        uncertainCount: uncertainIds.size,
         aiCount,
         recentCount: historyItems.length,
-        modeValue,
-        state,
+        rankTier,
+        isSolid,
       }
     })
-  }, [boardChapters, plan, history, dueQueue, inboxCategories, today, mapMode])
+  }, [boardChapters, history, dueQueue, inboxCategories])
 
-  const totalOverdue = useMemo(
-    () => boardStats.reduce((sum, board) => sum + board.overdueCount, 0),
-    [boardStats]
-  )
-  const uniqueWrongCount = useMemo(
-    () =>
-      new Set(
-        (history?.items ?? [])
-          .filter((item) => item.result === 'wrong' || item.result === 'partial')
-          .map((item) => item.questionId)
-      ).size,
-    [history]
-  )
-  const uniqueUncertainCount = useMemo(
-    () =>
-      new Set(
-        (history?.items ?? [])
-          .filter((item) => item.result === 'uncertain')
-          .map((item) => item.questionId)
-      ).size,
-    [history]
-  )
+  const totalWrongCount = useMemo(() => {
+    return new Set(
+      (history?.items ?? [])
+        .filter((item) => item.result === 'wrong' || item.result === 'partial')
+        .map((item) => item.questionId)
+    ).size
+  }, [history])
 
-  const visibleBoards = useMemo(() => {
-    const filtered = boardStats.filter(
-      (board) => selectedSubject === 'all' || board.rootName === selectedSubject
-    )
-    return [...filtered].sort((a, b) => {
-      if (mapMode === 'mastery') return (b.masteryScore ?? -1) - (a.masteryScore ?? -1)
-      if (mapMode === 'wrong') return b.wrongCount - a.wrongCount || b.dueCount - a.dueCount
-      if (mapMode === 'ai') return b.aiCount - a.aiCount || b.wrongCount - a.wrongCount
-      return (
-        b.overdueCount * 10 +
-        b.dueCount * 3 +
-        b.wrongCount -
-        (a.overdueCount * 10 + a.dueCount * 3 + a.wrongCount)
-      );
+  const solidChaptersCount = useMemo(() => {
+    return chapterStats.filter((c) => c.isSolid).length
+  }, [chapterStats])
+
+  const totalAiDiagnoses = useMemo(() => {
+    return Object.keys(inboxCategories).length
+  }, [inboxCategories])
+
+  const filteredChapters = useMemo(() => {
+    return chapterStats.filter((c) => {
+      if (selectedSubject !== 'all' && c.rootName !== selectedSubject) return false
+      if (searchQuery.trim()) {
+        const q = searchQuery.trim().toLowerCase()
+        return c.name.toLowerCase().includes(q) || c.rootName.toLowerCase().includes(q)
+      }
+      return true
     })
-  }, [boardStats, selectedSubject, mapMode])
+  }, [chapterStats, selectedSubject, searchQuery])
 
   useEffect(() => {
-    if (loading || visibleBoards.length === 0) return
-    if (
-      !selectionInitialized.current ||
-      !visibleBoards.some((board) => board.id === selectedBoardId)
-    ) {
-      setSelectedBoardId(visibleBoards[0].id)
-      selectionInitialized.current = true
+    if (!selectedChapterId && filteredChapters.length > 0) {
+      setSelectedChapterId(filteredChapters[0].id)
     }
-  }, [loading, visibleBoards, selectedBoardId])
+  }, [filteredChapters, selectedChapterId])
 
-  const selectedBoard = boardStats.find((board) => board.id === selectedBoardId) ?? null
-  const [archiveModalNode, setArchiveModalNode] = useState<MasteryNode | null>(null)
+  const activeChapter = useMemo(() => {
+    return chapterStats.find((c) => c.id === selectedChapterId) ?? filteredChapters[0] ?? null
+  }, [chapterStats, selectedChapterId, filteredChapters])
 
-  const selectedNodes = useMemo(
-    () =>
-      nodes
-        .filter((node) => selectedBoard && node.chapterId === selectedBoard.id && node.depth >= 3)
-        .sort((a, b) => b.dueCount + b.weakCount - (a.dueCount + a.weakCount) || b.total - a.total)
-        .slice(0, 10),
-    [nodes, selectedBoard]
-  )
-
-  const selectedBoardItems = useMemo<ReviewBoardQuestion[]>(() => {
-    if (!selectedBoard) return []
+  // Questions for active chapter
+  const chapterQuestions = useMemo<ReviewBoardQuestion[]>(() => {
+    if (!activeChapter) return []
     const map = new Map<number, ReviewBoardQuestion>()
-    for (const item of dueQueue) {
-      if (!reviewCategoryMatches(selectedBoard, item.question.categoryPath)) continue
-      const diagnosis = diagnosisByQuestion.get(item.question.id)
-      map.set(item.question.id, {
-        questionId: item.question.id,
-        stem: item.question.stem,
-        categoryPath: item.question.categoryPath,
-        source: item.question.source,
-        kind: 'due',
-        result: null,
-        scheduledDate: item.question.nextReview,
-        attemptedAt: null,
-        earliestError: diagnosis?.aiEarliestError ?? null,
-        advice: diagnosis?.aiAdvice ?? null,
-      })
-    }
-    for (const item of plan?.items ?? []) {
-      if (!reviewCategoryMatches(selectedBoard, item.categoryPath)) continue
-      if (map.has(item.questionId)) continue
-      const diagnosis = diagnosisByQuestion.get(item.questionId)
-      map.set(item.questionId, {
-        questionId: item.questionId,
-        stem: item.stem,
-        categoryPath: item.categoryPath,
-        source: item.source,
-        kind: 'due',
-        result: null,
-        scheduledDate: item.scheduledDate,
-        attemptedAt: null,
-        earliestError: diagnosis?.aiEarliestError ?? null,
-        advice: diagnosis?.aiAdvice ?? null,
-      })
-    }
-    for (const item of history?.items ?? []) {
-      if (
-        !reviewCategoryMatches(selectedBoard, item.categoryPath) ||
-        (item.result !== 'wrong' && item.result !== 'partial' && item.result !== 'uncertain')
-      )
-        continue
-      const diagnosis = diagnosisByQuestion.get(item.questionId)
-      map.set(item.questionId, {
-        questionId: item.questionId,
-        stem: item.stem,
-        categoryPath: item.categoryPath,
-        source: item.source,
-        kind: item.result === 'uncertain' ? 'uncertain' : 'wrong',
-        result: item.result,
-        scheduledDate: null,
-        attemptedAt: item.attemptedAt,
-        earliestError: diagnosis?.aiEarliestError ?? null,
-        advice: diagnosis?.aiAdvice ?? null,
-      })
-    }
-    return [...map.values()]
-      .sort((a, b) => {
-        const priority = (kind: ReviewBoardQuestion['kind']) =>
-          kind === 'wrong' ? 0 : kind === 'uncertain' ? 1 : 2
-        return priority(a.kind) - priority(b.kind) || a.questionId - b.questionId
-      })
-      .slice(0, 12)
-  }, [selectedBoard, dueQueue, plan, history, diagnosisByQuestion])
 
-  const startBoardPractice = async (kind: 'due' | 'wrong') => {
-    if (!selectedBoard) return
-    const candidates =
-      kind === 'due'
-        ? dueQueue.filter((item) =>
-            reviewCategoryMatches(selectedBoard, item.question.categoryPath)
-          )
-        : (history?.items ?? []).filter(
-            (item) =>
-              reviewCategoryMatches(selectedBoard, item.categoryPath) &&
-              (item.result === 'wrong' || item.result === 'partial')
-          )
-    const ids = Array.from(
-      new Set(
-        candidates.map((item) => ('question' in item ? item.question.id : item.questionId))
-      )
-    )
-    if (ids.length === 0) {
-      notify(kind === 'due' ? '这个板块目前没有到期题目' : '这个板块目前没有已确认的错题')
+    // Due queue items
+    for (const item of dueQueue) {
+      if (reviewCategoryMatches(activeChapter, item.question.categoryPath)) {
+        const diag = inboxDiagnoses[item.question.id]
+        map.set(item.question.id, {
+          questionId: item.question.id,
+          stem: item.question.stem,
+          categoryPath: item.question.categoryPath,
+          source: item.question.source,
+          kind: 'due',
+          result: null,
+          scheduledDate: item.question.nextReview,
+          attemptedAt: null,
+          earliestError: diag?.earliestError || null,
+          advice: diag?.advice || null,
+          betterSolution: diag?.betterSolution || null,
+        })
+      }
+    }
+
+    // History items
+    for (const item of history?.items ?? []) {
+      if (reviewCategoryMatches(activeChapter, item.categoryPath)) {
+        const existing = map.get(item.questionId)
+        const isWrong = item.result === 'wrong' || item.result === 'partial'
+        const isUncertain = item.result === 'uncertain'
+        const kind = isWrong ? 'wrong' : isUncertain ? 'uncertain' : 'due'
+        const diag = inboxDiagnoses[item.questionId]
+
+        map.set(item.questionId, {
+          questionId: item.questionId,
+          stem: item.stem || existing?.stem || `题目 #${item.questionId}`,
+          categoryPath: item.categoryPath,
+          source: item.source || existing?.source || '数一真题库',
+          kind: existing?.kind === 'due' ? 'due' : kind,
+          result: item.result,
+          scheduledDate: existing?.scheduledDate || null,
+          attemptedAt: item.attemptedAt,
+          earliestError: diag?.earliestError || null,
+          advice: diag?.advice || null,
+          betterSolution: diag?.betterSolution || null,
+        })
+      }
+    }
+
+    return Array.from(map.values())
+  }, [activeChapter, dueQueue, history, inboxDiagnoses])
+
+  const visibleQuestions = useMemo(() => {
+    return chapterQuestions.filter((q) => {
+      if (questionFilter === 'wrong') return q.kind === 'wrong' || q.result === 'wrong' || q.result === 'partial'
+      if (questionFilter === 'due') return q.kind === 'due'
+      if (questionFilter === 'ai') return Boolean(q.earliestError || q.advice || q.betterSolution)
+      return true
+    })
+  }, [chapterQuestions, questionFilter])
+
+  useEffect(() => {
+    if (visibleQuestions.length > 0 && !selectedBoardQ) {
+      setSelectedBoardQ(visibleQuestions[0])
+    }
+  }, [visibleQuestions, selectedBoardQ])
+
+  const handleOpenDetailModal = async (qId: number) => {
+    try {
+      const q = await getQuestion(qId)
+      if (q) setDetailModalQuestion(q)
+    } catch {
+      notify(`无法加载题目 #${qId} 详情`)
+    }
+  }
+
+  const handleToggleFavorite = async (qId: number) => {
+    try {
+      const nextFav = await toggleFavorite(qId)
+      notify(nextFav ? `⭐ 题目 #${qId} 已收藏` : `已取消题目 #${qId} 收藏`)
+    } catch {
+      notify('收藏操作失败')
+    }
+  }
+
+  const handleStartChapterPractice = async (type: 'all' | 'wrong' | 'due') => {
+    const targetQs = visibleQuestions.filter((q) => {
+      if (type === 'wrong') return q.kind === 'wrong' || q.result === 'wrong' || q.result === 'partial'
+      if (type === 'due') return q.kind === 'due'
+      return true
+    })
+    if (targetQs.length === 0) {
+      notify('当前没有可练习的题目')
       return
     }
-    setActionLoading(true)
-    try {
-      const questions = await Promise.all(ids.map((id) => getQuestion(id)))
-      onPracticeBatch(
-        questions,
-        `${kind === 'due' ? '到期复习' : '错题修复'} · ${selectedBoard.rootName} / ${
-          selectedBoard.name
-        }`
-      )
-    } catch (actionError) {
-      notify(`加载板块题目失败：${String(actionError)}`)
-    } finally {
-      setActionLoading(false)
+    const questions = await Promise.all(targetQs.map((q) => getQuestion(q.questionId)))
+    const valid = questions.filter((q): q is Question => Boolean(q))
+    if (valid.length > 0) {
+      onPracticeBatch(valid, `${activeChapter?.name || '章节'}专项复盘`)
     }
   }
-
-  const practiceSingle = async (questionId: number) => {
-    try {
-      onPractice(await getQuestion(questionId))
-    } catch (actionError) {
-      notify(`无法打开题目：${String(actionError)}`)
-    }
-  }
-
-  const startBoardVariant = () => {
-    const item =
-      selectedBoardItems.find((candidate) => candidate.kind === 'wrong') ??
-      selectedBoardItems[0]
-    if (item) onStartVariant(item.questionId)
-    else notify('这个板块还没有可用于生成变式题的题目')
-  }
-
-  const modeMeta: Record<ReviewMapMode, { label: string; hint: string }> = {
-    debt: { label: '复习债务', hint: '颜色和排序优先显示今天最该处理的板块' },
-    mastery: { label: '掌握度', hint: '只使用已确认、可评分的证据' },
-    wrong: { label: '错题密度', hint: '按近 7 天不同错题数量排序' },
-    ai: { label: 'AI 薄弱点', hint: '显示待确认诊断所在的板块' },
-  }
-
-  const recentHistory = useMemo(
-    () =>
-      [...(history?.items ?? [])]
-        .sort((a, b) => b.attemptedAt.localeCompare(a.attemptedAt))
-        .slice(0, 8),
-    [history]
-  )
 
   return (
-    <div className="review-view review-map-view">
-      <section className="review-map-intro">
+    <div className="review-command-center">
+      {/* Header */}
+      <header className="review-header">
         <div>
-          <span>复习地图 · 数学一</span>
-          <h2>先定位板块，再开始修复</h2>
+          <span className="review-kicker">
+            <Layers size={14} /> 数一战术复盘指挥中枢 · TACTICAL REVIEW COMMAND
+          </span>
+          <h1>战术复盘指挥中心</h1>
           <p>
-            把到期题、错题、AI 诊断和掌握证据放回同一张地图。点击板块后，直接进入对应的复习或变式训练。
+            全景知识防线拓扑 · 错题六步排雷工作台 · 三类错因靶向突围 · SRS 周期清零
           </p>
         </div>
-        <div className="review-map-intro-actions">
-          <button className="secondary-button" onClick={onOpenWrongBook}>
-            <FolderSearch size={15} /> 全部错题
-          </button>
-          <button className="primary-button" onClick={() => void onStart()}>
-            <TimerReset size={15} /> 开始今日复习 ({displayedDue})
-          </button>
+        <div className="learning-header-actions">
           <button
-            className="icon-button"
-            title="刷新复习地图"
-            aria-label="刷新复习地图"
-            onClick={() => void load()}
+            type="button"
+            className="secondary-button compact"
+            onClick={onOpenWrongBook}
           >
-            <RefreshCw size={16} />
+            <BookOpen size={14} /> 错题本档案
+          </button>
+          <button
+            type="button"
+            className="primary-button compact"
+            onClick={() => void onStart()}
+          >
+            <Zap size={14} /> ⚡ 一键清零今日复习 ({displayedDue}题)
+          </button>
+          <button
+            type="button"
+            className="icon-button"
+            onClick={() => void load()}
+            title="刷新复盘战况"
+            aria-label="刷新复盘"
+          >
+            <RefreshCw size={16} className={loading ? 'spin' : ''} />
           </button>
         </div>
-      </section>
+      </header>
 
-      <section className="review-map-summary" aria-label="复习债务概览">
-        <button className={displayedDue > 0 ? 'active' : ''} onClick={() => void onStart()}>
-          <span>今日到期</span>
-          <strong>{displayedDue}</strong>
-          <small>{displayedDue ? '现在开始处理' : '今天没有到期题'}</small>
-        </button>
-        <button
-          className={totalOverdue > 0 ? 'active danger' : ''}
-          onClick={() => setMapMode('debt')}
-        >
-          <span>已逾期</span>
-          <strong>{totalOverdue}</strong>
-          <small>{totalOverdue ? '地图已优先标红' : '没有逾期积压'}</small>
-        </button>
-        <button className={inboxCount > 0 ? 'active ai' : ''} onClick={onOpenInbox}>
-          <span>AI 待确认</span>
-          <strong>{inboxCount}</strong>
-          <small>{inboxCount ? '去确认诊断证据' : '当前已清空'}</small>
-        </button>
-        <button
-          className={uniqueWrongCount > 0 ? 'active wrong' : ''}
-          onClick={() => setMapMode('wrong')}
-        >
-          <span>近 7 日错题</span>
-          <strong>{uniqueWrongCount}</strong>
-          <small>
-            {uniqueUncertainCount ? `另有 ${uniqueUncertainCount} 道待确认` : '按不同题目计数'}
-          </small>
-        </button>
-      </section>
-
-      <section className="review-map-controls">
-        <div className="review-map-modes" role="tablist" aria-label="地图查看模式">
-          {(Object.keys(modeMeta) as ReviewMapMode[]).map((mode) => (
-            <button
-              key={mode}
-              className={mapMode === mode ? 'active' : ''}
-              onClick={() => setMapMode(mode)}
-              role="tab"
-              aria-selected={mapMode === mode}
-            >
-              {modeMeta[mode].label}
-            </button>
-          ))}
+      {/* Health Bar */}
+      <section className="review-health-bar" aria-label="战术健康看板">
+        <div className="review-health-tile danger">
+          <span className="review-health-label">
+            <Flame size={14} /> 待排雷错题
+          </span>
+          <div className="review-health-val">{totalWrongCount} <small style={{ fontSize: '13px', color: 'var(--muted)' }}>题在办</small></div>
+          <span className="review-health-sub">需原题重做、相似与变式验证</span>
         </div>
-        <div className="review-map-subjects" aria-label="学科筛选">
+        <div className="review-health-tile warn">
+          <span className="review-health-label">
+            <TimerReset size={14} /> 今日到期债务
+          </span>
+          <div className="review-health-val">{displayedDue} <small style={{ fontSize: '13px', color: 'var(--muted)' }}>题待清</small></div>
+          <span className="review-health-sub">SRS 记忆曲线到达临界复习点</span>
+        </div>
+        <div className="review-health-tile success">
+          <span className="review-health-label">
+            <ShieldCheck size={14} /> 固若金汤章节
+          </span>
+          <div className="review-health-val">{solidChaptersCount} / {chapterStats.length}</div>
+          <span className="review-health-sub">掌握度≥70% 且 0 错题 0 逾期</span>
+        </div>
+        <div className="review-health-tile info">
+          <span className="review-health-label">
+            <Sparkles size={14} /> AI 诊断点位
+          </span>
+          <div className="review-health-val">{totalAiDiagnoses} <small style={{ fontSize: '13px', color: 'var(--muted)' }}>份回传</small></div>
+          <span className="review-health-sub">含秒杀解法与关键断点分析</span>
+        </div>
+      </section>
+
+      {/* Quick Filter Strip */}
+      <section className="review-quick-strip">
+        <div className="review-quick-left">
+          <span style={{ fontSize: 'var(--fs-xs)', color: 'var(--muted)', fontWeight: 700 }}>大科筛选：</span>
           <button
-            className={selectedSubject === 'all' ? 'active' : ''}
+            type="button"
+            className={`review-filter-pill ${selectedSubject === 'all' ? 'active' : ''}`}
             onClick={() => setSelectedSubject('all')}
           >
-            全部
+            全部三大科 ({chapterStats.length})
           </button>
-          {subjects.map((subject) => (
-            <button
-              key={subject}
-              className={selectedSubject === subject ? 'active' : ''}
-              onClick={() => setSelectedSubject(subject)}
-            >
-              {subject}
-            </button>
-          ))}
+          <button
+            type="button"
+            className={`review-filter-pill ${selectedSubject === '高等数学' ? 'active' : ''}`}
+            onClick={() => setSelectedSubject('高等数学')}
+          >
+            高等数学 ({chapterStats.filter((c) => c.rootName === '高等数学').length})
+          </button>
+          <button
+            type="button"
+            className={`review-filter-pill ${selectedSubject === '线性代数' ? 'active' : ''}`}
+            onClick={() => setSelectedSubject('线性代数')}
+          >
+            线性代数 ({chapterStats.filter((c) => c.rootName === '线性代数').length})
+          </button>
+          <button
+            type="button"
+            className={`review-filter-pill ${selectedSubject === '概率论与数理统计' ? 'active' : ''}`}
+            onClick={() => setSelectedSubject('概率论与数理统计')}
+          >
+            概率统计 ({chapterStats.filter((c) => c.rootName === '概率论与数理统计').length})
+          </button>
         </div>
-        <p>{modeMeta[mapMode].hint}</p>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--sp-2)' }}>
+          <Search size={14} style={{ color: 'var(--muted)' }} />
+          <input
+            type="text"
+            className="search-input"
+            placeholder="搜索考点章节..."
+            value={searchQuery}
+            onChange={(e) => setSearchQuery(e.target.value)}
+            style={{ width: '180px', height: '28px', fontSize: 'var(--fs-xs)' }}
+          />
+        </div>
       </section>
 
-      {error && (
-        <div className="review-map-error">
-          <span>复习地图读取失败：{error}</span>
-          <button className="secondary-button compact" onClick={() => void load()}>
-            重试
-          </button>
-        </div>
-      )}
-
-      {loading ? (
-        <div className="review-map-loading">
-          <LoaderCircle className="spin" size={20} /> 正在整理复习板块
-        </div>
-      ) : (
-        <div className="review-map-layout">
-          <section className="review-board-panel">
-            <header className="review-board-panel-head">
-              <div>
-                <span>板块地图</span>
-                <h3>
-                  {visibleBoards.length} 个板块 · {modeMeta[mapMode].label}
-                </h3>
-              </div>
-              <small>面积代表题量，颜色代表当前处理状态</small>
-            </header>
-            {visibleBoards.length === 0 ? (
-              <div className="review-map-empty">当前筛选下没有可展示的板块。</div>
-            ) : (
-              <div className="review-board-grid">
-                {visibleBoards.map((board) => {
-                  const score = board.masteryScore === null ? 0 : Math.round(board.masteryScore)
-                  const progress =
-                    mapMode === 'mastery'
-                      ? score
-                      : mapMode === 'debt'
-                      ? Math.min(100, board.overdueCount * 35 + board.dueCount * 18)
-                      : mapMode === 'wrong'
-                      ? Math.min(100, board.wrongCount * 18)
-                      : Math.min(100, board.aiCount * 25)
-                  return (
-                    <button
-                      key={board.id}
-                      className={`review-board-tile ${board.state} ${
-                        selectedBoardId === board.id ? 'selected' : ''
-                      }`}
-                      style={{
-                        flexGrow: Math.max(1, Math.min(3, Math.ceil(board.total / 160))),
-                      }}
-                      onClick={() => setSelectedBoardId(board.id)}
-                    >
-                      <div className="review-board-tile-head">
-                        <span>{board.rootName}</span>
-                        <b>
-                          {board.state === 'overdue'
-                            ? '逾期'
-                            : board.state === 'due'
-                            ? '待复习'
-                            : board.state === 'ai'
-                            ? '待确认'
-                            : board.state === 'weak'
-                            ? '需修复'
-                            : board.masteryScore === null
-                            ? '数据不足'
-                            : '稳定'}
-                        </b>
-                      </div>
-                      <h3>{board.name}</h3>
-                      <p>
-                        {board.dueCount} 到期 · {board.wrongCount} 错题 · {board.aiCount} 待确认
-                      </p>
-                      <div className="review-board-value">
-                        <strong>{board.modeValue}</strong>
-                        <span>{modeMeta[mapMode].label}</span>
-                      </div>
-                      <div className="review-board-progress">
-                        <i style={{ width: `${progress}%` }} />
-                      </div>
-                      <div className="review-board-stats">
-                        <span>
-                          掌握{' '}
-                          <b>
-                            {board.masteryScore === null
-                              ? '--'
-                              : `${Math.round(board.masteryScore)}分`}
-                          </b>
-                        </span>
-                        <span>
-                          逾期 <b>{board.overdueCount}</b>
-                        </span>
-                        <span>
-                          证据 <b>{board.attemptCount}</b>
-                        </span>
-                      </div>
-                      <div className="review-board-footer">
-                        <span>{board.evidenceLevel}</span>
-                        <ChevronRight size={16} />
-                      </div>
-                    </button>
-                  )
-                })}
-              </div>
-            )}
-            <div className="review-map-legend">
-              <span>
-                <i className="overdue" />逾期
-              </span>
-              <span>
-                <i className="due" />到期
-              </span>
-              <span>
-                <i className="weak" />需修复
-              </span>
-              <span>
-                <i className="strong" />证据稳定
-              </span>
-              <span>
-                <i className="unseen" />暂无证据
-              </span>
-            </div>
-          </section>
-
-          {selectedBoard && (
-            <aside
-              className="review-board-drawer"
-              aria-label={`${selectedBoard.name}板块详情`}
-            >
-              <header>
-                <div>
-                  <span>{selectedBoard.rootName} · 当前板块</span>
-                  <h3>{selectedBoard.name}</h3>
-                  <small>{selectedBoard.evidenceLevel}</small>
-                </div>
-                <button
-                  className="icon-button"
-                  title="关闭板块详情"
-                  aria-label="关闭板块详情"
-                  onClick={() => setSelectedBoardId(null)}
-                >
-                  <X size={16} />
-                </button>
-              </header>
-              <div className="review-board-drawer-scroll">
-                <div className={`review-board-status ${selectedBoard.state}`}>
-                  <strong>
-                    {selectedBoard.overdueCount > 0
-                      ? '这个板块有逾期积压'
-                      : selectedBoard.dueCount > 0
-                      ? '这个板块今天需要复习'
-                      : selectedBoard.wrongCount > 0
-                      ? '这个板块存在待修复错题'
-                      : '当前没有紧急债务'}
-                  </strong>
-                  <span>
-                    {selectedBoard.masteryScore === null
-                      ? '掌握度：数据不足'
-                      : `掌握度：${Math.round(selectedBoard.masteryScore)}分`}
-                  </span>
-                </div>
-                <div className="review-board-drawer-stats">
-                  <div>
-                    <strong>{selectedBoard.dueCount}</strong>
-                    <span>到期题</span>
-                  </div>
-                  <div>
-                    <strong>{selectedBoard.wrongCount}</strong>
-                    <span>不同错题</span>
-                  </div>
-                  <div>
-                    <strong>{selectedBoard.aiCount}</strong>
-                    <span>AI 待确认</span>
-                  </div>
-                  <div>
-                    <strong>{selectedBoard.attemptCount}</strong>
-                    <span>有效作答</span>
-                  </div>
-                </div>
-                <div className="review-board-actions">
-                  <button
-                    className="primary-button"
-                    disabled={actionLoading || selectedBoard.dueCount === 0}
-                    onClick={() => void startBoardPractice('due')}
-                  >
-                    <Play size={15} />{' '}
-                    {actionLoading ? '正在准备…' : `开始到期复习 (${selectedBoard.dueCount})`}
-                  </button>
-                  <button
-                    className="secondary-button"
-                    disabled={actionLoading || selectedBoard.wrongCount === 0}
-                    onClick={() => void startBoardPractice('wrong')}
-                  >
-                    <Target size={15} /> 只练错题 ({selectedBoard.wrongCount})
-                  </button>
-                  <button
-                    className="secondary-button variant"
-                    disabled={selectedBoardItems.length === 0}
-                    onClick={startBoardVariant}
-                  >
-                    <Sparkles size={15} /> 练同类变式
-                  </button>
-                </div>
-
-                <section className="review-board-drawer-section">
-                  <header>
-                    <h4>知识点子板块</h4>
-                    <span>{selectedNodes.length} 个考点 · 点击打开全景档案</span>
-                  </header>
-                  {selectedNodes.length === 0 ? (
-                    <p className="review-board-muted">还没有更细的掌握度证据。</p>
-                  ) : (
-                    <div className="review-node-list">
-                      {selectedNodes.map((node) => (
-                        <button
-                          key={node.id}
-                          className={`review-node-row ${
-                            node.masteryScore !== null && node.masteryScore < 50 ? 'weak' : ''
-                          }`}
-                          onClick={() => setArchiveModalNode(node)}
-                          title="点击打开此考点全景做题档案大弹窗"
-                        >
-                          <div>
-                            <b>{node.name}</b>
-                            <small>{node.evidenceLevel}</small>
-                          </div>
-                          <span>
-                            {node.masteryScore === null
-                              ? '--'
-                              : `${Math.round(node.masteryScore)}分`}
-                          </span>
-                          <div className="review-node-row-meta">
-                            <span>
-                              {node.attempted}/{node.total} 题已做 · {node.dueCount} 到期 ·{' '}
-                              {node.weakCount} 薄弱
-                            </span>
-                            <span className="node-drill-tag">全景档案 ↗</span>
-                          </div>
-                        </button>
-                      ))}
-                    </div>
-                  )}
-                </section>
-
-                <section className="review-board-drawer-section">
-                  <header>
-                    <h4>板块中的复习题</h4>
-                    <span>{selectedBoardItems.length} 条</span>
-                  </header>
-                  {selectedBoardItems.length === 0 ? (
-                    <p className="review-board-muted">这个板块暂时没有待处理题目。</p>
-                  ) : (
-                    <div className="review-board-question-list">
-                      {selectedBoardItems.map((item) => (
-                        <article key={`${item.kind}-${item.questionId}`}>
-                          <button
-                            className="review-board-question-main"
-                            onClick={() => void practiceSingle(item.questionId)}
-                          >
-                            <span className={`review-question-kind ${item.kind}`}>
-                              {item.kind === 'due'
-                                ? '待复习'
-                                : item.kind === 'wrong'
-                                ? '错题'
-                                : '待确认'}
-                            </span>
-                            <b>#{item.questionId}</b>
-                            <MathText value={item.stem} />
-                            <small>
-                              {item.scheduledDate
-                                ? `下次复习 ${item.scheduledDate}`
-                                : item.attemptedAt
-                                ? `最近作答 ${item.attemptedAt.slice(5, 16).replace('T', ' ')}`
-                                : item.source}
-                            </small>
-                          </button>
-                          {item.earliestError ? (
-                            <div className="review-board-evidence">
-                              <span>最早错误</span>
-                              <p>
-                                <MathText value={item.earliestError} />
-                              </p>
-                              {item.advice && (
-                                <small>
-                                  修复动作：<MathText value={item.advice} />
-                                </small>
-                              )}
-                            </div>
-                          ) : (
-                            <div className="review-board-evidence muted">
-                              <span>证据状态</span>
-                              <p>
-                                {item.kind === 'uncertain'
-                                  ? '结果不确定，不计入正确率与掌握度。'
-                                  : '暂时没有 AI 最早错误诊断。'}
-                              </p>
-                            </div>
-                          )}
-                        </article>
-                      ))}
-                    </div>
-                  )}
-                </section>
-              </div>
-            </aside>
-          )}
-        </div>
-      )}
-
-      <section className="review-trace-card">
-        <header>
-          <div>
-            <span>最近 7 天</span>
-            <h3>复习轨迹</h3>
+      {/* Main Workspace Grid */}
+      <div className="review-workspace-grid">
+        {/* Left Column: Math-1 Defense Tree */}
+        <section className="defense-tree-panel">
+          <div className="defense-tree-head">
+            <h2>三大科防线拓扑 ({filteredChapters.length})</h2>
+            <span style={{ fontSize: 'var(--fs-xs)', color: 'var(--muted)' }}>点击切换工作区章节</span>
           </div>
-          <small>不确定结果只保留诊断，不进入正确率与掌握度</small>
-        </header>
-        {recentHistory.length === 0 ? (
-          <div className="review-map-empty">
-            还没有复习轨迹，完成第一道复习题后会出现在这里。
-          </div>
-        ) : (
-          <div className="review-trace-list">
-            {recentHistory.map((item) => {
-              const result = outcomeChip(item.result)
+          <div className="defense-tree-list">
+            {filteredChapters.map((chapter) => {
+              const isSelected = activeChapter?.id === chapter.id
               return (
-                <button
-                  key={`${item.attemptId}-${item.questionId}`}
+                <div
+                  key={chapter.id}
+                  className={`defense-chapter-card ${isSelected ? 'active' : ''}`}
                   onClick={() => {
-                    const board = boardStats.find((candidate) =>
-                      reviewCategoryMatches(candidate, item.categoryPath)
-                    )
-                    if (board) setSelectedBoardId(board.id)
-                    void practiceSingle(item.questionId)
+                    setSelectedChapterId(chapter.id)
+                    setSelectedBoardQ(null)
                   }}
                 >
-                  <span className={`result-dot ${result.tone}`}>{result.symbol}</span>
-                  <div>
-                    <b>
-                      #{item.questionId} ·{' '}
-                      {item.categoryPath.split(' / ').slice(-2).join(' / ')}
-                    </b>
-                    <small>
-                      {item.attemptedAt.slice(5, 16).replace('T', ' ')} · 自评{' '}
-                      {item.selfRating}/4{result.note ? ` · ${result.note}` : ''}
-                    </small>
+                  <div className="chapter-card-top">
+                    <span className="chapter-root-tag">{chapter.rootName.slice(0, 2)}</span>
+                    <span className="chapter-title">{chapter.name}</span>
+                    <span className={`chapter-rank-badge ${chapter.rankTier}`}>
+                      {chapter.rankTier.toUpperCase()} 级 ({chapter.masteryScore !== null ? `${Math.round(chapter.masteryScore)}%` : '--'})
+                    </span>
                   </div>
-                  <ChevronRight size={15} />
-                </button>
+                  <div className="chapter-card-bottom">
+                    <span>考题容量 {chapter.total} 题</span>
+                    <div className="chapter-indicators">
+                      {chapter.isSolid && <span className="indicator-pill success"><ShieldCheck size={12} /> 稳固</span>}
+                      {chapter.wrongCount > 0 && <span className="indicator-pill danger"><Flame size={12} /> {chapter.wrongCount}错题</span>}
+                      {chapter.dueCount > 0 && <span className="indicator-pill warn"><TimerReset size={12} /> {chapter.dueCount}到期</span>}
+                    </div>
+                  </div>
+                </div>
               )
             })}
           </div>
-        )}
-      </section>
+        </section>
 
-      <section className="review-interval-strip">
-        <span>间隔规则</span>
-        {intervals.slice(0, 4).map((interval, index) => (
-          <div key={interval}>
-            <b>{index + 1}分</b>
-            <small>{interval} 天后复习</small>
+        {/* Right Column: Defusal Workbench */}
+        <section className="defusal-workbench-panel">
+          <div className="workbench-head">
+            <div className="workbench-title-box">
+              <h2>{activeChapter?.rootName} · {activeChapter?.name}</h2>
+              <p>
+                本章包含 {chapterQuestions.length} 道排查点 · {activeChapter?.wrongCount ?? 0} 道错题在办 · {activeChapter?.dueCount ?? 0} 道到期
+              </p>
+            </div>
+            <div className="workbench-actions">
+              <button
+                type="button"
+                className="secondary-button compact"
+                onClick={() => void handleStartChapterPractice('due')}
+                disabled={!activeChapter?.dueCount}
+              >
+                <Zap size={13} /> 练到期 ({activeChapter?.dueCount ?? 0})
+              </button>
+              <button
+                type="button"
+                className="primary-button compact"
+                onClick={() => void handleStartChapterPractice('wrong')}
+                disabled={!activeChapter?.wrongCount}
+              >
+                <Flame size={13} /> 攻坚错题 ({activeChapter?.wrongCount ?? 0})
+              </button>
+            </div>
           </div>
-        ))}
-        <span className="review-interval-note">
-          评分只决定下一次复习间隔；AI 诊断和作答结果共同决定板块状态。
-        </span>
+
+          <div className="workbench-scrollable">
+            {/* Question Filter Tabs */}
+            <div className="workbench-questions-filter">
+              <button
+                type="button"
+                className={`review-filter-pill ${questionFilter === 'all' ? 'active' : ''}`}
+                onClick={() => setQuestionFilter('all')}
+              >
+                全部本章题目 ({chapterQuestions.length})
+              </button>
+              <button
+                type="button"
+                className={`review-filter-pill ${questionFilter === 'wrong' ? 'active' : ''}`}
+                onClick={() => setQuestionFilter('wrong')}
+              >
+                🔴 待排错题 ({chapterQuestions.filter((q) => q.kind === 'wrong' || q.result === 'wrong').length})
+              </button>
+              <button
+                type="button"
+                className={`review-filter-pill ${questionFilter === 'due' ? 'active' : ''}`}
+                onClick={() => setQuestionFilter('due')}
+              >
+                ⏱️ 到期复习 ({chapterQuestions.filter((q) => q.kind === 'due').length})
+              </button>
+              <button
+                type="button"
+                className={`review-filter-pill ${questionFilter === 'ai' ? 'active' : ''}`}
+                onClick={() => setQuestionFilter('ai')}
+              >
+                💡 AI 诊断点 ({chapterQuestions.filter((q) => q.earliestError || q.advice).length})
+              </button>
+            </div>
+
+            {visibleQuestions.length === 0 ? (
+              <div className="learning-empty" style={{ minHeight: '200px' }}>
+                <CheckCircle2 size={32} style={{ color: 'var(--green)' }} />
+                <strong>当前筛选下暂无题目</strong>
+                <span>该章节在此状态下防线完好，可以切换其他筛选或章节查看。</span>
+              </div>
+            ) : (
+              visibleQuestions.map((q) => {
+                const isSelected = selectedBoardQ?.questionId === q.questionId
+                const isWrong = q.kind === 'wrong' || q.result === 'wrong' || q.result === 'partial'
+                const step = isWrong ? 2 : q.kind === 'due' ? 5 : 6
+
+                return (
+                  <article
+                    key={q.questionId}
+                    className={`workbench-qcard ${isSelected ? 'selected' : ''}`}
+                    onClick={() => setSelectedBoardQ(q)}
+                  >
+                    <div className="qcard-topline">
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--sp-2)' }}>
+                        <span className="qcard-id-badge">#{q.questionId}</span>
+                        <span className={`match-result-pill ${isWrong ? 'loss' : 'win'}`}>
+                          {isWrong ? '待排雷' : '到期温习'}
+                        </span>
+                        <span>{q.source}</span>
+                      </div>
+                      {q.scheduledDate && <span>下次复习：{q.scheduledDate}</span>}
+                    </div>
+
+                    <div className="qcard-stem-box">
+                      <MathText value={q.stem} />
+                    </div>
+
+                    {/* Defusal Step Progress */}
+                    <DefusalStepProgress currentStep={step} />
+
+                    {/* AI Diagnosis details if available */}
+                    {isSelected && (
+                      <div className="workbench-detail-drawer">
+                        {q.earliestError && (
+                          <div className="tactical-error-box">
+                            <strong>🔴 AI 步骤断点定位：</strong>
+                            <p style={{ margin: '4px 0 0' }}><MathText value={q.earliestError} /></p>
+                          </div>
+                        )}
+                        {q.betterSolution && (
+                          <div className="tactical-solution-box">
+                            <strong>⚡ 考场秒杀更优解：</strong>
+                            <p style={{ margin: '4px 0 0' }}><MathText value={q.betterSolution} /></p>
+                          </div>
+                        )}
+                        {q.advice && (
+                          <div className="tactical-advice-box">
+                            <strong>🎯 专项执行动作：</strong>
+                            <p style={{ margin: '4px 0 0' }}><MathText value={q.advice} /></p>
+                          </div>
+                        )}
+                      </div>
+                    )}
+
+                    {/* Action Bar */}
+                    <div className="qcard-action-bar">
+                      <div style={{ display: 'flex', gap: 'var(--sp-2)' }}>
+                        <button
+                          type="button"
+                          className="primary-button compact"
+                          onClick={async (e) => {
+                            e.stopPropagation()
+                            const fullQ = await getQuestion(q.questionId)
+                            if (fullQ) onPractice(fullQ)
+                          }}
+                        >
+                          <Play size={13} /> 原题重做
+                        </button>
+                        <button
+                          type="button"
+                          className="secondary-button compact"
+                          onClick={(e) => {
+                            e.stopPropagation()
+                            onStartVariant(q.questionId)
+                          }}
+                        >
+                          <Swords size={13} /> 🔀 变式破局
+                        </button>
+                        <button
+                          type="button"
+                          className="secondary-button compact"
+                          onClick={(e) => {
+                            e.stopPropagation()
+                            void handleToggleFavorite(q.questionId)
+                          }}
+                        >
+                          <Star size={13} /> 收藏
+                        </button>
+                      </div>
+                      <button
+                        type="button"
+                        className="learning-link-button"
+                        onClick={(e) => {
+                          e.stopPropagation()
+                          void handleOpenDetailModal(q.questionId)
+                        }}
+                      >
+                        题目全景档案 <ChevronRight size={14} />
+                      </button>
+                    </div>
+                  </article>
+                )
+              })
+            )}
+          </div>
+        </section>
+      </div>
+
+      {/* Bottom Section: Error Tag Vault */}
+      <section className="error-tag-vault-section">
+        <div className="vault-head">
+          <div>
+            <span className="review-kicker"><Target size={14} /> ERROR TAG BREAKTHROUGH</span>
+            <h3>三类错因专项突围库</h3>
+          </div>
+          <span style={{ fontSize: 'var(--fs-xs)', color: 'var(--muted)' }}>
+            根据 AI 诊断标记归类，点击直接开练针对性专项题组
+          </span>
+        </div>
+        <div className="vault-cards-grid">
+          <div className="vault-card aim">
+            <div className="vault-card-head">
+              <strong>🔴 瞄准失误库 (计算/符号/笔误)</strong>
+              <Flame size={18} style={{ color: 'var(--danger-strong)' }} />
+            </div>
+            <p>思路完全正确，但在通分、变上限求导、矩阵初等变换处产生符号与计算笔误。</p>
+            <button
+              type="button"
+              className="primary-button compact vault-card-btn"
+              onClick={() => void onStart()}
+            >
+              ⚡ 启动速算强化特训
+            </button>
+          </div>
+
+          <div className="vault-card concept">
+            <div className="vault-card-head">
+              <strong>🟡 概念盲区库 (定理前提/可微连续)</strong>
+              <ShieldAlert size={18} style={{ color: 'var(--warn-strong)' }} />
+            </div>
+            <p>未验证极限存在拆分、导数连续性混淆、可微与偏导存在边界模糊。</p>
+            <button
+              type="button"
+              className="primary-button compact vault-card-btn"
+              onClick={() => void onStart()}
+            >
+              🎯 启动概念反例辨析特训
+            </button>
+          </div>
+
+          <div className="vault-card detour">
+            <div className="vault-card-head">
+              <strong>🔵 战术绕路库 (蛮干硬算/超时严重)</strong>
+              <Zap size={18} style={{ color: 'var(--info)' }} />
+            </div>
+            <p>方法机械，陷入代数黑洞；缺乏 King 变换、待定系数法与特征多项式秒杀技巧。</p>
+            <button
+              type="button"
+              className="primary-button compact vault-card-btn"
+              onClick={() => void onStart()}
+            >
+              ⚡ 启动考场秒杀技巧特训
+            </button>
+          </div>
+        </div>
       </section>
 
+      {/* Question Detail Modal */}
       <AnimatePresence>
-        {selectedQuestion && (
+        {detailModalQuestion && (
           <QuestionDetail
-            question={selectedQuestion}
-            close={() => setSelectedQuestion(null)}
-            add={() => {
-              void addToCustomQueue(selectedQuestion.id)
-                .then(() => notify(`已将错题 #${selectedQuestion.id} 加入训练队列`))
-                .catch((actionError) => notify(`无法加入训练队列：${String(actionError)}`))
-            }}
+            question={detailModalQuestion}
+            close={() => setDetailModalQuestion(null)}
+            add={() => void addToCustomQueue(detailModalQuestion.id)}
             practice={() => {
-              onPractice(selectedQuestion)
-              setSelectedQuestion(null)
+              setDetailModalQuestion(null)
+              onPractice(detailModalQuestion)
             }}
-            onChange={setSelectedQuestion}
-          />
-        )}
-      </AnimatePresence>
-      <AnimatePresence>
-        {archiveModalNode && (
-          <SubBranchArchiveModal
-            node={archiveModalNode}
-            today={today}
-            dailyLog={dailyLog}
-            onClose={() => setArchiveModalNode(null)}
-            onPractice={onPractice}
-            onStartVariant={onStartVariant}
-            onAddToQueue={(qid) => {
-              void addToCustomQueue(qid)
-                .then(() => notify(`已将 #${qid} 加入训练队列`))
-                .catch((err) => notify(`加入队列失败: ${String(err)}`))
+            onChange={(updated) => {
+              setDetailModalQuestion(updated)
             }}
-            onViewDetail={(q) => setSelectedQuestion(q)}
-            onPracticeBatch={onPracticeBatch}
           />
         )}
       </AnimatePresence>

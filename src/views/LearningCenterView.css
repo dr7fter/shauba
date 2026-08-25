@@ -41,6 +41,7 @@
 .learning-objective-footer small { color: var(--quiet); line-height: 1.45; max-width: 65%; }
 .learning-metrics-card { margin-bottom: var(--sp-4); }
 .learning-ai-return-card { margin-bottom: var(--sp-4); border-color: var(--line-info); background: var(--info-soft); }
+.learning-ai-complete-card { margin-bottom: var(--sp-4); border-color: var(--line-success); background: var(--success-soft); }
 .learning-ai-return-list { display: grid; gap: var(--sp-3); }
 .learning-ai-return-item { display: flex; align-items: center; justify-content: space-between; gap: var(--sp-4); padding: var(--sp-3); border: 1px solid var(--line); border-radius: var(--r-md); background: var(--surface); }
 .learning-ai-return-item > div { min-width: 0; display: grid; gap: 4px; }
@@ -116,6 +117,9 @@
 .learning-evidence-drawer { width: min(460px, 100%); height: 100%; overflow: auto; padding: var(--sp-6); background: var(--surface); box-shadow: var(--shadow-drawer-left-lg); }
 .learning-ai-drawer { width: min(620px, 100%); height: 100%; overflow: auto; padding: var(--sp-6); background: var(--surface); box-shadow: var(--shadow-drawer-left-lg); }
 .learning-ai-label { display: grid; gap: var(--sp-2); margin: var(--sp-4) 0; color: var(--ink); font-size: var(--fs-sm); font-weight: 700; }
+.learning-ai-templates { display: flex; flex-wrap: wrap; gap: var(--sp-2); margin: var(--sp-3) 0 var(--sp-4); }
+.learning-ai-template { border: 1px solid var(--line); border-radius: var(--r-full); background: var(--surface); color: var(--muted); padding: 6px 10px; font: inherit; font-size: var(--fs-xs); cursor: pointer; }
+.learning-ai-template:hover { background: var(--green-soft); border-color: var(--line-strong); color: var(--green-dark); }
 .learning-ai-input, .learning-ai-select { width: 100%; border: 1px solid var(--line); border-radius: var(--r-md); background: var(--sunken); color: var(--ink); padding: var(--sp-3); font: inherit; font-weight: 400; resize: vertical; }
 .learning-ai-select { min-height: var(--h-md); }
 .learning-ai-task-meta { display: grid; gap: var(--sp-1); padding: var(--sp-3); border: 1px solid var(--line-success); border-radius: var(--r-md); background: var(--success-soft); }

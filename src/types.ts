@@ -70,6 +70,8 @@ export type RecommendationBatch = {
   totalCount: number
   completedCount: number
   remainingCount: number
+  resultContextPath?: string | null
+  resultExportedAt?: string | null
 }
 
 export type CategoryNode = {

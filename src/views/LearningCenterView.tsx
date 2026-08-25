@@ -214,7 +214,7 @@ function DefusalStepProgress({ chain }: { chain: MistakeChain }) {
 
 export function LearningCenterView({ initialData = null, featureFlags, onNavigate, onNotify, onRefresh }: LearningCenterViewProps) {
   const flags = featureFlags ?? {
-    learningCenterV1: isFeatureEnabled('learningCenterV1'), learningEvidenceProjectionV1: isFeatureEnabled('learningEvidenceProjectionV1'), lowConfidenceGateV1: isFeatureEnabled('lowConfidenceGateV1'), nonPressureBatchGradingV1: isFeatureEnabled('nonPressureBatchGradingV1'), shadowRecommendationPlanV1: isFeatureEnabled('shadowRecommendationPlanV1'), rankedOnlyEloV1: isFeatureEnabled('rankedOnlyEloV1'), friendBroadcastsV1: isFeatureEnabled('friendBroadcastsV1'),
+    learningCenterV1: isFeatureEnabled('learningCenterV1'), learningEvidenceProjectionV1: isFeatureEnabled('learningEvidenceProjectionV1'), lowConfidenceGateV1: isFeatureEnabled('lowConfidenceGateV1'), nonPressureBatchGradingV1: isFeatureEnabled('nonPressureBatchGradingV1'), shadowRecommendationPlanV1: isFeatureEnabled('shadowRecommendationPlanV1'), rankedOnlyEloV1: isFeatureEnabled('rankedOnlyEloV1'), friendBroadcastsV1: isFeatureEnabled('friendBroadcastsV1'), aiRecommendationV1: isFeatureEnabled('aiRecommendationV1'), recommendationValidatorV1: isFeatureEnabled('recommendationValidatorV1'), learningGroupV1: isFeatureEnabled('learningGroupV1'),
   }
   const [snapshot, setSnapshot] = useState<LearningCenterSnapshot | null>(initialData)
   const snapshotRef = useRef<LearningCenterSnapshot | null>(initialData)
@@ -232,6 +232,14 @@ export function LearningCenterView({ initialData = null, featureFlags, onNavigat
   const [aiTask, setAiTask] = useState<{ taskId: string; prompt: string; outputFile: string } | null>(null)
   const [aiBusy, setAiBusy] = useState(false)
   const [aiRecommendations, setAiRecommendations] = useState<import('../types').InboxItem[]>([])
+  const [aiCompletedRecommendations, setAiCompletedRecommendations] = useState<import('../types').InboxItem[]>([])
+  const aiTemplates = [
+    '漏洞修复：优先处理最近高信心错误，安排一题诊断和一题验证。',
+    '扩大覆盖：标准题已经熟悉，改变条件、表示或方法入口，避免只换数字。',
+    '方法辨析：我想练识别解题入口，减少机械硬算。',
+    '迁移挑战：在已有独立正确证据后，安排有结构依据的变式迁移。',
+    '考场限时：在有限时间内保留诊断和验证，控制题组负荷。',
+  ]
 
   const load = useCallback(async (initial = false) => {
     if (!flags.learningCenterV1) return
@@ -246,6 +254,7 @@ export function LearningCenterView({ initialData = null, featureFlags, onNavigat
         if (item.status === 'dismissed') return false
         return !item.recommendationBatchStatus || item.recommendationBatchStatus === 'pending'
       }).slice(0, 3))
+      setAiCompletedRecommendations(inbox.filter((item) => item.kind === 'recommendation' && item.recommendationBatchStatus === 'completed').slice(0, 3))
       const next = await getLearningCenterSnapshot()
       if (requestSeq !== requestSeqRef.current) return
       snapshotRef.current = next
@@ -409,6 +418,7 @@ export function LearningCenterView({ initialData = null, featureFlags, onNavigat
       </section>
       <MetricStrip metrics={metrics} projectionEnabled={flags.learningEvidenceProjectionV1} onOpen={setSelectedMetric} />
       {aiRecommendations.length > 0 && <section className="learning-card learning-ai-return-card" aria-labelledby="learning-ai-return-title"><div className="learning-section-heading"><div><span className="learning-eyebrow">AI 回传</span><h2 id="learning-ai-return-title">待采用的 AI 题组</h2></div><span className="learning-muted">已按题号和题组约束校验</span></div><div className="learning-ai-return-list">{aiRecommendations.map((item) => <article className="learning-ai-return-item" key={item.taskId}><div><strong>{item.goal ?? item.summary}</strong><p>{item.recommendationReason ?? 'AI 未提供推荐理由。'}</p><small>{item.recommendedQuestionIds?.length ?? 0} 题 · {item.estimatedMinutes ?? '—'} 分钟 · {item.noveltyPlan?.join('、') || '考法覆盖待查看'}</small></div><button type="button" className="learning-primary-button compact" onClick={() => void openAiRecommendation(item)}><Zap size={14} /> 采用并开练</button></article>)}</div></section>}
+      {aiCompletedRecommendations.length > 0 && <section className="learning-card learning-ai-complete-card" aria-labelledby="learning-ai-complete-title"><div className="learning-section-heading"><div><span className="learning-eyebrow">训练结果</span><h2 id="learning-ai-complete-title">最近完成的 AI 题组</h2></div><span className="learning-muted">结果已写入下一轮 AI 上下文</span></div><div className="learning-ai-return-list">{aiCompletedRecommendations.map((item) => <article className="learning-ai-return-item" key={item.taskId}><div><strong>{item.goal ?? item.summary}</strong><p>{item.recommendationReason ?? '本组训练已完成。'}</p><small>{item.recommendationQuestionCount ?? item.recommendedQuestionIds?.length ?? 0} 题 · 可继续生成下一轮训练</small></div><button type="button" className="learning-secondary-button compact" onClick={() => { setAiTask({ taskId: '', prompt: '', outputFile: '' }); setAiRequest('根据上一组完成结果，继续安排下一轮：保留未验证考法，避免重复同构题。') }}>生成下一轮</button></article>)}</div></section>}
       <div className="learning-main-grid">
         <section className="learning-card" aria-labelledby="learning-chains-title">
           <div className="learning-section-heading">
@@ -564,7 +574,7 @@ export function LearningCenterView({ initialData = null, featureFlags, onNavigat
     {aiTask && (
       <div className="learning-drawer-backdrop" role="presentation" onClick={() => setAiTask(null)}><aside className="learning-ai-drawer" role="dialog" aria-modal="true" aria-labelledby="learning-ai-title" onClick={(event) => event.stopPropagation()}>
         <div className="learning-drawer-head"><div><span className="learning-eyebrow">AI 训练会话</span><h2 id="learning-ai-title">让 AI 按你的状态设计题组</h2></div><button type="button" className="learning-icon-button" onClick={() => setAiTask(null)} aria-label="关闭 AI 训练会话"><X size={18} /></button></div>
-        {!aiTask.taskId ? <><p className="learning-drawer-note">App 会自动带上当前分类、历史作答和候选题。AI 只从候选题中选择，并返回已适应考法、待覆盖考法和题组顺序。</p><label className="learning-ai-label">这次想怎么练？<textarea className="learning-ai-input" rows={5} value={aiRequest} onChange={(event) => setAiRequest(event.target.value)} placeholder="例如：极限标准题已经熟了，今天想覆盖更多考法，重点练方法选择，不要太基础。" /></label><label className="learning-ai-label">可用时间<select className="learning-ai-select" value={aiMinutes} onChange={(event) => setAiMinutes(Number(event.target.value))}>{[15, 30, 40, 60, 90].map((value) => <option key={value} value={value}>{value} 分钟</option>)}</select></label><button type="button" className="learning-primary-button" onClick={() => void handleCreateAiTask()} disabled={aiBusy}><Sparkles size={15} /> {aiBusy ? '生成中…' : '生成 AI 训练任务'}</button></> : <><div className="learning-ai-task-meta"><strong>{aiTask.taskId}</strong><span>候选题已写入上下文，等待 Codex 规划题组</span></div><p className="learning-drawer-note">复制下面的任务说明发送给 Codex。Codex 完成后将推荐 JSON 写入回传文件，回到这里点击刷新即可看到题组。</p><button type="button" className="learning-primary-button" onClick={() => void copyAiPrompt()}><ClipboardCopy size={15} /> 复制 AI 任务说明</button><div className="learning-ai-file"><small>回传文件</small><code>{aiTask.outputFile}</code></div><pre className="learning-ai-prompt">{aiTask.prompt}</pre></>}
+        {!aiTask.taskId ? <><p className="learning-drawer-note">App 会自动带上当前分类、历史作答、上一组结果和候选题。AI 只从候选题中选择，并返回已适应考法、待覆盖考法和题组顺序。</p><div className="learning-ai-templates" aria-label="训练模板">{aiTemplates.map((template) => <button key={template} type="button" className="learning-ai-template" onClick={() => setAiRequest(template)}>{template.split('：')[0]}</button>)}</div><label className="learning-ai-label">这次想怎么练？<textarea className="learning-ai-input" rows={5} value={aiRequest} onChange={(event) => setAiRequest(event.target.value)} placeholder="例如：极限标准题已经熟了，今天想覆盖更多考法，重点练方法选择，不要太基础。" /></label><label className="learning-ai-label">可用时间<select className="learning-ai-select" value={aiMinutes} onChange={(event) => setAiMinutes(Number(event.target.value))}>{[15, 30, 40, 60, 90].map((value) => <option key={value} value={value}>{value} 分钟</option>)}</select></label><button type="button" className="learning-primary-button" onClick={() => void handleCreateAiTask()} disabled={aiBusy}><Sparkles size={15} /> {aiBusy ? '生成中…' : '生成 AI 训练任务'}</button></> : <><div className="learning-ai-task-meta"><strong>{aiTask.taskId}</strong><span>候选题和上一组结果已写入上下文，等待 Codex 规划题组</span></div><p className="learning-drawer-note">复制下面的任务说明发送给 Codex。Codex 完成后将推荐 JSON 写入回传文件，回到这里点击刷新即可看到题组。</p><button type="button" className="learning-primary-button" onClick={() => void copyAiPrompt()}><ClipboardCopy size={15} /> 复制 AI 任务说明</button><div className="learning-ai-file"><small>回传文件</small><code>{aiTask.outputFile}</code></div><pre className="learning-ai-prompt">{aiTask.prompt}</pre></>}
       </aside></div>
     )}
   </div>

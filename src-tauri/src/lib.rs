@@ -471,6 +471,8 @@ struct RecommendationBatch {
     total_count: i64,
     completed_count: i64,
     remaining_count: i64,
+    result_context_path: Option<String>,
+    result_exported_at: Option<String>,
 }
 
 #[derive(Debug, Serialize)]
@@ -880,7 +882,9 @@ CREATE TABLE IF NOT EXISTS progress (
            status TEXT NOT NULL DEFAULT 'pending',
            created_at TEXT NOT NULL,
            started_at TEXT,
-           completed_at TEXT
+           completed_at TEXT,
+           result_context_path TEXT,
+           result_exported_at TEXT
          );
          CREATE INDEX IF NOT EXISTS idx_recommendation_batches_status ON recommendation_batches(status,started_at);
          CREATE TABLE IF NOT EXISTS recommendation_batch_items (
@@ -888,6 +892,13 @@ CREATE TABLE IF NOT EXISTS progress (
            question_id INTEGER NOT NULL,
            position INTEGER NOT NULL,
            completed_at TEXT,
+           attempt_id INTEGER,
+           result TEXT,
+           outcome TEXT,
+           self_rating INTEGER,
+           duration_seconds INTEGER,
+           attempt_mode TEXT,
+           evidence_source TEXT,
            PRIMARY KEY(task_id,question_id),
            UNIQUE(task_id,position),
            FOREIGN KEY(task_id) REFERENCES recommendation_batches(task_id) ON DELETE CASCADE,
@@ -980,6 +991,15 @@ fn migrate_schema_impl(conn: &Connection, inject_failure: bool) -> rusqlite::Res
             "dim_strategy_insight",
             "dim_strategy_insight REAL",
         )?;
+        ensure_column(conn, "recommendation_batches", "result_context_path", "result_context_path TEXT")?;
+        ensure_column(conn, "recommendation_batches", "result_exported_at", "result_exported_at TEXT")?;
+        ensure_column(conn, "recommendation_batch_items", "attempt_id", "attempt_id INTEGER")?;
+        ensure_column(conn, "recommendation_batch_items", "result", "result TEXT")?;
+        ensure_column(conn, "recommendation_batch_items", "outcome", "outcome TEXT")?;
+        ensure_column(conn, "recommendation_batch_items", "self_rating", "self_rating INTEGER")?;
+        ensure_column(conn, "recommendation_batch_items", "duration_seconds", "duration_seconds INTEGER")?;
+        ensure_column(conn, "recommendation_batch_items", "attempt_mode", "attempt_mode TEXT")?;
+        ensure_column(conn, "recommendation_batch_items", "evidence_source", "evidence_source TEXT")?;
         ensure_column(conn, "elo_events", "session_id", "session_id TEXT")?;
         ensure_column(
             conn,
@@ -1550,6 +1570,7 @@ fn recommendation_batch_by_task(
 ) -> Result<Option<RecommendationBatch>, String> {
     conn.query_row(
         "SELECT b.task_id,b.title,b.summary,b.recommendation_reason,b.status,b.created_at,
+                b.result_context_path,b.result_exported_at,
                 COUNT(i.question_id),COALESCE(SUM(CASE WHEN i.completed_at IS NOT NULL THEN 1 ELSE 0 END),0)
          FROM recommendation_batches b
          LEFT JOIN recommendation_batch_items i ON i.task_id=b.task_id
@@ -1557,8 +1578,8 @@ fn recommendation_batch_by_task(
          GROUP BY b.task_id,b.title,b.summary,b.recommendation_reason,b.status,b.created_at",
         [task_id],
         |row| {
-            let total_count: i64 = row.get(6)?;
-            let completed_count: i64 = row.get(7)?;
+            let total_count: i64 = row.get(8)?;
+            let completed_count: i64 = row.get(9)?;
             Ok(RecommendationBatch {
                 task_id: row.get(0)?,
                 title: row.get(1)?,
@@ -1566,6 +1587,8 @@ fn recommendation_batch_by_task(
                 recommendation_reason: row.get(3)?,
                 status: row.get(4)?,
                 created_at: row.get(5)?,
+                result_context_path: row.get(6)?,
+                result_exported_at: row.get(7)?,
                 total_count,
                 completed_count,
                 remaining_count: total_count - completed_count,
@@ -2973,7 +2996,7 @@ fn dismiss_recommendation_batch_row(conn: &Connection, task_id: &str) -> Result<
     Ok(())
 }
 
-fn complete_active_recommendation_item(conn: &Connection, question_id: i64) -> Result<(), String> {
+fn complete_active_recommendation_item(conn: &Connection, question_id: i64, attempt_id: i64) -> Result<(), String> {
     let active_task: Option<String> = conn
         .query_row(
             "SELECT task_id FROM recommendation_batches WHERE status='active' ORDER BY started_at DESC,created_at DESC LIMIT 1",
@@ -2987,8 +3010,17 @@ fn complete_active_recommendation_item(conn: &Connection, question_id: i64) -> R
     };
     let now = Local::now().to_rfc3339();
     conn.execute(
-        "UPDATE recommendation_batch_items SET completed_at=?1 WHERE task_id=?2 AND question_id=?3 AND completed_at IS NULL",
-        params![now, task_id, question_id],
+        "UPDATE recommendation_batch_items
+         SET completed_at=?1,
+             attempt_id=?4,
+             result=(SELECT result FROM attempts WHERE id=?4),
+             outcome=(SELECT outcome FROM attempts WHERE id=?4),
+             self_rating=(SELECT self_rating FROM attempts WHERE id=?4),
+             duration_seconds=(SELECT duration_seconds FROM attempts WHERE id=?4),
+             attempt_mode=(SELECT mode FROM attempts WHERE id=?4),
+             evidence_source=(SELECT evidence_source FROM attempts WHERE id=?4)
+         WHERE task_id=?2 AND question_id=?3 AND completed_at IS NULL",
+        params![now, task_id, question_id, attempt_id],
     )
     .map_err(|e| e.to_string())?;
     conn.execute(
@@ -2996,6 +3028,77 @@ fn complete_active_recommendation_item(conn: &Connection, question_id: i64) -> R
         params![Local::now().to_rfc3339(), task_id],
     )
     .map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+fn write_completed_recommendation_contexts(conn: &Connection, data_dir: &Path) -> Result<(), String> {
+    let task_ids: Vec<String> = {
+        let mut stmt = conn.prepare(
+            "SELECT task_id FROM recommendation_batches
+             WHERE status='completed' AND completed_at IS NOT NULL
+               AND result_context_path IS NULL
+             ORDER BY completed_at ASC",
+        ).map_err(|e| e.to_string())?;
+        let rows = stmt.query_map([], |row| row.get(0))
+            .map_err(|e| e.to_string())?
+            .collect::<Result<Vec<String>, _>>()
+            .map_err(|e| e.to_string())?;
+        rows
+    };
+    if task_ids.is_empty() { return Ok(()); }
+    let dir = data_dir.join("codex-tasks");
+    fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
+    for task_id in task_ids {
+        let batch: (String, String, String, String, String) = conn.query_row(
+            "SELECT title,summary,recommendation_reason,status,completed_at FROM recommendation_batches WHERE task_id=?1",
+            [&task_id], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?, row.get(4)?)),
+        ).map_err(|e| e.to_string())?;
+        let mut stmt = conn.prepare(
+            "SELECT rbi.position,rbi.question_id,q.category_path,q.stem,
+                    rbi.attempt_id,rbi.result,rbi.outcome,rbi.self_rating,rbi.duration_seconds,
+                    rbi.attempt_mode,rbi.evidence_source,rbi.completed_at
+             FROM recommendation_batch_items rbi
+             JOIN questions q ON q.id=rbi.question_id
+             WHERE rbi.task_id=?1 ORDER BY rbi.position",
+        ).map_err(|e| e.to_string())?;
+        let items = stmt.query_map([task_id.as_str()], |row| Ok(json!({
+            "position": row.get::<_, i64>(0)?,
+            "questionId": row.get::<_, i64>(1)?,
+            "categoryPath": row.get::<_, String>(2)?,
+            "stem": row.get::<_, String>(3)?,
+            "attemptId": row.get::<_, Option<i64>>(4)?,
+            "result": row.get::<_, Option<String>>(5)?,
+            "outcome": row.get::<_, Option<String>>(6)?,
+            "selfRating": row.get::<_, Option<i64>>(7)?,
+            "durationSeconds": row.get::<_, Option<i64>>(8)?,
+            "attemptMode": row.get::<_, Option<String>>(9)?,
+            "evidenceSource": row.get::<_, Option<String>>(10)?,
+            "completedAt": row.get::<_, Option<String>>(11)?,
+        }))).map_err(|e| e.to_string())?.collect::<Result<Vec<_>, _>>().map_err(|e| e.to_string())?;
+        let context = json!({
+            "schemaVersion": 1,
+            "kind": "recommendationResult",
+            "taskId": task_id,
+            "title": batch.0,
+            "summary": batch.1,
+            "recommendationReason": batch.2,
+            "status": batch.3,
+            "completedAt": batch.4,
+            "items": items,
+            "rules": [
+                "独立作答结果优先于看解析后的正确",
+                "一次正确不能直接证明考法稳定",
+                "根据结果区分修复、方法辨析、巩固和迁移，不要按章节盲抽",
+                "下一轮只能使用 App 提供的候选题号"
+            ]
+        });
+        let path = dir.join(format!("{task_id}.result.context.json"));
+        fs::write(&path, serde_json::to_string_pretty(&context).map_err(|e| e.to_string())?).map_err(|e| e.to_string())?;
+        conn.execute(
+            "UPDATE recommendation_batches SET result_context_path=?1,result_exported_at=?2 WHERE task_id=?3 AND result_context_path IS NULL",
+            params![path.to_string_lossy(), Local::now().to_rfc3339(), task_id],
+        ).map_err(|e| e.to_string())?;
+    }
     Ok(())
 }
 
@@ -4402,6 +4505,11 @@ fn record_attempt(
 ) -> Result<RecordAttemptResult, String> {
     let conn = state.db.lock().map_err(|e| e.to_string())?;
     let attempt_id = record_attempt_row(&conn, &input)?;
+    // A completed AI batch becomes the immutable input for the next AI round.
+    // Export failure must never roll back the user's attempt.
+    if let Err(error) = write_completed_recommendation_contexts(&conn, &state.data_dir) {
+        eprintln!("recommendation result context export skipped: {error}");
+    }
     let question = question_by_id(&conn, input.question_id)?;
     Ok(RecordAttemptResult {
         question,
@@ -4442,12 +4550,16 @@ fn undo_last_attempt_row(conn: &Connection, question_id: i64) -> Result<(), Stri
         .map_err(|e| e.to_string())?;
     if let Some(task_id) = target_batch {
         conn.execute(
-            "UPDATE recommendation_batch_items SET completed_at=NULL WHERE task_id=?1 AND question_id=?2",
+            "UPDATE recommendation_batch_items
+             SET completed_at=NULL,attempt_id=NULL,result=NULL,outcome=NULL,self_rating=NULL,
+                 duration_seconds=NULL,attempt_mode=NULL,evidence_source=NULL
+             WHERE task_id=?1 AND question_id=?2",
             params![task_id, question_id],
         )
         .map_err(|e| e.to_string())?;
         conn.execute(
             "UPDATE recommendation_batches SET status='active',completed_at=NULL
+             ,result_context_path=NULL,result_exported_at=NULL
              WHERE task_id=?1 AND status='completed'",
             params![task_id],
         )
@@ -6198,7 +6310,7 @@ fn record_attempt_row(conn: &Connection, input: &AttemptInput) -> Result<i64, St
         );
     }
     if outcome == "uncertain" {
-        complete_active_recommendation_item(conn, input.question_id)?;
+        complete_active_recommendation_item(conn, input.question_id, attempt_id)?;
         return Ok(attempt_id);
     }
     // ELO settlement must never block the attempt itself.
@@ -6252,7 +6364,7 @@ fn record_attempt_row(conn: &Connection, input: &AttemptInput) -> Result<i64, St
         params![input.question_id, progress_rating, now.to_rfc3339(), next, next_review_count],
     )
     .map_err(|e| e.to_string())?;
-    complete_active_recommendation_item(conn, input.question_id)?;
+    complete_active_recommendation_item(conn, input.question_id, attempt_id)?;
     Ok(attempt_id)
 }
 
@@ -7426,12 +7538,26 @@ fn create_learning_task(input: LearningTaskInput, state: State<AppState>) -> Res
         }))).map_err(|e| e.to_string())?;
         rows.collect::<Result<Vec<_>, _>>().map_err(|e| e.to_string())?
     };
+    let recent_result_contexts: Vec<Value> = {
+        let mut stmt = conn.prepare(
+            "SELECT task_id,result_context_path,completed_at
+             FROM recommendation_batches
+             WHERE status='completed' AND result_context_path IS NOT NULL
+             ORDER BY completed_at DESC LIMIT 3",
+        ).map_err(|e| e.to_string())?;
+        let rows = stmt.query_map([], |row| Ok(json!({
+            "taskId": row.get::<_, String>(0)?,
+            "contextPath": row.get::<_, Option<String>>(1)?,
+            "completedAt": row.get::<_, Option<String>>(2)?,
+        }))).map_err(|e| e.to_string())?;
+        rows.collect::<Result<Vec<_>, _>>().map_err(|e| e.to_string())?
+    };
     let task_id = format!("SB-AI-{}-{:04}", Local::now().format("%Y%m%d%H%M"), rand::rng().random_range(0..10000));
     let output = state.data_dir.join("codex-inbox").join(format!("{task_id}.json"));
     let context_path = state.data_dir.join("codex-tasks").join(format!("{task_id}.context.json"));
     let context = json!({
         "schemaVersion": 2, "taskId": task_id, "request": input.request.trim(), "availableMinutes": minutes,
-        "categoryPath": category_path, "recentAttempts": recent_attempts, "candidates": candidates,
+        "categoryPath": category_path, "recentAttempts": recent_attempts, "recentRecommendationResults": recent_result_contexts, "candidates": candidates,
         "rules": ["只能从 candidates 中选择 questionId", "先识别候选题的考法，再判断已适应与待覆盖", "推荐必须包含 coverage、questionRoles、noveltyPlan 和 successCriteria", "不能把一次正确判定为稳定掌握", "没有结构化证据时不能声称是迁移题"]
     });
     fs::create_dir_all(state.data_dir.join("codex-tasks")).map_err(|e| e.to_string())?;
@@ -7445,7 +7571,7 @@ fn create_learning_task(input: LearningTaskInput, state: State<AppState>) -> Res
 回传文件：{output}
 稳定行为规则：请先读取仓库根目录的 AI_LEARNING_POLICY.md；若无法读取，以本任务下面的强制约束为准。
 
-请先读取上下文文件。上下文中的 categoryPath 只是候选范围，不等于考法。你必须分析候选题的题干、条件、方法入口和知识点组合，判断：
+请先读取上下文文件。若 recentRecommendationResults 中存在 result context 文件，请一并读取，把上一组真实作答结果作为下一轮证据。上下文中的 categoryPath 只是候选范围，不等于考法。你必须分析候选题的题干、条件、方法入口和知识点组合，判断：
 1. 用户已经适应了哪些考法；
 2. 当前仍未验证或高风险的考法；
 3. 本次题组应该改变哪些因素（条件、表示、方法、组合或限时）；
@@ -9909,6 +10035,33 @@ mod tests {
             params![id, category_path],
         )
         .unwrap();
+    }
+
+    #[test]
+    fn completed_recommendation_exports_result_context_for_next_ai_round() {
+        let conn = Connection::open_in_memory().unwrap();
+        init_schema(&conn).unwrap();
+        insert_test_question(&conn, 9001, "高等数学 / 极限");
+        conn.execute(
+            "INSERT INTO recommendation_batches(task_id,title,summary,recommendation_reason,status,created_at,started_at) VALUES('SB-RESULT-1','结果测试','覆盖考法','因为上一轮待验证','active','2026-08-26T10:00:00+08:00','2026-08-26T10:01:00+08:00')",
+            [],
+        ).unwrap();
+        conn.execute("INSERT INTO recommendation_batch_items(task_id,question_id,position) VALUES('SB-RESULT-1',9001,0)", []).unwrap();
+        conn.execute(
+            "INSERT INTO attempts(question_id,attempted_at,duration_seconds,result,self_rating,mode,outcome,evidence_source) VALUES(9001,'2026-08-26T10:05:00+08:00',72,'correct',3,'paper','correct','self_report')",
+            [],
+        ).unwrap();
+        let attempt_id = conn.last_insert_rowid();
+        complete_active_recommendation_item(&conn, 9001, attempt_id).unwrap();
+        let dir = std::env::temp_dir().join(format!("shuaba-result-context-{}", rand::rng().random::<u64>()));
+        write_completed_recommendation_contexts(&conn, &dir).unwrap();
+        let path = dir.join("codex-tasks/SB-RESULT-1.result.context.json");
+        let raw = fs::read_to_string(&path).unwrap();
+        let value: Value = serde_json::from_str(&raw).unwrap();
+        assert_eq!(value["kind"], "recommendationResult");
+        assert_eq!(value["items"][0]["attemptId"], attempt_id);
+        assert_eq!(value["items"][0]["durationSeconds"], 72);
+        let _ = fs::remove_dir_all(&dir);
     }
 
     #[test]

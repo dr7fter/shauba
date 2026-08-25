@@ -7295,6 +7295,13 @@
   max-width: 440px;
   width: 90vw;
 }
+.challenge-picker-list { display: grid; gap: 6px; max-height: 360px; overflow-y: auto; padding: 4px 0; }
+.challenge-picker-row { display: grid; grid-template-columns: 18px minmax(0, 1fr); gap: 6px 8px; padding: 8px; border: 1px solid var(--line); border-radius: var(--r-sm); background: var(--surface); cursor: pointer; }
+.challenge-picker-row:hover { background: var(--green-soft); }
+.challenge-picker-row input { grid-row: 1 / span 2; margin-top: 3px; accent-color: var(--green); }
+.challenge-picker-row span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: var(--fs-sm); }
+.challenge-picker-row small { color: var(--muted); font-size: var(--fs-xs); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.friend-challenge-modal { width: min(680px, calc(100vw - 32px)); }
 
 .friend-code-input,
 .profile-text-input {

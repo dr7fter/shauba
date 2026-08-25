@@ -27,7 +27,7 @@ function loadFeatureFlags(viteEnv = {}) {
   return context.module.exports.getFeatureFlags()
 }
 
-test('production installer enables the five accepted v1.5 features by default', () => {
+test('production installer enables the accepted v1.5 and v1.6 learning features by default', () => {
   assert.deepEqual(JSON.parse(JSON.stringify(loadFeatureFlags())), {
     learningCenterV1: true,
     learningEvidenceProjectionV1: true,
@@ -36,6 +36,9 @@ test('production installer enables the five accepted v1.5 features by default', 
     shadowRecommendationPlanV1: true,
     rankedOnlyEloV1: false,
     friendBroadcastsV1: false,
+    aiRecommendationV1: true,
+    recommendationValidatorV1: true,
+    learningGroupV1: true,
   })
 })
 

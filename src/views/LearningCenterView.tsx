@@ -3,20 +3,24 @@ import {
   ArrowRight,
   BookOpenCheck,
   ChevronRight,
+  ChevronDown,
+  ClipboardCopy,
   Clock3,
   Gauge,
   GraduationCap,
   ListChecks,
   RefreshCw,
   ShieldCheck,
+  Sparkles,
   Target,
   Trophy,
   Users,
   X,
+  Plus,
   Zap,
 } from 'lucide-react'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { getLearningCenterSnapshot } from '../api'
+import { addToCustomQueue, createLearningTask, getInbox, getLearningCenterSnapshot, startRecommendationBatch } from '../api'
 import { isFeatureEnabled } from '../data/featureFlags'
 import { MathText } from '../components/MathText'
 import type {
@@ -222,6 +226,12 @@ export function LearningCenterView({ initialData = null, featureFlags, onNavigat
   const [selectedMetric, setSelectedMetric] = useState<LearningMetric | null>(null)
   const [chainTab, setChainTab] = useState<'active' | 'trophy'>('active')
   const [selectedRecIds, setSelectedRecIds] = useState<Set<string>>(new Set())
+  const [expandedRecIds, setExpandedRecIds] = useState<Set<string>>(new Set())
+  const [aiRequest, setAiRequest] = useState('')
+  const [aiMinutes, setAiMinutes] = useState(40)
+  const [aiTask, setAiTask] = useState<{ taskId: string; prompt: string; outputFile: string } | null>(null)
+  const [aiBusy, setAiBusy] = useState(false)
+  const [aiRecommendations, setAiRecommendations] = useState<import('../types').InboxItem[]>([])
 
   const load = useCallback(async (initial = false) => {
     if (!flags.learningCenterV1) return
@@ -230,6 +240,12 @@ export function LearningCenterView({ initialData = null, featureFlags, onNavigat
     if (initial && !hasSnapshot) setLoading(true); else setRefreshing(true)
     setError(null)
     try {
+      const inbox = await getInbox().catch(() => [])
+      setAiRecommendations(inbox.filter((item) => {
+        if (item.kind !== 'recommendation' || (item.recommendedQuestionIds?.length ?? 0) === 0) return false
+        if (item.status === 'dismissed') return false
+        return !item.recommendationBatchStatus || item.recommendationBatchStatus === 'pending'
+      }).slice(0, 3))
       const next = await getLearningCenterSnapshot()
       if (requestSeq !== requestSeqRef.current) return
       snapshotRef.current = next
@@ -301,11 +317,67 @@ export function LearningCenterView({ initialData = null, featureFlags, onNavigat
     }
   }
 
+  const handleAddSelectedToCustomQueue = async () => {
+    const selectedItems = recommendations.filter((r) => selectedRecIds.has(r.id) && r.questionId)
+    if (selectedItems.length === 0) return
+    try {
+      await Promise.all(selectedItems.map((item) => addToCustomQueue(item.questionId as number)))
+      onNotify(`已将 ${selectedItems.length} 道题加入自定义队列，可在今日训练中继续安排`)
+      setSelectedRecIds(new Set())
+    } catch (error) {
+      onNotify(`加入自定义队列失败：${error instanceof Error ? error.message : String(error)}`)
+    }
+  }
+
+  const handleCreateAiTask = async () => {
+    const request = aiRequest.trim()
+    if (!request) {
+      onNotify('请先描述这次想练什么，例如“标准题已熟，想覆盖更多考法”')
+      return
+    }
+    setAiBusy(true)
+    try {
+      const task = await createLearningTask({ request, availableMinutes: aiMinutes, categoryId: null })
+      setAiTask(task)
+      onNotify(`AI 学习任务已生成：${task.taskId}。复制任务说明发给 Codex，回传后刷新学习中心。`)
+    } catch (error) {
+      onNotify(`生成 AI 学习任务失败：${error instanceof Error ? error.message : String(error)}`)
+    } finally {
+      setAiBusy(false)
+    }
+  }
+
+  const openAiRecommendation = async (item: import('../types').InboxItem) => {
+    const ids = item.recommendationOrder?.length ? item.recommendationOrder : (item.recommendedQuestionIds ?? [])
+    if (ids.length === 0) return
+    try {
+      await startRecommendationBatch(item.taskId)
+      onNavigate({ type: 'today', questionId: ids[0], queueQuestionIds: ids })
+      onNotify(`已采用 AI 题组「${item.goal ?? item.summary}」，共 ${ids.length} 题`)
+    } catch (error) {
+      onNotify(`采用 AI 题组失败：${error instanceof Error ? error.message : String(error)}`)
+    }
+  }
+
+  const copyAiPrompt = async () => {
+    if (!aiTask) return
+    if (!navigator.clipboard?.writeText) {
+      onNotify('当前环境不支持复制，请直接打开任务说明文件')
+      return
+    }
+    try {
+      await navigator.clipboard.writeText(aiTask.prompt)
+      onNotify('AI 任务说明已复制；请发送给 Codex，并让它按说明写回回传文件')
+    } catch {
+      onNotify('复制失败，请直接打开任务说明文件：' + aiTask.outputFile)
+    }
+  }
+
   if (!flags.learningCenterV1) return null
   if (loading && !snapshot) return <LoadingSkeleton />
 
   return <div className="learning-center" aria-busy={refreshing}>
-    <header className="learning-center-header"><div><span className="learning-eyebrow"><GraduationCap size={14} aria-hidden="true" /> Phase C · 只读学习账</span><h1>学习中心</h1><p>把证据、错题闭环与下一步训练放在一起；不替换数据页，也不改写竞技结算。</p></div><div className="learning-header-actions"><span className="learning-generated-at">{snapshot ? '生成于 ' + formatDateTime(snapshot.generatedAt) : '尚未生成快照'}</span><button type="button" className="learning-refresh-button" onClick={() => void load(!snapshot)} disabled={refreshing} aria-label="刷新学习中心"><RefreshCw size={15} className={refreshing ? 'learning-spin' : ''} /> {refreshing ? '更新中…' : '刷新'}</button></div></header>
+    <header className="learning-center-header"><div><span className="learning-eyebrow"><GraduationCap size={14} aria-hidden="true" /> Phase D · AI 自适应学习</span><h1>学习中心</h1><p>根据你的需求和历史证据，让 AI 先识别考法，再生成覆盖目标题组。</p></div><div className="learning-header-actions"><button type="button" className="learning-primary-button compact" onClick={() => setAiTask(aiTask ?? { taskId: '', prompt: '', outputFile: '' })} disabled={!flags.aiRecommendationV1}><Sparkles size={14} /> AI 生成题组</button><span className="learning-generated-at">{snapshot ? '生成于 ' + formatDateTime(snapshot.generatedAt) : '尚未生成快照'}</span><button type="button" className="learning-refresh-button" onClick={() => void load(!snapshot)} disabled={refreshing} aria-label="刷新学习中心"><RefreshCw size={15} className={refreshing ? 'learning-spin' : ''} /> {refreshing ? '更新中…' : '刷新'}</button></div></header>
     {error && snapshot ? <div className="learning-alert learning-alert-warn" role="status"><AlertTriangle size={16} /><span>本次刷新失败，仍保留上一次快照：{error}</span><button type="button" onClick={() => void load(false)}>重试</button></div> : null}
     {integrityMessage ? <div className="learning-alert learning-alert-info" role="status"><ShieldCheck size={16} /><span>{integrityMessage}</span></div> : null}
     {sectionErrors.length > 0 ? <div className="learning-section-errors" role="status">{sectionErrors.map((item) => <div className="learning-alert learning-alert-warn" key={item.section}><AlertTriangle size={15} /><span>{item.section}：{item.message}</span></div>)}</div> : null}
@@ -336,6 +408,7 @@ export function LearningCenterView({ initialData = null, featureFlags, onNavigat
         {objectives.length === 0 ? <EmptySection title="暂无今日目标" detail="后端没有返回可执行目标；学习中心不会在前端自行生成计划。" /> : <div className="learning-objectives-grid">{objectives.slice(0, 3).map((objective) => <ObjectiveCard key={objective.id} objective={objective} onOpen={() => openObjective(objective)} />)}</div>}
       </section>
       <MetricStrip metrics={metrics} projectionEnabled={flags.learningEvidenceProjectionV1} onOpen={setSelectedMetric} />
+      {aiRecommendations.length > 0 && <section className="learning-card learning-ai-return-card" aria-labelledby="learning-ai-return-title"><div className="learning-section-heading"><div><span className="learning-eyebrow">AI 回传</span><h2 id="learning-ai-return-title">待采用的 AI 题组</h2></div><span className="learning-muted">已按题号和题组约束校验</span></div><div className="learning-ai-return-list">{aiRecommendations.map((item) => <article className="learning-ai-return-item" key={item.taskId}><div><strong>{item.goal ?? item.summary}</strong><p>{item.recommendationReason ?? 'AI 未提供推荐理由。'}</p><small>{item.recommendedQuestionIds?.length ?? 0} 题 · {item.estimatedMinutes ?? '—'} 分钟 · {item.noveltyPlan?.join('、') || '考法覆盖待查看'}</small></div><button type="button" className="learning-primary-button compact" onClick={() => void openAiRecommendation(item)}><Zap size={14} /> 采用并开练</button></article>)}</div></section>}
       <div className="learning-main-grid">
         <section className="learning-card" aria-labelledby="learning-chains-title">
           <div className="learning-section-heading">
@@ -423,13 +496,10 @@ export function LearningCenterView({ initialData = null, featureFlags, onNavigat
             </div>
             <div className="learning-header-actions">
               {selectedRecIds.size > 0 && (
-                <button
-                  type="button"
-                  className="learning-primary-button compact"
-                  onClick={handleMergeShadowQueue}
-                >
-                  📥 混编入队 ({selectedRecIds.size}题)
-                </button>
+                <>
+                  <button type="button" className="learning-secondary-button compact" onClick={() => void handleAddSelectedToCustomQueue()}><Plus size={14} /> 加入自定义队列</button>
+                  <button type="button" className="learning-primary-button compact" onClick={handleMergeShadowQueue}><Zap size={14} /> 立即合流 ({selectedRecIds.size}题)</button>
+                </>
               )}
               <span className="learning-shadow-badge">智能混编</span>
             </div>
@@ -463,10 +533,12 @@ export function LearningCenterView({ initialData = null, featureFlags, onNavigat
                         )}
                         <span className={'learning-track-pill learning-track-' + item.track}>{TRACK_LABELS[item.track]}</span>
                         <span>{item.estimatedMinutes} 分钟</span>
+                        <button type="button" className="learning-rec-expand" onClick={() => setExpandedRecIds((prev) => { const next = new Set(prev); next.has(item.id) ? next.delete(item.id) : next.add(item.id); return next })} aria-label={expandedRecIds.has(item.id) ? '收起推荐详情' : '展开推荐详情'}>{expandedRecIds.has(item.id) ? <ChevronDown size={15} /> : <ChevronRight size={15} />}</button>
                       </div>
                       <strong><MathText value={item.title} /></strong>
                       <small>{item.categoryPath ?? '未提供章节路径'}</small>
                       <p><MathText value={item.reason.evidenceText || item.reason.goalText || '后端未提供推荐理由。'} /></p>
+                      {expandedRecIds.has(item.id) && <div className="learning-recommendation-detail"><span><b>成功标准</b> {item.reason.successCriteria || '完成一次有效独立作答'}</span><span><b>证据</b> {item.reason.sourceEvidenceIds.length > 0 ? item.reason.sourceEvidenceIds.join('、') : '暂无可引用证据'}</span><span><b>结构</b> {item.isDifferentStructure ? '已确认结构变化' : item.variantOfQuestionId ? '关联变式题' : '普通候选题'}</span></div>}
                       <div className="learning-rec-actions">
                         <button
                           type="button"
@@ -489,6 +561,12 @@ export function LearningCenterView({ initialData = null, featureFlags, onNavigat
       <section className="learning-card learning-bottom-grid"><div><div className="learning-section-heading"><div><span className="learning-eyebrow">证据与完整性</span><h2>最近证据</h2></div><span className="learning-muted">{recentEvidence.length} 条引用</span></div>{!flags.learningEvidenceProjectionV1 ? <EmptySection title="证据投影未开启" detail="原始数据不会在前端臆测成学习结论。" /> : recentEvidence.length === 0 ? <EmptySection title="暂无最近证据" detail="完成并确认有效作答后，后端才会提供证据引用。" /> : <div className="learning-recent-evidence">{recentEvidence.slice(0, 4).map((item) => <div className="learning-recent-evidence-row" key={item.id}><span className="learning-evidence-dot" /><div><strong>{item.source} · 题目 {item.questionId ?? '—'}</strong><small>{formatDateTime(item.observedAt)} · {formatConfidence(item.confidence)}</small></div><span>{item.accepted ? '已采纳' : '待确认'}</span></div>)}</div>}</div><div><div className="learning-section-heading"><div><span className="learning-eyebrow">好友广播</span><h2>好友动态</h2></div><Users size={18} aria-hidden="true" /></div>{!flags.friendBroadcastsV1 || !snapshot.capabilities?.canReadFriendEvents ? <EmptySection title="好友动态首版暂不可用" detail="保留入口，但不展示未授权或未同步的好友数据。" /> : snapshot.friendEvents.length === 0 ? <EmptySection title="暂无可公开动态" detail="低置信度诊断、普通单题和未确认回传不会播报。" /> : <div className="learning-friend-list">{snapshot.friendEvents.slice(0, 4).map((event) => <button type="button" className="learning-friend-event" key={event.id} onClick={() => openFriend(event)}><div><strong>{event.title}</strong><small>{event.friendName} · {formatDateTime(event.occurredAt)}</small></div><span>{event.ratingDelta === null ? '学习动态' : (event.ratingDelta > 0 ? '+' : '') + event.ratingDelta.toFixed(2) + ' Rating'}</span></button>)}</div>}<button type="button" className="learning-secondary-button learning-friends-link" onClick={() => onNavigate({ type: 'friends' })}>打开好友页 <ArrowRight size={14} /></button></div></section>
     </>}
     {selectedMetric ? <EvidenceDrawer metric={selectedMetric} evidence={recentEvidence} onClose={() => setSelectedMetric(null)} /> : null}
+    {aiTask && (
+      <div className="learning-drawer-backdrop" role="presentation" onClick={() => setAiTask(null)}><aside className="learning-ai-drawer" role="dialog" aria-modal="true" aria-labelledby="learning-ai-title" onClick={(event) => event.stopPropagation()}>
+        <div className="learning-drawer-head"><div><span className="learning-eyebrow">AI 训练会话</span><h2 id="learning-ai-title">让 AI 按你的状态设计题组</h2></div><button type="button" className="learning-icon-button" onClick={() => setAiTask(null)} aria-label="关闭 AI 训练会话"><X size={18} /></button></div>
+        {!aiTask.taskId ? <><p className="learning-drawer-note">App 会自动带上当前分类、历史作答和候选题。AI 只从候选题中选择，并返回已适应考法、待覆盖考法和题组顺序。</p><label className="learning-ai-label">这次想怎么练？<textarea className="learning-ai-input" rows={5} value={aiRequest} onChange={(event) => setAiRequest(event.target.value)} placeholder="例如：极限标准题已经熟了，今天想覆盖更多考法，重点练方法选择，不要太基础。" /></label><label className="learning-ai-label">可用时间<select className="learning-ai-select" value={aiMinutes} onChange={(event) => setAiMinutes(Number(event.target.value))}>{[15, 30, 40, 60, 90].map((value) => <option key={value} value={value}>{value} 分钟</option>)}</select></label><button type="button" className="learning-primary-button" onClick={() => void handleCreateAiTask()} disabled={aiBusy}><Sparkles size={15} /> {aiBusy ? '生成中…' : '生成 AI 训练任务'}</button></> : <><div className="learning-ai-task-meta"><strong>{aiTask.taskId}</strong><span>候选题已写入上下文，等待 Codex 规划题组</span></div><p className="learning-drawer-note">复制下面的任务说明发送给 Codex。Codex 完成后将推荐 JSON 写入回传文件，回到这里点击刷新即可看到题组。</p><button type="button" className="learning-primary-button" onClick={() => void copyAiPrompt()}><ClipboardCopy size={15} /> 复制 AI 任务说明</button><div className="learning-ai-file"><small>回传文件</small><code>{aiTask.outputFile}</code></div><pre className="learning-ai-prompt">{aiTask.prompt}</pre></>}
+      </aside></div>
+    )}
   </div>
 }
 

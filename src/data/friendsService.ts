@@ -10,6 +10,7 @@ import type {
   FriendPublicReport,
   FriendPublicReportQuestion,
   FriendShareSnapshotV2,
+  FriendChallengeGroup,
   FriendSyncConfig,
   FriendSyncResult,
   FriendSyncState,
@@ -75,6 +76,8 @@ const STORAGE_KEY_SYNC_CONFIG = 'shuaba_friend_sync_config_v2'
 const STORAGE_KEY_SYNC_STATE = 'shuaba_friend_sync_state_v1'
 const STORAGE_KEY_PROFILE_ID = 'shuaba_friend_profile_id_v1'
 const STORAGE_KEY_MY_REVISION = 'shuaba_my_snapshot_revision_v1'
+const STORAGE_KEY_MY_CHALLENGES = 'shuaba_my_challenge_groups_v1'
+const STORAGE_KEY_FRIEND_CHALLENGES = 'shuaba_friend_challenge_groups_v1'
 
 const LEGACY_STORAGE_KEY_FRIENDS = 'shuaba_friends_roster_v1'
 const LEGACY_STORAGE_KEY_MY_PROFILE = 'shuaba_my_profile_v1'
@@ -99,6 +102,7 @@ type ParsedSnapshot = {
   activities?: FriendPublicActivity[]
   matches?: FriendPublicMatch[]
   reports?: FriendPublicReport[]
+  challengeGroups?: FriendChallengeGroup[]
 }
 type ParseResult = { ok: true; value: ParsedSnapshot } | { ok: false; message: string; friendCode?: string }
 
@@ -120,6 +124,33 @@ function writeStorage(key: string, value: unknown) {
   } catch {
     // ignore
   }
+}
+
+export function getMyChallengeGroups(): FriendChallengeGroup[] {
+  const value = parseJson<FriendChallengeGroup[]>(readStorage(STORAGE_KEY_MY_CHALLENGES))
+  return Array.isArray(value) ? value.filter((g) => g && Array.isArray(g.questionIds) && g.questionIds.length > 0) : []
+}
+
+export function getSavedFriendChallengeGroups(): FriendChallengeGroup[] {
+  const value = parseJson<FriendChallengeGroup[]>(readStorage(STORAGE_KEY_FRIEND_CHALLENGES))
+  return Array.isArray(value) ? value.filter((g) => g && Array.isArray(g.questionIds) && g.questionIds.length > 0) : []
+}
+
+export function createMyChallengeGroup(title: string, questionIds: number[], profile: FriendProfile): FriendChallengeGroup {
+  const group: FriendChallengeGroup = {
+    id: newId('challenge'),
+    title: title.trim().slice(0, 80) || '好友题组挑战',
+    questionIds: Array.from(new Set(questionIds.filter((id) => Number.isInteger(id) && id > 0))).slice(0, 30),
+    createdAt: new Date().toISOString(),
+    senderProfileId: profile.profileId || profile.friendCode,
+    senderNickname: profile.nickname,
+  }
+  writeStorage(STORAGE_KEY_MY_CHALLENGES, [group, ...getMyChallengeGroups()].slice(0, 30))
+  return group
+}
+
+export function removeMyChallengeGroup(id: string): void {
+  writeStorage(STORAGE_KEY_MY_CHALLENGES, getMyChallengeGroups().filter((g) => g.id !== id))
 }
 
 function parseJson<T>(raw: string | null): T | null {
@@ -851,6 +882,7 @@ export function createFriendShareSnapshot(profile: FriendProfile): string {
     content: a.content,
     timestamp: a.timestamp,
   }))
+  const challengeGroups = getMyChallengeGroups().slice(0, 12)
 
   const snapshot: FriendShareSnapshotV2 = {
     schemaVersion: 2,
@@ -865,6 +897,7 @@ export function createFriendShareSnapshot(profile: FriendProfile): string {
     activities: myActivities,
     matches: myMatches,
     reports: myReports,
+    challengeGroups,
   }
   return JSON.stringify(snapshot, null, 2)
 }
@@ -935,6 +968,7 @@ function parseFriendSnapshot(raw: string): ParseResult {
   let publicActivities: FriendPublicActivity[] | undefined
   let publicMatches: FriendPublicMatch[] | undefined
   let publicReports: FriendPublicReport[] | undefined
+  let challengeGroups: FriendChallengeGroup[] | undefined
 
   if (schemaVersion === 2 && isRecord(parsed.presence)) {
     const p = parsed.presence
@@ -1018,6 +1052,19 @@ function parseFriendSnapshot(raw: string): ParseResult {
     }))
   }
 
+  if (schemaVersion === 2 && Array.isArray(parsed.challengeGroups)) {
+    challengeGroups = (parsed.challengeGroups as unknown[]).filter(isRecord).map((g, index) => ({
+      id: typeof g.id === 'string' ? g.id.slice(0, 96) : `challenge-${index}`,
+      title: typeof g.title === 'string' && g.title.trim() ? g.title.trim().slice(0, 80) : '好友题组挑战',
+      questionIds: Array.isArray(g.questionIds)
+        ? Array.from(new Set(g.questionIds.filter((id): id is number => typeof id === 'number' && Number.isInteger(id) && id > 0))).slice(0, 30)
+        : [],
+      createdAt: typeof g.createdAt === 'string' && validDate(g.createdAt) ? g.createdAt : exportedAt,
+      senderProfileId: profile.profileId || profile.friendCode,
+      senderNickname: profile.nickname,
+    })).filter((g) => g.questionIds.length > 0)
+  }
+
   const revision = typeof parsed.revision === 'number' && Number.isFinite(parsed.revision) ? parsed.revision : 1
 
   return {
@@ -1031,6 +1078,7 @@ function parseFriendSnapshot(raw: string): ParseResult {
       activities: publicActivities,
       matches: publicMatches,
       reports: publicReports,
+      challengeGroups,
     },
   }
 }
@@ -1054,7 +1102,7 @@ export function addFriendSnapshot(
     if (code) updateSyncState({ friendCode: code, status: 'invalid', lastError: parsed.message, lastAttemptAt: new Date().toISOString() })
     return { success: false, message: parsed.message }
   }
-  const { profile, exportedAt, hash, presence, activities, matches, reports } = parsed.value
+  const { profile, exportedAt, hash, presence, activities, matches, reports, challengeGroups } = parsed.value
   const own = getSavedMyCustomProfile()
   if (!sourceFileMatchesSnapshot(profile.friendCode, options?.sourceFileName)) {
     const sourceCode = fileCode(options?.sourceFileName)
@@ -1100,6 +1148,10 @@ export function addFriendSnapshot(
         timestamp: a.timestamp,
       })
     }
+  }
+  if (challengeGroups && challengeGroups.length > 0) {
+    const current = getSavedFriendChallengeGroups().filter((g) => g.senderProfileId !== profile.profileId)
+    writeStorage(STORAGE_KEY_FRIEND_CHALLENGES, [...challengeGroups, ...current].slice(0, 100))
   }
 
   const friend: FriendProfile = {

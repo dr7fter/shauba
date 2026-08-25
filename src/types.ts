@@ -392,6 +392,22 @@ export type InboxItem = {
   ratingTier?: string | null
   difficultyMultiplier?: number | null
   dimensions?: RatingDimensions | null
+  goal?: string | null
+  estimatedMinutes?: number | null
+  questionRoles?: Record<string, string>
+  recommendationOrder?: number[]
+  coverage?: Array<{ knowledge?: string; questionIds?: number[]; priority?: string }>
+  noveltyPlan?: string[]
+  successCriteria?: string[]
+  fallbackPlan?: string | null
+  recommendedQuestionIds?: number[]
+  recommendationReason?: string | null
+}
+
+export type LearningTaskInput = {
+  request: string
+  availableMinutes: number
+  categoryId?: number | null
 }
 
 export type CodexTask = {
@@ -868,6 +884,9 @@ export type LearningCenterFeatureFlags = {
   shadowRecommendationPlanV1: boolean
   rankedOnlyEloV1: boolean
   friendBroadcastsV1: boolean
+  aiRecommendationV1?: boolean
+  recommendationValidatorV1?: boolean
+  learningGroupV1?: boolean
 }
 
 export type LearningCenterData = {
@@ -1139,6 +1158,16 @@ export type FriendShareSnapshotV2 = {
   activities: FriendPublicActivity[]
   matches: FriendPublicMatch[]
   reports: FriendPublicReport[]
+  challengeGroups?: FriendChallengeGroup[]
+}
+
+export type FriendChallengeGroup = {
+  id: string
+  title: string
+  questionIds: number[]
+  createdAt: string
+  senderProfileId: string
+  senderNickname: string
 }
 
 export type BlockedFriendIdentity = {

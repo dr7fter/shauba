@@ -219,8 +219,11 @@ export function InboxView({
                     <div className="ai-plan-card">
                       <Sparkles size={18} />
                       <div>
-                        <strong>{recommendationStatus}</strong>
-                        <span>{item.recommendationQuestionCount ?? 0} 道题将按 Codex 给出的战术顺序训练</span>
+                        <strong>{recommendationStatus}{item.goal ? ` · ${item.goal}` : ''}</strong>
+                        <span>{item.recommendationQuestionCount ?? 0} 道题将按 Codex 给出的战术顺序训练{item.estimatedMinutes ? ` · 预计 ${item.estimatedMinutes} 分钟` : ''}</span>
+                        {item.noveltyPlan && item.noveltyPlan.length > 0 && <span>本组变化：{item.noveltyPlan.join('、')}</span>}
+                        {item.coverage && item.coverage.length > 0 && <span>覆盖：{item.coverage.slice(0, 4).map((entry) => entry.knowledge).filter(Boolean).join(' · ')}</span>}
+                        {item.successCriteria && item.successCriteria.length > 0 && <span>完成标准：{item.successCriteria.slice(0, 2).join('；')}</span>}
                       </div>
                     </div>
                   )}

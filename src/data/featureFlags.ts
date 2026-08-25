@@ -6,6 +6,9 @@ export type ShuabaFeatureFlag =
   | 'shadowRecommendationPlanV1'
   | 'rankedOnlyEloV1'
   | 'friendBroadcastsV1'
+  | 'aiRecommendationV1'
+  | 'recommendationValidatorV1'
+  | 'learningGroupV1'
 
 export type ShuabaFeatureFlags = Record<ShuabaFeatureFlag, boolean>
 
@@ -19,6 +22,9 @@ const FEATURE_FLAG_NAMES: ShuabaFeatureFlag[] = [
   'shadowRecommendationPlanV1',
   'rankedOnlyEloV1',
   'friendBroadcastsV1',
+  'aiRecommendationV1',
+  'recommendationValidatorV1',
+  'learningGroupV1',
 ]
 
 const defaultFeatureFlags: ShuabaFeatureFlags = {
@@ -31,6 +37,9 @@ const defaultFeatureFlags: ShuabaFeatureFlags = {
   // 尚未完成历史迁移与好友广播放量，继续保持关闭。
   rankedOnlyEloV1: false,
   friendBroadcastsV1: false,
+  aiRecommendationV1: true,
+  recommendationValidatorV1: true,
+  learningGroupV1: true,
 }
 
 function parseFeatureFlagList(value: string | null | undefined): Set<string> {

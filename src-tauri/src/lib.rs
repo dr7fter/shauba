@@ -341,6 +341,29 @@ struct GoalInput {
     daily_minute_target: i64,
 }
 
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct LearningTaskInput {
+    request: String,
+    available_minutes: i32,
+    category_id: Option<i64>,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct LearningCandidateQuestion {
+    question_id: i64,
+    category_path: String,
+    stem: String,
+    question_type: String,
+    difficulty: i32,
+    attempts: i64,
+    accuracy: Option<f64>,
+    mastery: Option<i64>,
+    last_result: Option<String>,
+    has_images: bool,
+}
+
 #[derive(Debug, Serialize, Deserialize, Clone, Default)]
 #[serde(rename_all = "camelCase")]
 struct CodexPayload {
@@ -363,6 +386,26 @@ struct CodexPayload {
     #[serde(default)]
     recommended_question_ids: Vec<i64>,
     recommendation_reason: Option<String>,
+    #[serde(default)]
+    goal: Option<String>,
+    #[serde(default)]
+    estimated_minutes: Option<i32>,
+    #[serde(default)]
+    question_roles: HashMap<String, String>,
+    #[serde(default)]
+    recommendation_order: Vec<i64>,
+    #[serde(default)]
+    coverage: Vec<Value>,
+    #[serde(default)]
+    novelty_plan: Vec<String>,
+    #[serde(default)]
+    success_criteria: Vec<String>,
+    #[serde(default)]
+    source_evidence_ids: Vec<String>,
+    #[serde(default)]
+    excluded_question_ids: Vec<i64>,
+    #[serde(default)]
+    fallback_plan: Option<String>,
     #[serde(default)]
     paper_title: Option<String>,
     #[serde(default)]
@@ -405,6 +448,15 @@ struct InboxItem {
     rating_tier: Option<String>,
     difficulty_multiplier: Option<f64>,
     dimensions: HashMap<String, RatingDimension>,
+    goal: Option<String>,
+    estimated_minutes: Option<i32>,
+    question_roles: HashMap<String, String>,
+    recommendation_order: Vec<i64>,
+    coverage: Vec<Value>,
+    novelty_plan: Vec<String>,
+    success_criteria: Vec<String>,
+    fallback_plan: Option<String>,
+    recommended_question_ids: Vec<i64>,
 }
 
 #[derive(Debug, Serialize, Clone)]
@@ -729,6 +781,14 @@ CREATE TABLE IF NOT EXISTS progress (
            status TEXT NOT NULL DEFAULT 'pending',
            created_at TEXT NOT NULL
          );
+         CREATE TABLE IF NOT EXISTS learning_task_candidates (
+           task_id TEXT NOT NULL,
+           question_id INTEGER NOT NULL,
+           created_at TEXT NOT NULL,
+           PRIMARY KEY(task_id, question_id),
+           FOREIGN KEY(question_id) REFERENCES questions(id) ON DELETE CASCADE
+         );
+         CREATE INDEX IF NOT EXISTS idx_learning_task_candidates_task ON learning_task_candidates(task_id);
          CREATE TABLE IF NOT EXISTS codex_analysis_signals (
            task_id TEXT PRIMARY KEY,
            question_id INTEGER NOT NULL,
@@ -1394,9 +1454,19 @@ fn create_recommendation_batch(conn: &Connection, payload: &CodexPayload) -> Res
         return Err("推荐题组没有有效题目".into());
     }
 
+    if let Some(minutes) = payload.estimated_minutes {
+        if !(5..=240).contains(&minutes) {
+            return Err("AI 推荐题组预计时间超出 5-240 分钟范围".into());
+        }
+    }
+    let requested_order = if payload.recommendation_order.is_empty() {
+        &payload.recommended_question_ids
+    } else {
+        &payload.recommendation_order
+    };
     let mut question_ids = Vec::new();
     let mut seen = HashSet::new();
-    for question_id in &payload.recommended_question_ids {
+    for question_id in requested_order {
         if !seen.insert(*question_id) {
             continue;
         }
@@ -1410,10 +1480,42 @@ fn create_recommendation_batch(conn: &Connection, payload: &CodexPayload) -> Res
         if exists == 0 {
             return Err(format!("推荐题号不存在: {question_id}"));
         }
+        let candidate_count: i64 = conn.query_row("SELECT COUNT(*) FROM learning_task_candidates WHERE task_id=?1", [payload.task_id.as_str()], |row| row.get(0)).unwrap_or(0);
+        if candidate_count > 0 {
+            let allowed: i64 = conn.query_row("SELECT COUNT(*) FROM learning_task_candidates WHERE task_id=?1 AND question_id=?2", params![payload.task_id, question_id], |row| row.get(0)).unwrap_or(0);
+            if allowed == 0 {
+                return Err(format!("AI 推荐题号 {question_id} 不在本次候选题上下文中"));
+            }
+        }
         question_ids.push(*question_id);
     }
     if question_ids.is_empty() {
         return Err("推荐题组没有可用题目".into());
+    }
+    if question_ids.len() > 30 {
+        return Err("AI 推荐题组最多 30 道题".into());
+    }
+    let excluded: HashSet<i64> = payload.excluded_question_ids.iter().copied().collect();
+    if question_ids.iter().any(|id| excluded.contains(id)) {
+        return Err("推荐题组同时包含 excludedQuestionIds 中的题目".into());
+    }
+    for (question_id, role) in &payload.question_roles {
+        let parsed = question_id.parse::<i64>().map_err(|_| format!("questionRoles 包含无效题号：{question_id}"))?;
+        if !question_ids.contains(&parsed) {
+            return Err(format!("questionRoles 包含不在题组中的题号：{parsed}"));
+        }
+        if !matches!(role.as_str(), "diagnosis" | "method_choice" | "consolidate" | "integration" | "transfer" | "timed" | "challenge" | "review") {
+            return Err(format!("题目 {parsed} 的角色无效：{role}"));
+        }
+    }
+    for coverage in &payload.coverage {
+        if let Some(ids) = coverage.get("questionIds").and_then(Value::as_array) {
+            for id in ids.iter().filter_map(Value::as_i64) {
+                if !question_ids.contains(&id) {
+                    return Err(format!("coverage 引用了不在题组中的题号：{id}"));
+                }
+            }
+        }
     }
 
     let inserted = conn
@@ -1421,7 +1523,7 @@ fn create_recommendation_batch(conn: &Connection, payload: &CodexPayload) -> Res
             "INSERT OR IGNORE INTO recommendation_batches(task_id,title,summary,recommendation_reason,status,created_at) VALUES(?1,?2,?3,?4,'pending',?5)",
             params![
                 payload.task_id,
-                recommendation_batch_title(&payload.summary),
+                recommendation_batch_title(payload.goal.as_deref().unwrap_or(&payload.summary)),
                 payload.summary,
                 payload.recommendation_reason.as_deref().unwrap_or(&payload.summary),
                 Local::now().to_rfc3339(),
@@ -2230,6 +2332,7 @@ fn apply_batch_payload_in_tx(
             rating_tier: attempt.rating_tier.clone(),
             difficulty_multiplier: attempt.difficulty_multiplier,
             dimensions: attempt.dimensions.clone(),
+            ..Default::default()
         };
 
         match application_mode {
@@ -7259,6 +7362,104 @@ fn save_goal(input: GoalInput, state: State<AppState>) -> Result<(), String> {
     Ok(())
 }
 
+fn learning_category_path(conn: &Connection, category_id: Option<i64>) -> Option<String> {
+    category_id
+        .and_then(|id| conn.query_row("SELECT path FROM categories WHERE id=?1", [id], |r| r.get(0)).optional().ok().flatten())
+        .or_else(|| {
+            setting(conn, "current_chapter_id", "").parse::<i64>().ok().and_then(|id| {
+                conn.query_row("SELECT path FROM categories WHERE id=?1", [id], |r| r.get(0)).optional().ok().flatten()
+            })
+        })
+        .or_else(|| conn.query_row("SELECT category_path FROM learning_diagnoses WHERE normalized_error_class<>'none' ORDER BY updated_at DESC,id DESC LIMIT 1", [], |r| r.get(0)).optional().ok().flatten())
+}
+
+#[tauri::command]
+fn create_learning_task(input: LearningTaskInput, state: State<AppState>) -> Result<CodexTask, String> {
+    let conn = state.db.lock().map_err(|e| e.to_string())?;
+    let minutes = input.available_minutes.clamp(10, 180);
+    let category_path = learning_category_path(&conn, input.category_id);
+    let path_filter = category_path.clone().unwrap_or_default();
+    let mut stmt = conn.prepare(
+        "SELECT q.id,q.category_path,q.stem,q.question_type,q.difficulty,
+                COUNT(a.id),AVG(CASE WHEN COALESCE(a.outcome,a.result)='uncertain' THEN NULL WHEN COALESCE(a.outcome,a.result)='correct' THEN 1.0 ELSE 0.0 END),
+                MAX(p.mastery),
+                (SELECT COALESCE(a2.outcome,a2.result) FROM attempts a2 WHERE a2.question_id=q.id ORDER BY a2.attempted_at DESC,a2.id DESC LIMIT 1),
+                q.image_paths_json
+         FROM questions q
+         LEFT JOIN attempts a ON a.question_id=q.id
+         LEFT JOIN progress p ON p.question_id=q.id
+         WHERE (?1='' OR EXISTS(SELECT 1 FROM question_categories qc JOIN categories c ON c.id=qc.category_id WHERE qc.question_id=q.id AND (c.path=?1 OR c.path LIKE ?1||' / %')))
+           AND NOT EXISTS(SELECT 1 FROM attempts at WHERE at.question_id=q.id AND substr(at.attempted_at,1,10)=date('now','localtime'))
+         GROUP BY q.id
+         ORDER BY CASE WHEN COUNT(a.id)=0 THEN 0 WHEN MAX(p.mastery) IS NULL OR MAX(p.mastery)<=2 THEN 1 ELSE 2 END,
+                  q.difficulty ASC,q.id ASC LIMIT 80"
+    ).map_err(|e| e.to_string())?;
+    let candidates = stmt.query_map([path_filter.clone()], |row| {
+        let image_paths: String = row.get(9)?;
+        Ok(LearningCandidateQuestion {
+            question_id: row.get(0)?,
+            category_path: row.get(1)?,
+            stem: row.get(2)?,
+            question_type: row.get(3)?,
+            difficulty: row.get(4)?,
+            attempts: row.get(5)?,
+            accuracy: row.get(6)?,
+            mastery: row.get(7)?,
+            last_result: row.get(8)?,
+            has_images: serde_json::from_str::<Vec<String>>(&image_paths).map(|v| !v.is_empty()).unwrap_or(false),
+        })
+    }).map_err(|e| e.to_string())?.collect::<Result<Vec<_>, _>>().map_err(|e| e.to_string())?;
+    if candidates.is_empty() {
+        return Err("当前分支没有可供 AI 分析的候选题；请换一个分类或先导入题库".into());
+    }
+
+    let recent_attempts: Vec<Value> = {
+        let mut recent = conn.prepare(
+            "SELECT a.question_id,COALESCE(a.outcome,a.result),a.self_rating,a.confidence,a.duration_seconds,a.attempted_at
+             FROM attempts a JOIN questions q ON q.id=a.question_id
+             WHERE (?1='' OR q.category_path=?1 OR q.category_path LIKE ?1||' / %')
+             ORDER BY a.attempted_at DESC,a.id DESC LIMIT 16"
+        ).map_err(|e| e.to_string())?;
+        let rows = recent.query_map([path_filter.clone()], |row| Ok(json!({
+            "questionId": row.get::<_, i64>(0)?, "result": row.get::<_, String>(1)?, "selfConfidence": row.get::<_, i32>(2)?,
+            "confidence": row.get::<_, Option<f64>>(3)?, "durationSeconds": row.get::<_, i32>(4)?, "attemptedAt": row.get::<_, String>(5)?
+        }))).map_err(|e| e.to_string())?;
+        rows.collect::<Result<Vec<_>, _>>().map_err(|e| e.to_string())?
+    };
+    let task_id = format!("SB-AI-{}-{:04}", Local::now().format("%Y%m%d%H%M"), rand::rng().random_range(0..10000));
+    let output = state.data_dir.join("codex-inbox").join(format!("{task_id}.json"));
+    let context_path = state.data_dir.join("codex-tasks").join(format!("{task_id}.context.json"));
+    let context = json!({
+        "schemaVersion": 2, "taskId": task_id, "request": input.request.trim(), "availableMinutes": minutes,
+        "categoryPath": category_path, "recentAttempts": recent_attempts, "candidates": candidates,
+        "rules": ["只能从 candidates 中选择 questionId", "先识别候选题的考法，再判断已适应与待覆盖", "推荐必须包含 coverage、questionRoles、noveltyPlan 和 successCriteria", "不能把一次正确判定为稳定掌握", "没有结构化证据时不能声称是迁移题"]
+    });
+    fs::create_dir_all(state.data_dir.join("codex-tasks")).map_err(|e| e.to_string())?;
+    for candidate in &candidates {
+        conn.execute("INSERT INTO learning_task_candidates(task_id,question_id,created_at) VALUES(?1,?2,?3)", params![task_id, candidate.question_id, Local::now().to_rfc3339()]).map_err(|e| e.to_string())?;
+    }
+    fs::write(&context_path, serde_json::to_string_pretty(&context).map_err(|e| e.to_string())?).map_err(|e| e.to_string())?;
+    let prompt = format!(r#"你正在为数学刷题 App「刷吧」设计一次 AI 自适应训练题组。
+任务编号：{task_id}
+上下文文件：{context_path}
+回传文件：{output}
+稳定行为规则：请先读取仓库根目录的 AI_LEARNING_POLICY.md；若无法读取，以本任务下面的强制约束为准。
+
+请先读取上下文文件。上下文中的 categoryPath 只是候选范围，不等于考法。你必须分析候选题的题干、条件、方法入口和知识点组合，判断：
+1. 用户已经适应了哪些考法；
+2. 当前仍未验证或高风险的考法；
+3. 本次题组应该改变哪些因素（条件、表示、方法、组合或限时）；
+4. 按时间预算选择有顺序的题组。
+
+只能选择上下文 candidates 中出现的 questionId，禁止编造题号。题组默认包含诊断、方法辨析、综合或迁移中的至少两种角色；没有可靠结构证据时不要标记 transfer。完成后将 JSON 写入回传文件，格式：
+{{"schemaVersion":2,"kind":"recommendation","taskId":"{task_id}","questionId":null,"summary":"题组目标","goal":"用户本次训练目标","estimatedMinutes":30,"recommendedQuestionIds":[155],"recommendationOrder":[155],"questionRoles":{{"155":"diagnosis"}},"coverage":[{{"knowledge":"考法名称","questionIds":[155],"priority":"high"}}],"noveltyPlan":["改变条件"],"successCriteria":["完成标准"],"recommendationReason":"结合历史证据说明为什么现在推荐","sourceEvidenceIds":[],"excludedQuestionIds":[],"fallbackPlan":"校验失败时的替代策略","confidence":0.9}}
+不要写入任何数据库，不要修改题库源文件。"#,
+        context_path = context_path.to_string_lossy(), output = output.to_string_lossy());
+    let task_path = state.data_dir.join("codex-tasks").join(format!("{task_id}.txt"));
+    fs::write(&task_path, &prompt).map_err(|e| e.to_string())?;
+    Ok(CodexTask { task_id, question_id: None, question_count: candidates.len(), prompt, inbox_dir: state.data_dir.join("codex-inbox").to_string_lossy().into_owned(), output_file: output.to_string_lossy().into_owned() })
+}
+
 #[tauri::command]
 fn get_inbox(state: State<AppState>) -> Result<Vec<InboxItem>, String> {
     scan_inbox(&state)?;
@@ -7289,6 +7490,7 @@ fn get_inbox(state: State<AppState>) -> Result<Vec<InboxItem>, String> {
                 rating_tier: None,
                 difficulty_multiplier: None,
                 dimensions: HashMap::new(),
+                ..Default::default()
             });
             Ok(InboxItem {
                 id: r.get(0)?,
@@ -7318,6 +7520,15 @@ fn get_inbox(state: State<AppState>) -> Result<Vec<InboxItem>, String> {
                 rating_tier: p.rating_tier,
                 difficulty_multiplier: p.difficulty_multiplier,
                 dimensions: p.dimensions,
+                goal: p.goal,
+                estimated_minutes: p.estimated_minutes,
+                question_roles: p.question_roles,
+                recommendation_order: p.recommendation_order,
+                coverage: p.coverage,
+                novelty_plan: p.novelty_plan,
+                success_criteria: p.success_criteria,
+                fallback_plan: p.fallback_plan,
+                recommended_question_ids: p.recommended_question_ids,
             })
         })
         .map_err(|e| e.to_string())?;
@@ -9528,6 +9739,7 @@ pub fn run() {
             save_note,
             save_review_intervals,
             save_goal,
+            create_learning_task,
             export_records,
             claim_reward_event,
             get_reward_events,
@@ -9961,6 +10173,33 @@ mod tests {
             batch_attempts: vec![],
             ..Default::default()
         }
+    }
+
+    #[test]
+    fn recommendation_v2_rejects_metadata_outside_selected_questions() {
+        let conn = Connection::open_in_memory().unwrap();
+        init_schema(&conn).unwrap();
+        insert_test_question(&conn, 1, "高等数学 / 测试");
+        let mut payload = make_recommendation_payload("SB-REC-V2-INVALID", vec![1]);
+        payload.schema_version = 2;
+        payload.recommendation_order = vec![1];
+        payload.question_roles.insert("2".into(), "transfer".into());
+        assert!(insert_codex_payload(&conn, &payload).is_err());
+    }
+
+    #[test]
+    fn recommendation_v2_preserves_ai_order() {
+        let conn = Connection::open_in_memory().unwrap();
+        init_schema(&conn).unwrap();
+        insert_test_question(&conn, 1, "高等数学 / 测试");
+        insert_test_question(&conn, 2, "高等数学 / 测试");
+        let mut payload = make_recommendation_payload("SB-REC-V2-ORDER", vec![1, 2]);
+        payload.schema_version = 2;
+        payload.recommendation_order = vec![2, 1];
+        insert_codex_payload(&conn, &payload).unwrap();
+        start_recommendation_batch_row(&conn, "SB-REC-V2-ORDER").unwrap();
+        let queue = recommendations(&conn, 5).unwrap();
+        assert_eq!(queue.iter().map(|item| item.question.id).collect::<Vec<_>>(), vec![2, 1]);
     }
 
     #[test]

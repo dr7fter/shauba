@@ -603,3 +603,15 @@ export async function pullFriendSnapshots(
   if (!isTauri()) return []
   return invoke('pull_friend_snapshots', { config, friendCodes, knownHashes: knownHashes ?? null })
 }
+
+export async function createLearningTask(input: import('./types').LearningTaskInput): Promise<CodexTask> {
+  if (isTauri()) return invoke('create_learning_task', { input })
+  return {
+    taskId: `SB-AI-PREVIEW-${Date.now()}`,
+    questionId: null,
+    questionCount: 0,
+    prompt: '浏览器预览不生成本地 AI 学习任务；请在桌面端学习中心使用。',
+    inboxDir: '本地预览',
+    outputFile: '本地预览/learning-task.json',
+  }
+}

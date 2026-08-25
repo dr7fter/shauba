@@ -22,6 +22,8 @@ import {
   clearAllBlockedIdentities,
   createFriendInvitation,
   createFriendShareSnapshot,
+  createMyChallengeGroup,
+  getSavedFriendChallengeGroups,
   buildMyFriendProfile,
   getBlockedIdentities,
   getSavedFriendSyncConfig,
@@ -40,9 +42,9 @@ import { FriendVsRadarModal } from './FriendVsRadarModal'
 import { FriendPublicProfileModal } from './FriendPublicProfileModal'
 import { FriendShareCardModal } from './FriendShareCardModal'
 import { MathText } from './MathText'
-import { bootstrap, getEloStatus, getTacticalDashboardStats, testFriendSync } from '../api'
+import { bootstrap, getEloStatus, getTacticalDashboardStats, testFriendSync, getReviewHistory, getTodayAttemptedQuestions } from '../api'
 import { getRankDescription } from '../utils'
-import type { BootstrapData, EloStatus, FriendProfile, FriendPublicMatch, FriendSyncConfig, FriendsSystemData, TacticalDashboardData } from '../types'
+import type { BootstrapData, EloStatus, FriendChallengeGroup, FriendProfile, FriendPublicMatch, FriendSyncConfig, FriendsSystemData, TacticalDashboardData } from '../types'
 
 type SyncPhase = 'idle' | 'publishing' | 'pulling' | 'success' | 'partial' | 'failed'
 
@@ -105,12 +107,14 @@ export function FriendsLadderView({
   eloStatus,
   notify,
   onStartGhostMatch,
+  onStartChallenge,
 }: {
   tacticalData: TacticalDashboardData | null
   bootstrapData: BootstrapData | null
   eloStatus: EloStatus | null
   notify: (msg: string) => void
   onStartGhostMatch?: (friend: FriendProfile, match: FriendPublicMatch) => void
+  onStartChallenge?: (challenge: FriendChallengeGroup) => void
 }) {
   const [data, setData] = useState<FriendsSystemData>(() =>
     loadFriendsSystemData(tacticalData, bootstrapData, eloStatus)
@@ -170,6 +174,11 @@ export function FriendsLadderView({
   }, [bootstrapData])
 
   const [showShareCardModal, setShowShareCardModal] = useState(false)
+  const [showChallengeModal, setShowChallengeModal] = useState(false)
+  const [challengeCandidates, setChallengeCandidates] = useState<Array<{ questionId: number; stem: string; categoryPath: string }>>([])
+  const [selectedChallengeIds, setSelectedChallengeIds] = useState<Set<number>>(new Set())
+  const [challengeTitle, setChallengeTitle] = useState('我的近期错题挑战')
+  const [incomingChallenges, setIncomingChallenges] = useState<FriendChallengeGroup[]>(() => getSavedFriendChallengeGroups())
 
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
@@ -178,13 +187,47 @@ export function FriendsLadderView({
         else if (showEditProfileModal) setShowEditProfileModal(false)
         else if (showSyncModal) setShowSyncModal(false)
         else if (showShareCardModal) setShowShareCardModal(false)
+        else if (showChallengeModal) setShowChallengeModal(false)
         else if (selectedFriendForProfile) setSelectedFriendForProfile(null)
         else if (selectedVsFriend) setSelectedVsFriend(null)
       }
     }
     window.addEventListener('keydown', handleKeyDown)
     return () => window.removeEventListener('keydown', handleKeyDown)
-  }, [showAddModal, showEditProfileModal, showSyncModal, showShareCardModal, selectedFriendForProfile, selectedVsFriend])
+  }, [showAddModal, showEditProfileModal, showSyncModal, showShareCardModal, showChallengeModal, selectedFriendForProfile, selectedVsFriend])
+
+  const openChallengeBuilder = async () => {
+    try {
+      const [history, todayAttempts] = await Promise.all([getReviewHistory(), getTodayAttemptedQuestions()])
+      const seen = new Set<number>()
+      const historyCandidates = history.items.filter((item) => {
+        if (!item.questionId || seen.has(item.questionId)) return false
+        seen.add(item.questionId)
+        return true
+      }).map((item) => ({ questionId: item.questionId, stem: item.stem, categoryPath: item.categoryPath }))
+      const todayCandidates = todayAttempts.filter((item) => {
+        if (!item.questionId || seen.has(item.questionId)) return false
+        seen.add(item.questionId)
+        return true
+      }).map((item) => ({ questionId: item.questionId, stem: item.question.stem, categoryPath: item.question.categoryPath }))
+      const candidates = [...todayCandidates, ...historyCandidates].slice(0, 30)
+      setChallengeCandidates(candidates)
+      setSelectedChallengeIds(new Set(candidates.slice(0, 5).map((item) => item.questionId)))
+      setShowChallengeModal(true)
+    } catch {
+      notify('暂时无法读取已做题记录')
+    }
+  }
+
+  const createChallenge = async () => {
+    const ids = Array.from(selectedChallengeIds)
+    if (ids.length === 0) return
+    createMyChallengeGroup(challengeTitle, ids, data.myProfile)
+    setIncomingChallenges(getSavedFriendChallengeGroups())
+    setShowChallengeModal(false)
+    notify(`已生成 ${ids.length} 题好友挑战包；下次同步会发送给好友`)
+    if (activeSyncConfigRef.current) void runSync(true, activeSyncConfigRef.current)
+  }
 
   const syncConfigured = isSyncConfigReady(activeSyncConfig)
 
@@ -234,6 +277,7 @@ export function FriendsLadderView({
       outcome.status = 'success'
       if (mountedRef.current && isCurrentRequest()) {
         setData(loadFriendsSystemData(freshTactical, freshBoot, freshElo))
+        setIncomingChallenges(getSavedFriendChallengeGroups())
         setLastSyncAt(new Date().toISOString())
         setSyncStats({ checked: result.checked, updated: result.updated })
         setSyncPhase('success')
@@ -386,6 +430,7 @@ export function FriendsLadderView({
     }
     window.setTimeout(() => {
       setData(loadFriendsSystemData(tacticalData, bootstrapData, eloStatus))
+      setIncomingChallenges(getSavedFriendChallengeGroups())
       setRefreshing(false)
       notify('好友列表已刷新（本地数据）')
     }, 120)
@@ -659,6 +704,9 @@ export function FriendsLadderView({
           <button className="secondary-button compact" onClick={handleExportSnapshot}>
             <FileDown size={14} /> 导出我的数据
           </button>
+          <button className="secondary-button compact" onClick={() => void openChallengeBuilder()}>
+            <Swords size={14} /> 发好友题组
+          </button>
           <button className="primary-button compact" onClick={() => setShowAddModal(true)}>
             <UserPlus size={14} />
             添加好友
@@ -875,6 +923,19 @@ export function FriendsLadderView({
               ))}
             </div>
           </div>
+          {incomingChallenges.length > 0 && (
+            <div className="friends-activity-feed-card friend-challenge-inbox">
+              <div className="feed-header"><div className="feed-title-row"><Swords size={16} className="accent-gold" /><strong>好友题组挑战</strong></div><span>{incomingChallenges.length} 组</span></div>
+              <div className="feed-list">
+                {incomingChallenges.slice(0, 4).map((group) => (
+                  <div className="feed-item" key={group.id}>
+                    <div className="feed-content-wrapper"><strong>{group.title}</strong><small>{group.senderNickname} · {group.questionIds.length} 题</small></div>
+                    <button className="secondary-button compact" onClick={() => onStartChallenge?.(group)}>开练</button>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
         </div>
       </div>
 
@@ -912,6 +973,24 @@ export function FriendsLadderView({
           profile={data.myProfile}
           onClose={() => setShowShareCardModal(false)}
         />
+      )}
+
+      {showChallengeModal && (
+        <div className="modal-backdrop" onClick={() => setShowChallengeModal(false)}>
+          <div className="modal friend-challenge-modal" onClick={(e) => e.stopPropagation()}>
+            <div className="modal-header"><h2><Swords size={18} /> 发起好友题组挑战</h2><button className="icon-button" onClick={() => setShowChallengeModal(false)}>×</button></div>
+            <div className="modal-body">
+              <p className="sync-help-text">从你已经做过的题里挑一组，好友会在下次同步后收到。只发送题号和题组标题，不改变正式 ELO。</p>
+              <div className="form-field-group"><label>题组标题</label><input className="profile-text-input" value={challengeTitle} onChange={(e) => setChallengeTitle(e.target.value)} /></div>
+              <div className="challenge-picker-list">
+                {challengeCandidates.length === 0 ? <p className="sync-help-text">暂无可发送的已做题记录。</p> : challengeCandidates.map((item) => (
+                  <label className="challenge-picker-row" key={item.questionId}><input type="checkbox" checked={selectedChallengeIds.has(item.questionId)} onChange={() => setSelectedChallengeIds((prev) => { const next = new Set(prev); next.has(item.questionId) ? next.delete(item.questionId) : next.add(item.questionId); return next })} /><span><strong>#{item.questionId}</strong> {item.stem}</span><small>{item.categoryPath}</small></label>
+                ))}
+              </div>
+            </div>
+            <div className="modal-footer"><button className="secondary-button compact" onClick={() => setShowChallengeModal(false)}>取消</button><button className="primary-button compact" onClick={() => void createChallenge()} disabled={selectedChallengeIds.size === 0}>发送题组 ({selectedChallengeIds.size}题)</button></div>
+          </div>
+        </div>
       )}
 
       {/* Nutstore WebDAV Sync Modal */}

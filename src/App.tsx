@@ -1267,6 +1267,17 @@ export default function App() {
                     })
                     .catch(() => setNotice('无法载入影子对战题目，请重试'))
                 }}
+                onStartChallenge={(challenge) => {
+                  Promise.all(challenge.questionIds.map((id) => getQuestion(id))).then((qs) => {
+                    const valid = qs.filter((q): q is NonNullable<typeof q> => Boolean(q))
+                    if (valid.length === 0) return setNotice('好友题组中的题目在本机题库中不可用')
+                    setPracticeQueue(valid.map((question) => ({ question, score: 100, reason: `好友「${challenge.senderNickname}」发送的题组挑战`, reasonCode: 'custom' })))
+                    setPracticeStartIndex(0)
+                    setAttemptMode('paper')
+                    setView('today')
+                    setNotice(`已载入好友题组「${challenge.title}」共 ${valid.length} 题`)
+                  }).catch(() => setNotice('无法载入好友题组'))
+                }}
               />
             )}
             {data && view === 'insights' && (

@@ -23,6 +23,7 @@ import {
   getPublicReportById,
 } from '../data/friendPublicData'
 import { FriendPublicReportModal } from './FriendPublicReportModal'
+import { MathText } from './MathText'
 import { getRankDescription } from '../utils'
 
 function formatSeconds(sec: number): string {
@@ -464,10 +465,10 @@ export function FriendPublicProfileModal({
                           </div>
                           <div className="timeline-content">
                             <div className="act-header">
-                              <strong className="act-title">{act.title}</strong>
+                              <strong className="act-title"><MathText value={act.title} /></strong>
                               <span className="act-time">{formatDate(act.timestamp)}</span>
                             </div>
-                            <p className="act-desc">{act.content}</p>
+                            <div className="act-desc"><MathText value={act.content} /></div>
                           </div>
                         </div>
                       ))}

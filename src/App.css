@@ -6525,6 +6525,16 @@
   color: var(--ink);
 }
 
+.ladder-tier-badge.c-tier {
+  background: color-mix(in srgb, var(--green) 12%, transparent);
+  color: var(--green);
+}
+
+.ladder-tier-badge.d-tier {
+  background: color-mix(in srgb, var(--ink-faint) 15%, transparent);
+  color: var(--ink-muted);
+}
+
 /* Rating 与预估分 */
 .rating-val {
   font-size: var(--fs-sm);

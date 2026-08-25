@@ -38,6 +38,7 @@ import {
 } from '../data/friendsService'
 import { FriendVsRadarModal } from './FriendVsRadarModal'
 import { FriendPublicProfileModal } from './FriendPublicProfileModal'
+import { MathText } from './MathText'
 import { bootstrap, getEloStatus, getTacticalDashboardStats, testFriendSync } from '../api'
 import { getRankDescription } from '../utils'
 import type { BootstrapData, EloStatus, FriendProfile, FriendSyncConfig, FriendsSystemData, TacticalDashboardData } from '../types'
@@ -72,16 +73,29 @@ function formatError(error: unknown): string {
 
 function formatRelativeTime(iso: string | null): string {
   if (!iso) return '尚未同步'
-  const elapsed = Math.max(0, Date.now() - new Date(iso).getTime())
-  if (!Number.isFinite(elapsed)) return '时间未知'
-  const seconds = Math.floor(elapsed / 1000)
-  if (seconds < 10) return '刚刚'
-  if (seconds < 60) return `${seconds} 秒前`
-  const minutes = Math.floor(seconds / 60)
-  if (minutes < 60) return `${minutes} 分钟前`
-  const hours = Math.floor(minutes / 60)
-  if (hours < 24) return `${hours} 小时前`
-  return `${Math.floor(hours / 24)} 天前`
+  try {
+    const d = new Date(iso)
+    const time = d.getTime()
+    if (Number.isNaN(time)) return iso
+    const elapsed = Date.now() - time
+    if (elapsed < 0) return '刚刚'
+    const seconds = Math.floor(elapsed / 1000)
+    if (seconds < 10) return '刚刚'
+    if (seconds < 60) return `${seconds} 秒前`
+    const minutes = Math.floor(seconds / 60)
+    if (minutes < 60) return `${minutes} 分钟前`
+    const hours = Math.floor(minutes / 60)
+    if (hours < 24) return `${hours} 小时前`
+    const days = Math.floor(hours / 24)
+    if (days < 7) return `${days} 天前`
+    const m = d.getMonth() + 1
+    const day = d.getDate()
+    const hh = String(d.getHours()).padStart(2, '0')
+    const mm = String(d.getMinutes()).padStart(2, '0')
+    return `${m}月${day}日 ${hh}:${mm}`
+  } catch {
+    return iso
+  }
 }
 
 export function FriendsLadderView({
@@ -557,7 +571,9 @@ export function FriendsLadderView({
     if (letter === 'DONK' || letter.includes('👑')) return 'donk-tier'
     if (letter.startsWith('S')) return 's-tier'
     if (letter.startsWith('A')) return 'a-tier'
-    return 'b-tier'
+    if (letter.startsWith('B')) return 'b-tier'
+    if (letter.startsWith('C')) return 'c-tier'
+    return 'd-tier'
   }
 
   const syncStatusTitle = {
@@ -824,10 +840,14 @@ export function FriendsLadderView({
                   <div className="feed-content-wrapper">
                     <div className="feed-top-line">
                       <strong className="feed-player-name">{act.nickname}</strong>
-                      <span className="feed-time">{act.timestamp}</span>
+                      <span className="feed-time">{formatRelativeTime(act.timestamp)}</span>
                     </div>
-                    <div className="feed-event-title">{act.title}</div>
-                    <p className="feed-event-desc">{act.content}</p>
+                    <div className="feed-event-title">
+                      <MathText value={act.title} />
+                    </div>
+                    <div className="feed-event-desc">
+                      <MathText value={act.content} />
+                    </div>
                   </div>
                 </div>
               ))}

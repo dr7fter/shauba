@@ -735,7 +735,7 @@ export function buildMyFriendProfile(
   eloStatus: EloStatus | null,
 ): FriendProfile {
   const custom = getSavedMyCustomProfile()
-  const elo = Math.round(eloStatus?.current ?? tacticalData?.profile.currentElo ?? 1600)
+  const elo = Math.round(eloStatus?.current ?? tacticalData?.profile.currentElo ?? 1400)
   const peakElo = Math.round(tacticalData?.profile.peakElo ?? elo)
   const ratingPro = tacticalData?.profile.ratingPro ?? 1.17
   const dims: Record<string, number> = { rigor: 64, computation: 65, speed: 62, modeling: 64, methodUse: 63, strategyInsight: 62 }

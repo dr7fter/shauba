@@ -4,6 +4,7 @@ import {
   calculatePresenceState,
   createFriendInvitation,
   dedupeIdentitiesConnected,
+  getMyPresence,
   importFriendInvitation,
   normalizeFriendCode,
   sanitizeGradingReportToPublic,
@@ -94,7 +95,7 @@ test('sanitizeGradingReportToPublic removes private data and structures public d
   assert.ok(pub.weaknesses.includes('有理分式积分'))
 })
 
-test('friend invitation generates and imports cleanly', () => {
+test('friend invitation generates with custom profile and imports friend code cleanly', () => {
   const config = {
     endpoint: 'https://dav.jianguoyun.com/dav/',
     username: 'user@example.com',
@@ -102,12 +103,42 @@ test('friend invitation generates and imports cleanly', () => {
     folder: 'shuaba-test-folder',
   }
 
-  const invitationJson = createFriendInvitation(config)
+  const customProfile = {
+    friendCode: 'SB-8888',
+    profileId: 'pid-8888',
+    nickname: 'MathMaster',
+    avatar: '🎯',
+  }
+
+  const invitationJson = createFriendInvitation(config, customProfile)
   assert.ok(invitationJson.includes('shuaba-friend-invitation'))
+  assert.ok(invitationJson.includes('SB-8888'))
+  assert.ok(invitationJson.includes('MathMaster'))
   assert.ok(!invitationJson.includes('secretpassword')) // password MUST NOT be exported in invitation
 
   const parsed = importFriendInvitation(invitationJson)
   assert.equal(parsed.success, true)
+  assert.equal(parsed.friendCode, 'SB-8888')
   assert.equal(parsed.config?.folder, 'shuaba-test-folder')
   assert.equal(parsed.config?.endpoint, 'https://dav.jianguoyun.com/dav/')
+})
+
+test('getMyPresence accurately calculates in_match, online, and idle states', () => {
+  const pMatch = getMyPresence('match-123', '高压模拟中')
+  assert.equal(pMatch.state, 'in_match')
+  assert.equal(pMatch.currentMatchId, 'match-123')
+
+  const pOnline = getMyPresence(null, null)
+  assert.equal(pOnline.state, 'online')
+  assert.equal(pOnline.currentMatchId, null)
+})
+
+test('presence calculation respects explicit idle and offline publisher state regardless of heartbeat freshness', () => {
+  const nowIso = new Date().toISOString()
+  const pExplicitIdle = calculatePresenceState({ state: 'idle', heartbeatAt: nowIso, expiresAt: nowIso, currentActivity: '离开：暂无操作' })
+  assert.equal(pExplicitIdle.state, 'idle')
+  assert.equal(pExplicitIdle.text, '离开：暂无操作')
+
+  const pExplicitOffline = calculatePresenceState({ state: 'offline', heartbeatAt: nowIso, expiresAt: nowIso })
+  assert.equal(pExplicitOffline.state, 'offline')
 })

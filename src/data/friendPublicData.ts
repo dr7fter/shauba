@@ -283,13 +283,44 @@ export function sanitizeGradingReportToPublic(
 
 // ============ 近实时 Presence 状态计算 ============
 
+let lastUserInteractionMs = Date.now()
+
+export function recordUserInteraction(): void {
+  lastUserInteractionMs = Date.now()
+}
+
+export function getLastUserInteractionTime(): number {
+  return lastUserInteractionMs
+}
+
 export function getMyPresence(currentMatchId?: string | null, activityDesc?: string | null): FriendPresence {
   const now = new Date()
+  const nowMs = now.getTime()
   const heartbeatAt = now.toISOString()
-  const expiresAt = new Date(now.getTime() + 180 * 1000).toISOString()
+  const expiresAt = new Date(nowMs + 180 * 1000).toISOString()
+
+  const idleThreshold = 3 * 60 * 1000 // 3 minutes without interaction
+  const offlineThreshold = 20 * 60 * 1000 // 20 minutes without interaction
+  const timeSinceAction = nowMs - lastUserInteractionMs
+  const isHidden = typeof document !== 'undefined' && document.visibilityState === 'hidden'
+
+  let state: FriendPresenceState = 'online'
+  let activity = activityDesc || '在线：正在研读战术数据大屏'
+
+  if (currentMatchId) {
+    state = 'in_match'
+    activity = activityDesc || '正在进行战术高压冲刺'
+  } else if (timeSinceAction > offlineThreshold) {
+    state = 'offline'
+    activity = '已离线'
+  } else if (timeSinceAction > idleThreshold || isHidden) {
+    state = 'idle'
+    activity = isHidden ? '挂起：窗口处于后台' : '离开：暂无操作'
+  }
+
   return {
-    state: currentMatchId ? 'in_match' : 'online',
-    currentActivity: activityDesc || (currentMatchId ? '正在进行战术高压冲刺' : '在线：正在研读战术数据大屏'),
+    state,
+    currentActivity: activity,
     currentMatchId: currentMatchId || null,
     heartbeatAt,
     expiresAt,
@@ -334,10 +365,23 @@ export function calculatePresenceState(
     return { state: 'offline', text: '数据已过期 (7天前)', heartbeatText }
   }
 
+  // 1. 优先尊重快照内明示的对决状态
+  if (presence?.currentMatchId || presence?.state === 'in_match') {
+    return { state: 'in_match', text: presence.currentActivity || '正在高压冲刺', heartbeatText }
+  }
+
+  // 2. 优先尊重快照内明示的挂起/离开状态（如窗口后台或超时未操作）
+  if (presence?.state === 'idle') {
+    return { state: 'idle', text: presence.currentActivity || '离开：暂无操作', heartbeatText }
+  }
+
+  // 3. 优先尊重快照内明示的离线状态
+  if (presence?.state === 'offline') {
+    return { state: 'offline', text: presence.currentActivity || '离线', heartbeatText }
+  }
+
+  // 4. 根据心跳新鲜度回退判定
   if (diffSec <= 90) {
-    if (presence?.currentMatchId || presence?.state === 'in_match') {
-      return { state: 'in_match', text: presence.currentActivity || '正在刷题', heartbeatText }
-    }
     return { state: 'online', text: presence?.currentActivity || '在线', heartbeatText }
   }
 

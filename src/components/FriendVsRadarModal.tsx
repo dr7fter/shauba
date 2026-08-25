@@ -1,4 +1,4 @@
-import { useMemo } from 'react'
+import { useEffect, useMemo } from 'react'
 import { AnimatePresence, motion } from 'framer-motion'
 import { Swords, X } from 'lucide-react'
 import type { FriendProfile } from '../types'
@@ -25,6 +25,13 @@ export function FriendVsRadarModal({
   friend: FriendProfile
   onClose: () => void
 }) {
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') onClose()
+    }
+    window.addEventListener('keydown', handleKeyDown)
+    return () => window.removeEventListener('keydown', handleKeyDown)
+  }, [onClose])
   // SVG Radar Polygon Calculation
   const size = 300
   const center = size / 2

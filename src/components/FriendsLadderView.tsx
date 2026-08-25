@@ -152,6 +152,20 @@ export function FriendsLadderView({
     }
   }, [bootstrapData])
 
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        if (showAddModal) setShowAddModal(false)
+        else if (showEditProfileModal) setShowEditProfileModal(false)
+        else if (showSyncModal) setShowSyncModal(false)
+        else if (selectedFriendForProfile) setSelectedFriendForProfile(null)
+        else if (selectedVsFriend) setSelectedVsFriend(null)
+      }
+    }
+    window.addEventListener('keydown', handleKeyDown)
+    return () => window.removeEventListener('keydown', handleKeyDown)
+  }, [showAddModal, showEditProfileModal, showSyncModal, selectedFriendForProfile, selectedVsFriend])
+
   const syncConfigured = isSyncConfigReady(activeSyncConfig)
 
   const runSync = async (silent = false, configOverride?: FriendSyncConfig): Promise<SyncOutcome | null> => {
@@ -359,15 +373,34 @@ export function FriendsLadderView({
     }
     if (text.includes('"kind": "shuaba-friend-invitation"') || text.includes('"kind":"shuaba-friend-invitation"')) {
       const inv = importFriendInvitation(text)
-      notify(inv.message)
       if (inv.success) {
+        if (inv.friendCode) {
+          addFriendCode(inv.friendCode)
+        }
         if (inv.config) {
-          setSyncConfig((prev) => ({ ...prev, ...inv.config }))
+          const merged: FriendSyncConfig = {
+            endpoint: inv.config.endpoint?.trim() || syncConfig.endpoint.trim() || 'https://dav.jianguoyun.com/dav/',
+            username: inv.config.username?.trim() || syncConfig.username.trim() || '',
+            appPassword: inv.config.appPassword?.trim() || syncConfig.appPassword || '',
+            folder: inv.config.folder?.trim() || syncConfig.folder.trim() || 'shuaba-friends',
+          }
+          setSyncConfig(merged)
+          if (merged.endpoint && merged.username && merged.appPassword) {
+            saveFriendSyncConfig(merged)
+            setActiveSyncConfig(merged)
+            activeSyncConfigRef.current = merged
+          }
         }
         setData(loadFriendsSystemData(tacticalData, bootstrapData, eloStatus))
         setInputFriendCode('')
         setShowAddModal(false)
-        if (syncConfigured) void runSync(false, activeSyncConfigRef.current ?? undefined)
+        notify(inv.message)
+        const activeCfg = activeSyncConfigRef.current ?? getSavedFriendSyncConfig()
+        if (isSyncConfigReady(activeCfg)) {
+          void runSync(false, activeCfg)
+        }
+      } else {
+        notify(inv.message)
       }
       return
     }
@@ -390,9 +423,21 @@ export function FriendsLadderView({
       notify('请先配置好坚果云 WebDAV 共享文件夹再生成邀请')
       return
     }
-    const json = createFriendInvitation(syncConfig)
-    void navigator.clipboard.writeText(json)
-    notify('好友邀请配置已复制到剪贴板！发送给好友，对方直接导入即可自动绑定')
+    const myProfile = data.myProfile
+    const json = createFriendInvitation(syncConfig, {
+      friendCode: myProfile.friendCode,
+      profileId: myProfile.profileId || myProfile.friendCode,
+      nickname: myProfile.nickname,
+      avatar: myProfile.avatar,
+    })
+    navigator.clipboard
+      .writeText(json)
+      .then(() => {
+        notify('好友邀请配置已复制到剪贴板！发送给好友，对方直接导入即可自动绑定')
+      })
+      .catch(() => {
+        notify('无法自动写入剪贴板，请手动复制生成的邀请 JSON')
+      })
   }
 
   const handleSaveSyncConfig = () => {
@@ -467,6 +512,9 @@ export function FriendsLadderView({
     setData(loadFriendsSystemData(tacticalData, bootstrapData, eloStatus))
     setShowEditProfileModal(false)
     notify(`个人战术名片已更新！专属好友码：${customCode}`)
+    if (syncConfigured) {
+      void runSync(true)
+    }
   }
 
   const getRankEmblem = (index: number) => {
@@ -476,23 +524,30 @@ export function FriendsLadderView({
     return <span className="rank-badge default">{index + 1}</span>
   }
 
-  const getStatusBadge = (status: FriendProfile['status'], activity?: string) => {
+  const getStatusBadge = (status: FriendProfile['status'], activity?: string | null) => {
     if (status === 'in_match') {
       return (
-        <span className="live-status-pill in-match" title={activity}>
+        <span className="live-status-pill in-match" title={activity ?? undefined}>
           <span className="live-pulse-dot match" /> 快照：高压模考
         </span>
       )
     }
     if (status === 'online') {
       return (
-        <span className="live-status-pill online" title={activity}>
+        <span className="live-status-pill online" title={activity ?? undefined}>
           <span className="live-pulse-dot online" /> 快照：刷题中
         </span>
       )
     }
+    if (status === 'idle') {
+      return (
+        <span className="live-status-pill idle" title={activity ?? undefined}>
+          <span className="live-pulse-dot idle" /> 离开
+        </span>
+      )
+    }
     return (
-      <span className="live-status-pill offline" title={activity}>
+      <span className="live-status-pill offline" title={activity ?? undefined}>
         <span className="live-pulse-dot offline" /> 离线
       </span>
     )
@@ -611,9 +666,9 @@ export function FriendsLadderView({
               >
                 <div className="col-rank">{getRankEmblem(index)}</div>
                 <div
-                  className={`col-player ${player.isSelf ? '' : 'clickable-player'}`}
-                  onClick={() => !player.isSelf && setSelectedFriendForProfile(player)}
-                  title={player.isSelf ? undefined : '点击查看好友公开数据与比赛战报'}
+                  className="col-player clickable-player"
+                  onClick={() => setSelectedFriendForProfile(player)}
+                  title={player.isSelf ? '点击预览我的公开名片' : '点击查看好友公开数据与比赛战报'}
                 >
                   <span className="player-avatar-circle">{player.avatar}</span>
                   <div className="player-meta-info">

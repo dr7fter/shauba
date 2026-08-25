@@ -646,42 +646,87 @@ export async function syncFriendSnapshots(config: FriendSyncConfig): Promise<Fri
   }
 }
 
-export function getSavedActivities(): FriendActivity[] {
-  const { raw, legacy } = readMigrated(STORAGE_KEY_ACTIVITIES, LEGACY_STORAGE_KEY_ACTIVITIES)
+const STORAGE_KEY_MY_ACTIVITIES = 'shuaba_my_activities_v2'
+const STORAGE_KEY_FRIEND_ACTIVITIES = 'shuaba_friend_activities_v2'
+
+function parseActivitiesArray(raw: string | null): FriendActivity[] {
   const parsed = parseJson<unknown>(raw)
-  const activities = Array.isArray(parsed)
-    ? parsed
-        .filter(isRecord)
-        .map(
-          (item): FriendActivity => ({
-            id: typeof item.id === 'string' ? item.id : newId('activity'),
-            friendCode: normalizeFriendCode(item.friendCode) ?? '',
-            nickname: typeof item.nickname === 'string' ? item.nickname.trim().slice(0, 64) : '好友',
-            avatar: typeof item.avatar === 'string' ? item.avatar.slice(0, 16) : '🙂',
-            type:
-              item.type === 'rank_up' || item.type === 'donk_burst' || item.type === 'exam_finish' || item.type === 'daily_streak'
-                ? item.type
-                : 'daily_streak',
-            title: typeof item.title === 'string' ? item.title.slice(0, 128) : '',
-            content: typeof item.content === 'string' ? item.content.slice(0, 256) : '',
-            timestamp: typeof item.timestamp === 'string' && validDate(item.timestamp) ? item.timestamp : new Date(0).toISOString(),
-          }),
-        )
-        .filter((item) => item.friendCode !== '')
-    : []
-  if (legacy || raw !== JSON.stringify(activities)) writeStorage(STORAGE_KEY_ACTIVITIES, activities)
-  return activities.length ? activities : DEFAULT_ACTIVITIES
+  if (!Array.isArray(parsed)) return []
+  return parsed
+    .filter(isRecord)
+    .map(
+      (item): FriendActivity => ({
+        id: typeof item.id === 'string' ? item.id : newId('activity'),
+        friendCode: normalizeFriendCode(item.friendCode) ?? '',
+        nickname: typeof item.nickname === 'string' ? item.nickname.trim().slice(0, 64) : '好友',
+        avatar: typeof item.avatar === 'string' ? item.avatar.slice(0, 16) : '🙂',
+        type:
+          item.type === 'rank_up' || item.type === 'donk_burst' || item.type === 'exam_finish' || item.type === 'daily_streak'
+            ? item.type
+            : 'daily_streak',
+        title: typeof item.title === 'string' ? item.title.slice(0, 128) : '',
+        content: typeof item.content === 'string' ? item.content.slice(0, 256) : '',
+        timestamp: typeof item.timestamp === 'string' && validDate(item.timestamp) ? item.timestamp : new Date(0).toISOString(),
+      }),
+    )
+    .filter((item) => item.friendCode !== '')
 }
 
-export function saveActivities(activities: FriendActivity[]): void {
-  writeStorage(STORAGE_KEY_ACTIVITIES, activities.slice(0, 50))
+export function getMySavedActivities(): FriendActivity[] {
+  const raw = readStorage(STORAGE_KEY_MY_ACTIVITIES)
+  if (raw) return parseActivitiesArray(raw)
+  // Backfill from legacy global activities if my activity storage is empty
+  const legacyRaw = readMigrated(STORAGE_KEY_ACTIVITIES, LEGACY_STORAGE_KEY_ACTIVITIES).raw
+  const legacyList = parseActivitiesArray(legacyRaw)
+  const ownCode = getSavedMyCustomProfile().friendCode
+  const myLegacy = legacyList.filter((a) => a.friendCode === ownCode)
+  if (myLegacy.length) writeStorage(STORAGE_KEY_MY_ACTIVITIES, myLegacy)
+  return myLegacy
+}
+
+export function getFriendSavedActivities(): FriendActivity[] {
+  const raw = readStorage(STORAGE_KEY_FRIEND_ACTIVITIES)
+  if (raw) return parseActivitiesArray(raw)
+  // Backfill from legacy global activities
+  const legacyRaw = readMigrated(STORAGE_KEY_ACTIVITIES, LEGACY_STORAGE_KEY_ACTIVITIES).raw
+  const legacyList = parseActivitiesArray(legacyRaw)
+  const ownCode = getSavedMyCustomProfile().friendCode
+  const friendLegacy = legacyList.filter((a) => a.friendCode !== ownCode)
+  if (friendLegacy.length) writeStorage(STORAGE_KEY_FRIEND_ACTIVITIES, friendLegacy)
+  return friendLegacy
+}
+
+export function getSavedActivities(): FriendActivity[] {
+  const my = getMySavedActivities()
+  const friends = getFriendSavedActivities()
+  const merged = [...my, ...friends]
+  merged.sort((a, b) => Date.parse(b.timestamp) - Date.parse(a.timestamp))
+  return merged.length ? merged.slice(0, 50) : DEFAULT_ACTIVITIES
+}
+
+export function saveMyActivities(activities: FriendActivity[]): void {
+  writeStorage(STORAGE_KEY_MY_ACTIVITIES, activities.slice(0, 50))
+}
+
+export function saveFriendActivities(activities: FriendActivity[]): void {
+  writeStorage(STORAGE_KEY_FRIEND_ACTIVITIES, activities.slice(0, 50))
+}
+
+export function addMyActivity(act: FriendActivity): void {
+  const current = getMySavedActivities()
+  if (current.some((a) => a.id === act.id)) return
+  saveMyActivities([act, ...current].slice(0, 50))
 }
 
 export function addFriendActivity(act: FriendActivity): void {
-  const current = getSavedActivities()
-  const exists = current.some((a) => a.id === act.id)
-  if (exists) return
-  saveActivities([act, ...current].slice(0, 50))
+  const ownCode = getSavedMyCustomProfile().friendCode
+  if (act.friendCode === ownCode || !act.friendCode) {
+    addMyActivity({ ...act, friendCode: ownCode })
+    return
+  }
+  const current = getFriendSavedActivities()
+  if (current.some((a) => a.id === act.id)) return
+  saveFriendActivities([act, ...current].slice(0, 50))
 }
 
 export function buildMyFriendProfile(
@@ -715,9 +760,9 @@ export function buildMyFriendProfile(
     todayProblems: bootstrapData?.todayDone ?? 8,
     totalMatches: tacticalData?.profile.matches ?? 42,
     winRate: tacticalData?.profile.winRate ?? 55,
-    status: 'online',
-    currentActivity: '在线：正在研读战术数据大屏',
-    lastActiveAt: new Date().toISOString(),
+    status: getMyPresence().state,
+    currentActivity: getMyPresence().currentActivity,
+    lastActiveAt: getMyPresence().heartbeatAt,
     eloChangeToday: Math.round(eloStatus?.lastDelta ?? 12),
     isSelf: true,
     seasonName: tacticalData?.currentSeason || 'S2',
@@ -746,12 +791,18 @@ export function loadFriendsSystemData(
 
 export function createFriendShareSnapshot(profile: FriendProfile): string {
   const exportedAt = new Date().toISOString()
-  const current = publicProfile({ ...profile, isSelf: false })
   const presence = getMyPresence()
+  const current = publicProfile({
+    ...profile,
+    isSelf: false,
+    status: presence.state,
+    currentActivity: presence.currentActivity,
+    lastActiveAt: presence.heartbeatAt,
+  })
   const revision = incrementMyRevision()
   const myMatches = getMyPublicMatches().slice(0, 10)
   const myReports = getMyPublicReports().slice(0, 10)
-  const myActivities: FriendPublicActivity[] = getSavedActivities().slice(0, 20).map((a) => ({
+  const myActivities: FriendPublicActivity[] = getMySavedActivities().slice(0, 20).map((a) => ({
     id: a.id,
     profileId: current.profileId || current.friendCode,
     friendCode: current.friendCode,
@@ -1020,7 +1071,7 @@ export function addFriendSnapshot(
     lastSnapshotHash: hash,
     lastSnapshotExportedAt: exportedAt,
     currentActivity: presence?.currentActivity || profile.currentActivity,
-    status: presence?.state === 'in_match' || presence?.state === 'online' ? presence.state : profile.status,
+    status: presence?.state ?? profile.status,
   }
 
   const rest = existing ? friends.filter((item) => item !== existing && item.friendCode !== profile.friendCode && item.profileId !== profile.profileId) : friends

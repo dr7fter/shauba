@@ -5028,49 +5028,314 @@ fn learning_center_mistake_chains(conn: &Connection) -> Result<Value, String> {
          FROM learning_diagnoses d LEFT JOIN review_tasks r ON r.task_id=d.task_id AND r.question_id=d.question_id ORDER BY d.updated_at DESC,d.id DESC"
     ).map_err(|e| e.to_string())?;
     let rows = stmt.query_map([], |r| Ok((r.get::<_, String>(0)?,r.get::<_, i64>(1)?,r.get::<_, String>(2)?,r.get::<_, String>(3)?,r.get::<_, String>(4)?,r.get::<_, Option<String>>(5)?,r.get::<_, f64>(6)?,r.get::<_, String>(7)?,r.get::<_, String>(8)?,r.get::<_, Option<String>>(9)?,r.get::<_, Option<String>>(10)?,r.get::<_, Option<String>>(11)?,r.get::<_, Option<String>>(12)?))).map_err(|e| e.to_string())?.collect::<Result<Vec<_>,_>>().map_err(|e| e.to_string())?;
-    Ok(Value::Array(rows.into_iter().map(|(task_id,qid,category,error_class,next_action,earliest,confidence,created,updated,stage,status,last,next_review)| {
+    let mut result = Vec::new();
+    for (task_id, qid, category, error_class, next_action, earliest, confidence, created, updated, stage, status, last, next_review) in rows {
         let closed = stage.as_deref() == Some("closed") || status.as_deref() == Some("closed");
-        json!({"id": format!("{}:{}",task_id,qid), "categoryId": Value::Null, "categoryPath": category, "label": format!("{} · 题目 {}",category,qid), "errorClass": match error_class.as_str(){"aiming"|"concept"|"tactics"|"mixed"=>error_class,_=>"uncertain".into()}, "stage": if closed{"remediating"}else{stage.as_deref().unwrap_or("diagnosed")}, "statusLabel": if closed{"已降级：缺少稳定关闭所需的结构化证据"}else{"等待受控复习验证"}, "firstExposedAt":created,"lastObservedAt":updated,"nextReviewAt":next_review,"repeatedCount":1,"evidenceCount":0,"confidence":confidence,"earliestError":earliest,"advice":Value::Null,"nextAction":next_action,"originalRetryPassed":last.as_deref()==Some("correct"),"similarPassed":false,"transferPassed":false,"delayedReviewPassed":false,"stableClosedAt":Value::Null,"relapseAt":Value::Null,"blockedReason":LEARNING_CENTER_STABLE_GATE_REASONS.join("；")})
-    }).collect()))
+        let repeated_count: i64 = conn.query_row("SELECT COUNT(*) FROM attempts WHERE question_id=?1", [qid], |r| r.get(0)).unwrap_or(1).max(1);
+        let evidence_count: i64 = conn.query_row("SELECT COUNT(*) FROM learning_evidence WHERE question_id=?1", [qid], |r| r.get(0)).unwrap_or(0);
+        let advice: Option<String> = conn.query_row(
+            "SELECT json_extract(payload, '$.advice') FROM codex_inbox WHERE (status='applied' OR status='confirmed') AND (json_extract(payload, '$.questionId')=?1 OR json_extract(payload, '$.question_id')=?1) ORDER BY id DESC LIMIT 1",
+            [qid],
+            |r| r.get(0),
+        ).optional().unwrap_or(None).or_else(|| {
+            conn.query_row(
+                "SELECT json_extract(value, '$.advice') FROM codex_inbox, json_each(json_extract(payload, '$.batchAttempts')) WHERE (status='applied' OR status='confirmed') AND (json_extract(value, '$.questionId')=?1 OR json_extract(value, '$.question_id')=?1) ORDER BY codex_inbox.id DESC LIMIT 1",
+                [qid],
+                |r| r.get(0),
+            ).optional().unwrap_or(None)
+        });
+        result.push(json!({
+            "id": format!("{}:{}", task_id, qid),
+            "categoryId": Value::Null,
+            "categoryPath": category,
+            "label": format!("{} · 题目 {}", category, qid),
+            "errorClass": match error_class.as_str() { "aiming" | "concept" | "tactics" | "mixed" => error_class, _ => "uncertain".into() },
+            "stage": if closed { "remediating" } else { stage.as_deref().unwrap_or("diagnosed") },
+            "statusLabel": if closed { "已降级：缺少稳定关闭所需的结构化证据" } else { "等待受控复习验证" },
+            "firstExposedAt": created,
+            "lastObservedAt": updated,
+            "nextReviewAt": next_review,
+            "repeatedCount": repeated_count,
+            "evidenceCount": evidence_count,
+            "confidence": confidence,
+            "earliestError": earliest,
+            "advice": advice,
+            "nextAction": next_action,
+            "originalRetryPassed": last.as_deref() == Some("correct"),
+            "similarPassed": false,
+            "transferPassed": false,
+            "delayedReviewPassed": false,
+            "stableClosedAt": Value::Null,
+            "relapseAt": Value::Null,
+            "blockedReason": LEARNING_CENTER_STABLE_GATE_REASONS.join("；")
+        }));
+    }
+    Ok(Value::Array(result))
 }
 
 fn learning_center_shadow(conn: &Connection) -> Result<(Value, Vec<Value>), String> {
     let category: Option<String> = conn.query_row("SELECT category_key FROM learning_diagnoses WHERE normalized_error_class<>'none' ORDER BY updated_at DESC,id DESC LIMIT 1", [], |r| r.get(0)).optional().map_err(|e| e.to_string())?
-        .or(conn.query_row("SELECT category_key FROM skill_states ORDER BY mastery ASC,updated_at ASC LIMIT 1", [], |r| r.get(0)).optional().map_err(|e| e.to_string())?);
+        .or(conn.query_row("SELECT category_key FROM skill_states ORDER BY mastery ASC,updated_at ASC LIMIT 1", [], |r| r.get(0)).optional().map_err(|e| e.to_string())?)
+        .or(conn.query_row("SELECT category_path FROM questions ORDER BY id ASC LIMIT 1", [], |r| r.get(0)).optional().map_err(|e| e.to_string())?);
     let weights = json!({"repair":40,"consolidate":25,"transfer":20,"challenge":15});
     let Some(category) = category else { return Ok((json!({"weights":weights,"items":[],"emptyReason":"尚无可验证类别候选；影子推荐不会伪造题号或写入队列。"}),vec![])); };
-    let specs = [("repair", "修复", "practice_similar", "先修复已诊断的断点。"), ("consolidate", "巩固", "quick_retry", "巩固当前薄弱类别。"), ("transfer", "迁移", "practice_variant", "迁移需要受控变式关系。")] ;
-    let mut items=Vec::new();let mut objectives=Vec::new();
-    for (i,(track,title,action,why)) in specs.iter().enumerate() { let reason=if *track=="transfer"{"当前没有受控变式关系，不能伪造变式题或迁移通过。"}else{"影子推荐尚未接入受控题目选择器；不会伪造题号或写入队列。"}; items.push(json!({"id":format!("shadow:{}:{}",track,category),"questionId":Value::Null,"title":format!("{} · {}",title,category),"categoryPath":category,"track":track,"score":if *track=="repair"{40}else if *track=="consolidate"{25}else{20},"estimatedMinutes":15,"state":"blocked","reason":{"track":track,"targetCategoryId":Value::Null,"evidenceText":why,"goalText":why,"successCriteria":"形成新的有效学习证据。","sourceEvidenceIds":[],"confidence":Value::Null},"variantOfQuestionId":Value::Null,"isDifferentQuestion":false,"isDifferentStructure":false,"actions":["open_detail"]})); objectives.push(json!({"id":format!("objective:{}:{}",track,category),"order":i+1,"track":track,"title":format!("{}：{}",title,category),"categoryId":Value::Null,"categoryPath":category,"status":"blocked","estimatedMinutes":15,"plannedItemCount":0,"completedItemCount":0,"whyNow":why,"evidenceIds":[],"successCriteria":"形成新的有效学习证据。","nextAction":action,"questionIds":[],"isUserPinned":false,"blockedReason":reason})); }
-    Ok((json!({"weights":weights,"items":items,"emptyReason":Value::Null}),objectives))
+    let specs = [
+        ("repair", "修复", "practice_similar", "先修复已诊断的断点。"),
+        ("consolidate", "巩固", "quick_retry", "巩固当前薄弱类别。"),
+        ("transfer", "迁移", "practice_variant", "迁移需要受控变式关系。"),
+        ("challenge", "挑战", "practice_challenge", "突破压轴高难真题。"),
+    ];
+    let mut items = Vec::new();
+    let mut objectives = Vec::new();
+    for (i, (track, title, action, why)) in specs.iter().enumerate() {
+        let candidate_id: Option<i64> = match *track {
+            "repair" => {
+                conn.query_row(
+                    "SELECT q.id FROM questions q JOIN attempts a ON a.question_id=q.id WHERE (lower(a.result)='wrong' OR lower(a.outcome)='wrong') AND (q.category_path=?1 OR ?1='') ORDER BY a.id DESC LIMIT 1",
+                    [&category],
+                    |r| r.get(0),
+                ).optional().unwrap_or(None)
+                .or_else(|| conn.query_row("SELECT id FROM questions WHERE category_path=?1 ORDER BY id ASC LIMIT 1", [&category], |r| r.get(0)).optional().unwrap_or(None))
+            },
+            "consolidate" => {
+                conn.query_row(
+                    "SELECT q.id FROM questions q JOIN progress p ON p.question_id=q.id WHERE p.mastery <= 3 AND (q.category_path=?1 OR ?1='') ORDER BY p.mastery ASC LIMIT 1",
+                    [&category],
+                    |r| r.get(0),
+                ).optional().unwrap_or(None)
+                .or_else(|| conn.query_row("SELECT id FROM questions WHERE category_path=?1 ORDER BY id DESC LIMIT 1", [&category], |r| r.get(0)).optional().unwrap_or(None))
+            },
+            "transfer" => {
+                // 迁移轨道必须遵循结构化变式门控：无受控变式关系时不伪造变式推荐
+                None
+            },
+            "challenge" => {
+                conn.query_row(
+                    "SELECT id FROM questions WHERE difficulty >= 2 AND (category_path=?1 OR category_path LIKE ?2) ORDER BY difficulty DESC, id ASC LIMIT 1",
+                    params![category, format!("{}%", category.split(" / ").next().unwrap_or(&category))],
+                    |r| r.get(0),
+                ).optional().unwrap_or(None)
+                .or_else(|| conn.query_row("SELECT id FROM questions ORDER BY difficulty DESC, id ASC LIMIT 1", [], |r| r.get(0)).optional().unwrap_or(None))
+            },
+            _ => None,
+        };
+        let is_available = candidate_id.is_some();
+        let qid_val = candidate_id.map(Value::from).unwrap_or(Value::Null);
+        let qids_vec = candidate_id.map(|id| vec![id]).unwrap_or_default();
+        let state = if is_available { "available" } else { "blocked" };
+        let status = if is_available { "ready" } else { "blocked" };
+        let actions = if is_available { json!(["start", "open_detail"]) } else { json!(["open_detail"]) };
+        let blocked_reason = if *track == "transfer" {
+            Value::from("当前没有受控变式关系，迁移训练需等待结构化变式支持。")
+        } else if is_available {
+            Value::Null
+        } else {
+            Value::from("暂无可用的题库题目；请先导入题库。")
+        };
+        let score = match *track { "repair" => 40, "consolidate" => 25, "transfer" => 20, _ => 15 };
+
+        items.push(json!({
+            "id": format!("shadow:{}:{}", track, category),
+            "questionId": qid_val,
+            "title": format!("{} · {}", title, category),
+            "categoryPath": category,
+            "track": track,
+            "score": score,
+            "estimatedMinutes": 15,
+            "state": state,
+            "reason": {
+                "track": track,
+                "targetCategoryId": Value::Null,
+                "evidenceText": why,
+                "goalText": why,
+                "successCriteria": "形成新的有效学习证据。",
+                "sourceEvidenceIds": [],
+                "confidence": Value::Null
+            },
+            "variantOfQuestionId": Value::Null,
+            "isDifferentQuestion": false,
+            "isDifferentStructure": false,
+            "actions": actions
+        }));
+        objectives.push(json!({
+            "id": format!("objective:{}:{}", track, category),
+            "order": i + 1,
+            "track": track,
+            "title": format!("{}：{}", title, category),
+            "categoryId": Value::Null,
+            "categoryPath": category,
+            "status": status,
+            "estimatedMinutes": 15,
+            "plannedItemCount": if is_available { 1 } else { 0 },
+            "completedItemCount": 0,
+            "whyNow": why,
+            "evidenceIds": [],
+            "successCriteria": "形成新的有效学习证据。",
+            "nextAction": action,
+            "questionIds": qids_vec,
+            "isUserPinned": false,
+            "blockedReason": blocked_reason
+        }));
+    }
+    Ok((json!({"weights": weights, "items": items, "emptyReason": Value::Null}), objectives))
 }
 
-fn learning_center_training(conn: &Connection, today: &str) -> Result<Value,String> {
-    let counted="lower(COALESCE(outcome,result)) NOT IN ('uncertain','unknown')";
-    let problems:i64=conn.query_row(&format!("SELECT COUNT(*) FROM attempts WHERE substr(attempted_at,1,10)=?1 AND {counted}"),[today],|r|r.get(0)).map_err(|e|e.to_string())?;
-    let seconds:i64=conn.query_row(&format!("SELECT COALESCE(SUM(duration_seconds),0) FROM attempts WHERE substr(attempted_at,1,10)=?1 AND {counted} AND duration_seconds BETWEEN 1 AND 1800"),[today],|r|r.get(0)).map_err(|e|e.to_string())?;
-    let weekly:i64=conn.query_row(&format!("SELECT COUNT(*) FROM attempts WHERE date(attempted_at)>=date(?1,'-6 days') AND {counted}"),[today],|r|r.get(0)).map_err(|e|e.to_string())?;
-    let weekly_seconds:i64=conn.query_row(&format!("SELECT COALESCE(SUM(duration_seconds),0) FROM attempts WHERE date(attempted_at)>=date(?1,'-6 days') AND {counted} AND duration_seconds BETWEEN 1 AND 1800"),[today],|r|r.get(0)).map_err(|e|e.to_string())?;
-    let due:i64=conn.query_row("SELECT COUNT(*) FROM review_tasks WHERE status<>'closed' AND next_review_at IS NOT NULL AND next_review_at<=?1",[today],|r|r.get(0)).map_err(|e|e.to_string())?;
-    let chains:i64=conn.query_row("SELECT COUNT(*) FROM learning_diagnoses",[],|r|r.get(0)).map_err(|e|e.to_string())?;
-    Ok(json!({"todayProblems":problems,"todayMinutes":seconds/60,"weeklyProblems":weekly,"weeklyMinutes":weekly_seconds/60,"dueReviews":due,"activeMistakeChains":chains,"stableClosedChains":0,"variantPasses":0,"delayedReviewPasses":0,"incentiveAvailable":false,"xpThisWeek":Value::Null,"achievements":Value::Null}))
+fn learning_center_training(conn: &Connection, today: &str) -> Result<Value, String> {
+    let counted = "lower(COALESCE(outcome,result)) NOT IN ('uncertain','unknown')";
+    let problems: i64 = conn.query_row(&format!("SELECT COUNT(*) FROM attempts WHERE substr(attempted_at,1,10)=?1 AND {counted}"), [today], |r| r.get(0)).map_err(|e| e.to_string())?;
+    let seconds: i64 = conn.query_row(&format!("SELECT COALESCE(SUM(duration_seconds),0) FROM attempts WHERE substr(attempted_at,1,10)=?1 AND {counted} AND duration_seconds BETWEEN 1 AND 1800"), [today], |r| r.get(0)).map_err(|e| e.to_string())?;
+    let weekly: i64 = conn.query_row(&format!("SELECT COUNT(*) FROM attempts WHERE date(attempted_at)>=date(?1,'-6 days') AND {counted}"), [today], |r| r.get(0)).map_err(|e| e.to_string())?;
+    let weekly_seconds: i64 = conn.query_row(&format!("SELECT COALESCE(SUM(duration_seconds),0) FROM attempts WHERE date(attempted_at)>=date(?1,'-6 days') AND {counted} AND duration_seconds BETWEEN 1 AND 1800"), [today], |r| r.get(0)).map_err(|e| e.to_string())?;
+    let due: i64 = conn.query_row("SELECT COUNT(*) FROM review_tasks WHERE status<>'closed' AND next_review_at IS NOT NULL AND next_review_at<=?1", [today], |r| r.get(0)).map_err(|e| e.to_string())?;
+    let active_chains: i64 = conn.query_row("SELECT COUNT(*) FROM review_tasks WHERE status<>'closed' AND stage<>'closed'", [], |r| r.get(0))
+        .optional().map_err(|e| e.to_string())?
+        .unwrap_or_else(|| conn.query_row("SELECT COUNT(*) FROM learning_diagnoses WHERE normalized_error_class<>'none'", [], |r| r.get(0)).unwrap_or(0));
+    let closed_chains: i64 = conn.query_row("SELECT COUNT(*) FROM review_tasks WHERE status='closed' OR stage='closed'", [], |r| r.get(0)).unwrap_or(0);
+    let variant_passes: i64 = conn.query_row("SELECT COUNT(*) FROM learning_evidence WHERE is_variant=1 AND lower(outcome)='correct'", [], |r| r.get(0)).unwrap_or(0);
+    let delayed_passes: i64 = conn.query_row("SELECT COUNT(*) FROM learning_evidence WHERE is_delayed_review=1 AND lower(outcome)='correct'", [], |r| r.get(0)).unwrap_or(0);
+    Ok(json!({
+        "todayProblems": problems,
+        "todayMinutes": seconds / 60,
+        "weeklyProblems": weekly,
+        "weeklyMinutes": weekly_seconds / 60,
+        "dueReviews": due,
+        "activeMistakeChains": active_chains,
+        "stableClosedChains": closed_chains,
+        "variantPasses": variant_passes,
+        "delayedReviewPasses": delayed_passes,
+        "incentiveAvailable": false,
+        "xpThisWeek": Value::Null,
+        "achievements": Value::Null
+    }))
 }
 
-fn learning_center_competitive(conn:&Connection,supp:Option<&Connection>)->Result<Value,String>{
-    let count:i64=conn.query_row("SELECT COUNT(*) FROM elo_events WHERE reason<>'season_reset'",[],|r|r.get(0)).map_err(|e|e.to_string())?;
-    let last:Option<(f64,f64,String)>=conn.query_row("SELECT rating_after,delta,created_at FROM elo_events WHERE reason<>'season_reset' ORDER BY id DESC LIMIT 1",[],|r|Ok((r.get(0)?,r.get(1)?,r.get(2)?))).optional().map_err(|e|e.to_string())?;
-    let (valid,pending)=if let Some(s)=supp{(s.query_row("SELECT COUNT(*) FROM pressure_sessions ps WHERE status IN ('graded','graded_partial') AND (ps.task_id IS NOT NULL OR EXISTS (SELECT 1 FROM pressure_task_links l WHERE l.session_id=ps.session_id AND l.is_current=1))",[],|r|r.get(0)).map_err(|e|e.to_string())?,s.query_row("SELECT COUNT(*) FROM pressure_sessions ps WHERE status IN ('awaiting_codex','completed') AND (ps.task_id IS NOT NULL OR EXISTS (SELECT 1 FROM pressure_task_links l WHERE l.session_id=ps.session_id AND l.is_current=1))",[],|r|r.get(0)).map_err(|e|e.to_string())?)}else{(0,0)};
-    let rating=last.as_ref().map(|x|x.0); Ok(json!({"rating":rating,"elo":rating,"rank":rating.map(rank_letter_for_elo),"seasonName":Value::Null,"settlementCount":count,"lastDelta":last.as_ref().map(|x|x.1),"lastMatchAt":last.map(|x|x.2),"validPressureSessions":valid,"pendingSettlementCount":pending,"note":"只读历史竞技账；当前历史数据尚未实现 rankedOnly 过滤，展示不改变既有 ELO/Rating 规则。"}))
+fn learning_center_competitive(conn: &Connection, supp: Option<&Connection>) -> Result<Value, String> {
+    let count: i64 = conn.query_row("SELECT COUNT(*) FROM elo_events WHERE reason<>'season_reset'", [], |r| r.get(0)).map_err(|e| e.to_string())?;
+    let last_elo: Option<(f64, f64, String)> = conn.query_row(
+        "SELECT rating_after, delta, created_at FROM elo_events WHERE reason<>'season_reset' ORDER BY id DESC LIMIT 1",
+        [],
+        |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
+    ).optional().map_err(|e| e.to_string())?;
+    let genuine_recent_rating: Option<f64> = conn.query_row(
+        "SELECT AVG(ai_rating) FROM (SELECT ai_rating FROM attempts WHERE ai_rating IS NOT NULL AND ai_rating > 0.0 ORDER BY id DESC LIMIT 10)",
+        [],
+        |r| r.get(0),
+    ).optional().unwrap_or(None);
+    let (valid, pending) = if let Some(s) = supp {
+        (
+            s.query_row("SELECT COUNT(*) FROM pressure_sessions ps WHERE status IN ('graded','graded_partial') AND (ps.task_id IS NOT NULL OR EXISTS (SELECT 1 FROM pressure_task_links l WHERE l.session_id=ps.session_id AND l.is_current=1))", [], |r| r.get(0)).map_err(|e| e.to_string())?,
+            s.query_row("SELECT COUNT(*) FROM pressure_sessions ps WHERE status IN ('awaiting_codex','completed') AND (ps.task_id IS NOT NULL OR EXISTS (SELECT 1 FROM pressure_task_links l WHERE l.session_id=ps.session_id AND l.is_current=1))", [], |r| r.get(0)).map_err(|e| e.to_string())?
+        )
+    } else {
+        (0, 0)
+    };
+    let elo_val = last_elo.as_ref().map(|x| x.0);
+    let rating_val = genuine_recent_rating.map(|r| ((r * 100.0).round()) / 100.0);
+    Ok(json!({
+        "rating": rating_val,
+        "elo": elo_val,
+        "rank": elo_val.map(rank_letter_for_elo),
+        "seasonName": Value::Null,
+        "settlementCount": count,
+        "lastDelta": last_elo.as_ref().map(|x| x.1),
+        "lastMatchAt": last_elo.map(|x| x.2),
+        "validPressureSessions": valid,
+        "pendingSettlementCount": pending,
+        "note": "只读历史竞技账；Rating 独立反映真实近况均值（无数据为 null），ELO 独立排位记账。"
+    }))
 }
 
-fn build_learning_center_snapshot(conn:&Connection,supp:Option<&Connection>)->LearningCenterSnapshot{
-    let today=Local::now().format("%Y-%m-%d").to_string();let mut errors=vec![];
-    let (metrics,recent,integrity)=match learning_center_metrics_and_evidence(conn){Ok(v)=>v,Err(e)=>{errors.push(json!({"section":"metrics","message":e}));(learning_center_empty_metrics(),json!([]),json!({"stableGateStatus":"blocked","stableGateReasons":LEARNING_CENTER_STABLE_GATE_REASONS,"acceptedEvidenceCount":0,"lowConfidenceEvidenceCount":0,"uncertainEvidenceCount":0,"structuredVariantEvidence":false,"structuredDelayedReviewEvidence":false}))}};
-    let chains=match learning_center_mistake_chains(conn){Ok(v)=>v,Err(e)=>{errors.push(json!({"section":"mistakeChains","message":e}));json!([])}};
-    let (recommendations,objectives)=match learning_center_shadow(conn){Ok(v)=>v,Err(e)=>{errors.push(json!({"section":"recommendations","message":e}));(json!({"weights":{"repair":40,"consolidate":25,"transfer":20,"challenge":15},"items":[],"emptyReason":"影子推荐查询失败，未写入任何计划。"}),vec![])}};
-    let training=match learning_center_training(conn,&today){Ok(v)=>v,Err(e)=>{errors.push(json!({"section":"training","message":e}));json!({"todayProblems":0,"todayMinutes":0,"weeklyProblems":0,"weeklyMinutes":0,"dueReviews":0,"activeMistakeChains":0,"stableClosedChains":0,"variantPasses":0,"delayedReviewPasses":0,"incentiveAvailable":false,"xpThisWeek":Value::Null,"achievements":Value::Null})}};
-    let competitive=match learning_center_competitive(conn,supp){Ok(v)=>v,Err(e)=>{errors.push(json!({"section":"competitive","message":e}));json!({"rating":Value::Null,"elo":Value::Null,"rank":Value::Null,"seasonName":Value::Null,"settlementCount":0,"lastDelta":Value::Null,"lastMatchAt":Value::Null,"validPressureSessions":0,"pendingSettlementCount":0,"note":"竞技账查询失败；未改变任何既有结算。"})}};
-    let total=objectives.len() as i64;LearningCenterSnapshot{generated_at:Local::now().to_rfc3339(),today:json!({"date":today,"objectives":objectives,"completedCount":0,"totalCount":total,"completedMinutes":training["todayMinutes"],"plannedMinutes":total*15}),recommendations,metrics,mistake_chains:chains,training,competitive,incentive:json!({"available":false,"xp":Value::Null,"level":Value::Null,"streakDays":Value::Null,"weeklyGoalCompleted":Value::Null,"weeklyGoalTotal":Value::Null,"recentAchievements":[],"note":"尚无独立、可审计的激励 XP 账；不可把 0 当作真实结算。"}),friend_events:json!([]),capabilities:json!({"canBatchGradeDrafts":true,"canOpenPressureReport":true,"canOpenExistingMasteryMap":true,"canOpenExistingReviewView":true,"canReadFriendEvents":false,"structuredVariantEvidence":false,"structuredDelayedReviewEvidence":false,"canReadIncentiveLedger":false,"rankedOnlyCompetitiveLedger":false}),recent_evidence:recent,integrity,section_errors:errors}
+fn build_learning_center_snapshot(conn: &Connection, supp: Option<&Connection>) -> LearningCenterSnapshot {
+    let today = Local::now().format("%Y-%m-%d").to_string();
+    let mut errors = vec![];
+    let (metrics, recent, integrity) = match learning_center_metrics_and_evidence(conn) {
+        Ok(v) => v,
+        Err(e) => {
+            errors.push(json!({"section":"metrics","message":e}));
+            (learning_center_empty_metrics(), json!([]), json!({"stableGateStatus":"blocked","stableGateReasons":LEARNING_CENTER_STABLE_GATE_REASONS,"acceptedEvidenceCount":0,"lowConfidenceEvidenceCount":0,"uncertainEvidenceCount":0,"structuredVariantEvidence":false,"structuredDelayedReviewEvidence":false}))
+        }
+    };
+    let chains = match learning_center_mistake_chains(conn) {
+        Ok(v) => v,
+        Err(e) => {
+            errors.push(json!({"section":"mistakeChains","message":e}));
+            json!([])
+        }
+    };
+    let (recommendations, mut objectives) = match learning_center_shadow(conn) {
+        Ok(v) => v,
+        Err(e) => {
+            errors.push(json!({"section":"recommendations","message":e}));
+            (json!({"weights":{"repair":40,"consolidate":25,"transfer":20,"challenge":15},"items":[],"emptyReason":"影子推荐查询失败，未写入任何计划。"}), vec![])
+        }
+    };
+    let training = match learning_center_training(conn, &today) {
+        Ok(v) => v,
+        Err(e) => {
+            errors.push(json!({"section":"training","message":e}));
+            json!({"todayProblems":0,"todayMinutes":0,"weeklyProblems":0,"weeklyMinutes":0,"dueReviews":0,"activeMistakeChains":0,"stableClosedChains":0,"variantPasses":0,"delayedReviewPasses":0,"incentiveAvailable":false,"xpThisWeek":Value::Null,"achievements":Value::Null})
+        }
+    };
+    let competitive = match learning_center_competitive(conn, supp) {
+        Ok(v) => v,
+        Err(e) => {
+            errors.push(json!({"section":"competitive","message":e}));
+            json!({"rating":Value::Null,"elo":Value::Null,"rank":Value::Null,"seasonName":Value::Null,"settlementCount":0,"lastDelta":Value::Null,"lastMatchAt":Value::Null,"validPressureSessions":0,"pendingSettlementCount":0,"note":"竞技账查询失败；未改变任何既有结算。"})
+        }
+    };
+
+    let mut completed_objectives_count = 0_i64;
+    let mut completed_objectives_minutes = 0_i64;
+    for obj in &mut objectives {
+        let mut obj_done = false;
+        if let Some(qids) = obj.get("questionIds").and_then(|v| v.as_array()) {
+            for q in qids {
+                if let Some(qid) = q.as_i64() {
+                    let has_correct_today: bool = conn.query_row(
+                        "SELECT EXISTS(SELECT 1 FROM attempts WHERE question_id=?1 AND substr(attempted_at,1,10)=?2 AND lower(COALESCE(outcome,result))='correct')",
+                        params![qid, today],
+                        |r| r.get(0),
+                    ).unwrap_or(false);
+                    if has_correct_today {
+                        obj_done = true;
+                        break;
+                    }
+                }
+            }
+        }
+        if obj_done {
+            completed_objectives_count += 1;
+            completed_objectives_minutes += obj.get("estimatedMinutes").and_then(|v| v.as_i64()).unwrap_or(15);
+            obj["completedItemCount"] = json!(1);
+            obj["status"] = json!("stable_completed");
+        }
+    }
+
+    let total = objectives.len() as i64;
+    let planned_minutes = (total * 15).max(30);
+
+    LearningCenterSnapshot {
+        generated_at: Local::now().to_rfc3339(),
+        today: json!({
+            "date": today,
+            "objectives": objectives,
+            "completedCount": completed_objectives_count,
+            "totalCount": total,
+            "completedMinutes": completed_objectives_minutes,
+            "plannedMinutes": planned_minutes
+        }),
+        recommendations,
+        metrics,
+        mistake_chains: chains,
+        training,
+        competitive,
+        incentive: json!({"available":false,"xp":Value::Null,"level":Value::Null,"streakDays":Value::Null,"weeklyGoalCompleted":Value::Null,"weeklyGoalTotal":Value::Null,"recentAchievements":[],"note":"尚无独立、可审计的激励 XP账；不可把 0 当作真实结算。"}),
+        friend_events: json!([]),
+        capabilities: json!({"canBatchGradeDrafts":true,"canOpenPressureReport":true,"canOpenExistingMasteryMap":true,"canOpenExistingReviewView":true,"canReadFriendEvents":false,"structuredVariantEvidence":false,"structuredDelayedReviewEvidence":false,"canReadIncentiveLedger":false,"rankedOnlyCompetitiveLedger":false}),
+        recent_evidence: recent,
+        integrity,
+        section_errors: errors,
+    }
 }
 
 #[tauri::command]
@@ -10768,6 +11033,43 @@ mod tests {
         assert_eq!(first.recommendations, second.recommendations);
         assert!(first.recommendations["items"].as_array().unwrap().iter().all(|item| item["questionId"].is_null()));
         assert_eq!(before, learning_center_table_counts(&conn));
+    }
+
+    #[test]
+    fn learning_center_transfer_is_blocked_and_completed_count_is_isolated() {
+        let conn = Connection::open_in_memory().unwrap();
+        init_schema(&conn).unwrap();
+        insert_test_question(&conn, 10, "测试分类 / 子分类");
+        insert_test_question(&conn, 11, "测试分类 / 子分类");
+        insert_test_question(&conn, 12, "测试分类 / 子分类");
+        conn.execute("UPDATE questions SET difficulty=1 WHERE id=10", []).unwrap();
+        conn.execute("UPDATE questions SET difficulty=3 WHERE id=11", []).unwrap();
+        conn.execute("UPDATE questions SET difficulty=1 WHERE id=12", []).unwrap();
+        conn.execute("INSERT INTO learning_diagnoses(task_id,question_id,category_key,normalized_error_class,next_action,confidence,created_at,updated_at) VALUES('diag1',10,'测试分类 / 子分类','concept','review_concept',0.95,'2026-08-25T10:00:00+08:00','2026-08-25T10:00:00+08:00')", []).unwrap();
+
+        let snap1 = build_learning_center_snapshot(&conn, None);
+        let items = snap1.recommendations["items"].as_array().unwrap();
+        let transfer_item = items.iter().find(|it| it["track"] == "transfer").unwrap();
+        assert_eq!(transfer_item["state"], "blocked");
+        assert!(transfer_item["questionId"].is_null());
+
+        let repair_item = items.iter().find(|it| it["track"] == "repair").unwrap();
+        assert_eq!(repair_item["state"], "available");
+        let repair_qid = repair_item["questionId"].as_i64().unwrap();
+
+        // 插入 5 道无关题目的今日作答
+        for q in 20..25 {
+            insert_test_question(&conn, q, "无关分类");
+            test_attempt(&conn, q, "correct");
+        }
+        let snap2 = build_learning_center_snapshot(&conn, None);
+        assert_eq!(snap2.training["todayProblems"], 5);
+        assert_eq!(snap2.today["completedCount"], 0); // 目标题未做，完成数应为 0，而非 5
+
+        // 做对目标题
+        test_attempt(&conn, repair_qid, "correct");
+        let snap3 = build_learning_center_snapshot(&conn, None);
+        assert_eq!(snap3.today["completedCount"], 1); // 精准完成 1 项目标
     }
     #[test]
     fn nonpressure_batch_attempt_ids_bind_exact_rows_and_allow_unanswered_questions() {

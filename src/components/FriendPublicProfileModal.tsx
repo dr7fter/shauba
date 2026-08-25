@@ -1,4 +1,4 @@
-import { useState, useMemo } from 'react'
+import { useState, useMemo, useEffect } from 'react'
 import { AnimatePresence, motion } from 'framer-motion'
 import {
   Activity,
@@ -150,6 +150,14 @@ export function FriendPublicProfileModal({
       presenceInfo: pInfo,
     }
   }, [friend, presence, activities])
+
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') onClose()
+    }
+    window.addEventListener('keydown', handleKeyDown)
+    return () => window.removeEventListener('keydown', handleKeyDown)
+  }, [onClose])
 
   if (!friend) return null
 
@@ -472,32 +480,36 @@ export function FriendPublicProfileModal({
             {/* Modal Footer */}
             <div className="modal-footer friend-profile-footer">
               <div className="footer-left">
-                <button
-                  className="danger-button compact"
-                  onClick={() => {
-                    if (window.confirm(`确定删除好友「${friend.nickname}」吗？删除后将自动屏蔽其数据同步。`)) {
-                      onRemoveFriend(friend.id)
-                      onClose()
-                    }
-                  }}
-                  title="删除好友并屏蔽同步"
-                >
-                  <Trash2 size={14} />
-                  <span>删除好友</span>
-                </button>
+                {!friend.isSelf && (
+                  <button
+                    className="danger-button compact"
+                    onClick={() => {
+                      if (window.confirm(`确定删除好友「${friend.nickname}」吗？删除后将自动屏蔽其数据同步。`)) {
+                        onRemoveFriend(friend.id)
+                        onClose()
+                      }
+                    }}
+                    title="删除好友并屏蔽同步"
+                  >
+                    <Trash2 size={14} />
+                    <span>删除好友</span>
+                  </button>
+                )}
               </div>
 
               <div className="footer-right">
-                <button
-                  className="secondary-button compact"
-                  onClick={() => {
-                    onOpenVsRadar(friend)
-                    onClose()
-                  }}
-                >
-                  <Swords size={14} />
-                  <span>1v1 战力对决</span>
-                </button>
+                {!friend.isSelf && (
+                  <button
+                    className="secondary-button compact"
+                    onClick={() => {
+                      onOpenVsRadar(friend)
+                      onClose()
+                    }}
+                  >
+                    <Swords size={14} />
+                    <span>1v1 战力对决</span>
+                  </button>
+                )}
                 <button className="primary-button compact" onClick={onClose}>
                   完成
                 </button>

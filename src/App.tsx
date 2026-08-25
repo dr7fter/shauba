@@ -54,7 +54,7 @@ import { PressureLearningReportView } from './components/GradingReportModal'
 import { KeyboardHelpModal } from './components/KeyboardHelpModal'
 import { formatElapsed } from './utils'
 import type { BlitzExamResult } from './data/motivation'
-import { recordMyPublicMatch, sanitizeGradingReportToPublic } from './data/friendPublicData'
+import { recordMyPublicMatch, recordUserInteraction, sanitizeGradingReportToPublic } from './data/friendPublicData'
 import { addFriendActivity, getSavedMyCustomProfile, triggerBackgroundSync } from './data/friendsService'
 import { isFeatureEnabled } from './data/featureFlags'
 import type {
@@ -507,6 +507,21 @@ export default function App() {
   useEffect(() => {
     if (view !== 'today') setPracticeStartIndex(0)
   }, [view])
+
+  // 记录用户最近交互时间，用于精准计算 presence 活跃状态
+  useEffect(() => {
+    const handleUserAction = () => {
+      recordUserInteraction()
+    }
+    window.addEventListener('pointerdown', handleUserAction, { passive: true })
+    window.addEventListener('keydown', handleUserAction, { passive: true })
+    window.addEventListener('wheel', handleUserAction, { passive: true })
+    return () => {
+      window.removeEventListener('pointerdown', handleUserAction)
+      window.removeEventListener('keydown', handleUserAction)
+      window.removeEventListener('wheel', handleUserAction)
+    }
+  }, [])
 
   // 全局坚果云后台数据静默同步与实时快照发布
   useEffect(() => {
@@ -994,10 +1009,56 @@ export default function App() {
                 onNavigate={(target) => {
                   switch (target.type) {
                     case 'today':
-                      setView('today')
+                      if (target.questionId) {
+                        getQuestion(target.questionId)
+                          .then((q) => {
+                            if (q) {
+                              setPracticeQueue([
+                                {
+                                  question: q,
+                                  score: 100,
+                                  reason: '来自学习中心靶向学习目标',
+                                  reasonCode: 'target',
+                                },
+                              ])
+                              setPracticeStartIndex(0)
+                              setAttemptMode('paper')
+                              setView('today')
+                              setNotice(`已开启学习中心目标题 #${q.id}`)
+                            } else {
+                              setView('today')
+                            }
+                          })
+                          .catch(() => setView('today'))
+                      } else {
+                        setView('today')
+                      }
                       break
                     case 'review':
-                      setView('review')
+                      if (target.questionId) {
+                        getQuestion(target.questionId)
+                          .then((q) => {
+                            if (q) {
+                              setPracticeQueue([
+                                {
+                                  question: q,
+                                  score: 100,
+                                  reason: '来自学习中心错题复盘',
+                                  reasonCode: 'due',
+                                },
+                              ])
+                              setPracticeStartIndex(0)
+                              setAttemptMode('review')
+                              setView('today')
+                              setNotice(`已开启复盘错题 #${q.id}`)
+                            } else {
+                              setView('review')
+                            }
+                          })
+                          .catch(() => setView('review'))
+                      } else {
+                        setView('review')
+                      }
                       break
                     case 'mastery':
                       setView('mastery')

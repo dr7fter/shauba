@@ -718,7 +718,7 @@ export type LearningRecommendation = {
   track: LearningCenterTrack
   score: number
   estimatedMinutes: number
-  state: 'available' | 'completed' | 'deferred' | 'invalid' | 'blocked'
+  state: 'available' | 'completed' | 'deferred' | 'invalid' | 'blocked' | 'ready'
   reason: RecommendationReason
   variantOfQuestionId: number | null
   isDifferentQuestion: boolean
@@ -974,8 +974,8 @@ export type FriendProfile = {
   todayProblems: number
   totalMatches: number
   winRate: number
-  status: 'online' | 'in_match' | 'offline'
-  currentActivity?: string
+  status: FriendPresenceState
+  currentActivity?: string | null
   lastActiveAt: string
   dimensions: FriendDimensions
   isSelf?: boolean

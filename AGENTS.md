@@ -1,7 +1,7 @@
 # 刷吧 · AI Agent 通用工作契约
 
 > 任何 AI Agent（Codex / Claude Code / Cursor / ZCode 等）在本仓库工作时，以本文件为唯一权威入口。
-> 版本：v1.4.0 · 更新：2026-08-23
+> 版本：v1.5.2 · 更新：2026-08-25
 
 ## 一、项目是什么
 
@@ -24,7 +24,8 @@ npm run app          # 桌面端开发（热重载）
 npm run dev          # 仅浏览器预览（用 mock 数据）
 npm run build        # 前端构建门禁（tsc + vite）
 npm run app:build    # 桌面打包（注意：不带签名环境变量，发布必须用下面的 release.mjs）
-cd src-tauri && cargo test --locked   # Rust 测试门禁（当前 45 个）
+npm test             # 完整测试门禁（26个前端测试 + 88个 Rust 门禁测试）
+cd src-tauri && cargo test --locked   # Rust 测试门禁（当前 88 个）
 ```
 
 **提交前门禁：`cargo test --locked` 全绿 + `npm run build` 成功。**
@@ -32,12 +33,13 @@ cd src-tauri && cargo test --locked   # Rust 测试门禁（当前 45 个）
 ## 三、代码架构速览
 
 ```
-src-tauri/src/lib.rs        # 后端单文件（~7000行）：所有 Tauri command、ELO 结算、收件箱、备份恢复
+src-tauri/src/lib.rs        # 后端核心（~1.1万行）：Tauri command、ELO 结算、学习中心双引擎、WebDAV 同步
 src-tauri/src/services/rating.rs  # 评分内核：HLTV 合成、特征曲线、段位表（纯函数+测试）
-src/views/                  # TodayView(训练) InsightsView(数据) ReviewView(复盘地图) LibraryView(题库) SettingsView(设置)
-src/components/             # GradingReportModal(模考报告) UpdateModal(应用内更新) MathText(KaTeX) 等
+src/views/                  # TodayView(训练) InsightsView(数据) ReviewView(复盘) LibraryView(题库) SettingsView(设置) LearningCenterView(学习中心)
+src/components/             # GradingReportModal(模考报告) FriendsLadderView(好友天梯) FriendVsRadarModal(1v1对决) UpdateModal(应用内更新) MathText(KaTeX) 等
 src/api.ts / types.ts       # 前端 API 封装与类型（与 lib.rs serde camelCase 对应）
-src/data/friendsService.ts  # 好友战绩卡（坚果云同步，v1.4.0+）
+src/data/friendsService.ts  # 好友战绩卡与 WebDAV 同步服务（v1.4.0+ / v1.5.0+ 增强）
+src/data/friendPublicData.ts # 好友公开主页、Presence 心跳计算与脱敏战报
 scripts/release.mjs         # 发版脚本（构建+签名+latest.json，见第六节）
 src-tauri/capabilities/default.json  # Tauri 权限（加插件必须在此注册）
 ```
@@ -50,11 +52,22 @@ src-tauri/capabilities/default.json  # Tauri 权限（加插件必须在此注�
 
 **评分回退链**（前后端一致）：`六维 HLTV 合成 > Codex rating > 特征曲线`。
 
-**HLTV 六维合成**（`rating.rs`）：
+**HLTV 3.0 合成**（`rating.rs`，HLTV3_* 常量区 + `hltv_rating`）：
+
+输入为六维证据 `DimensionEvidence`（rigor/computation/modeling/method_use/speed/strategy_insight，0–100）+ `technique_level`（1–5 整数技巧等级），任一维非空即走此链：
+
 ```
-P = 0.42×解决 + 0.18×严谨 + 0.18×影响力 − 0.22×错误代价
-rating = clamp(0.30 + 0.016×P, 0, 2) × 难度系数(0.94–1.10)
+Cast     = 结果产出：correct=100 / partial=38+0.12×computation / uncertain=30 / wrong=10
+Impact   = 0.60×strategy_insight + 0.40×method_use；technique_level≥4 加 6；难度系数≥1.06 且非 wrong 触发 Clutch 残局加成 +6
+KAST     = 0.50×rigor + 0.30×computation + 0.20×modeling（防白给稳定性）
+Pacing   = 优先取 speed 维；否则 (基准耗时/实际耗时)×100，clamp [45, 115]
+EcoDrag  = 做错且超时>1.2×基准：((耗时/基准)−1)×24，clamp 后封顶 36；做错未严重超时固定 8；做对为 0
+
+P = 0.38×Cast + 0.22×Impact + 0.20×KAST + 0.20×Pacing − EcoDrag
+rating = clamp(0.26 + 0.0125×P) × 难度系数(0.94–1.10)
 ```
+
+缺失维度按 outcome 给保守默认值（不是猜 75）。**Donk 爆发条款**：correct 且 base>1.40 且 technique_level≥4 且 Pacing≥125 时，允许突破 2.00 上限达 2.05–2.45。
 
 **ELO 天梯**（`lib.rs` 常量区 + `settle_elo`）：
 
@@ -62,15 +75,16 @@ rating = clamp(0.30 + 0.016×P, 0, 2) × 难度系数(0.94–1.10)
 |---|---|
 | 起点 ELO_START | 1400（C 段） |
 | K 值 | 定级期 30（前 10 次结算）→ 常态 10（每题 ±1-3 分） |
-| 期望公式 | `0.70 − 0.10×(mastery−1) − 2.5×(难度系数−1)`，clamp [0.30, 0.78]，review 模式 +0.06 |
-| 连胜动量 | 连续≥3 同向 → K×1.15（`ELO_MOMENTUM_*`） |
+| 期望公式 | `0.50 + 0.04×(mastery−2) − 0.25×(难度系数−1)`，clamp [0.20, 0.80]，review 模式 +0.06 |
+| 连胜动量 | 近 5 次结算连续≥3 同向 → K×1.15（`ELO_MOMENTUM_*`） |
 | 晋级保护 | 升段后 3 次结算免负分 |
 | 段位 | D<1000 … C+1401 … S≥2401 九段（完美平台刻度） |
-| 赛季软重置 | 向 1400 收敛 25% |
+| 赛季软重置 | 向 1400 收敛，保留与起点差距的 75%（`SEASON_RESET_PULL`） |
+| 分数换算 | score = clamp(performance/2, 0, 1.25)，delta = round(K×(score−expected)) |
 
-**已知结构问题（改造方案已讨论未实施）**：期望基线 0.70 与 rating 锚点 1.00 错位（中规中矩表现会掉分）、mastery 方向反了（熟题门槛更低）、难度被双计。改造时先写回放验证（`elo_events` 已存每次 performance/expected 可重放）。
+**历史修正记录**：旧版期望公式（基线 0.70、mastery 反向、难度步长 2.5）已重构为上表现行版本——基线降至 0.50 对齐 rating 锚点 1.00，mastery 方向修正为熟题期望更高，难度惩罚降至 0.25 避免双重计入。`elo_events` 存有每次 performance/expected，如需再调参先写回放验证。
 
-**提示词锚点**在 `lib.rs` 搜 `批改失效`（约 6183/6278 行两处）：rating 锚 0.80/1.00/1.15/1.30/1.45/1.55/2.00，六维锚 90+/75/60/45，批内无区分度视为批改失效。
+**提示词锚点**在 `lib.rs` 搜 `HLTV Rating 3.0 定位`（约 7265/7368 行两处：单题任务与整组任务）：rating 锚 0.50/0.80/1.00/1.15–1.25/1.30–1.45/1.50–1.65/2.00–2.45；硬约束：incorrect 时 rating ≤0.65（大量正确步骤的笔误最高 0.80），超时 1.5 倍且做错触发经济拖累；整组无区分度视为批改失效。
 
 ## 五、批改与诊断核心原则（单题与整组通用）
 

@@ -8523,11 +8523,15 @@ pub struct FriendSyncConfig {
     pub folder: String,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct FriendSyncRemoteSnapshot {
     pub file_name: String,
     pub payload: String,
+    #[serde(default)]
+    pub server_etag: Option<String>,
+    #[serde(default)]
+    pub unchanged: bool,
 }
 
 fn sanitize_friend_sync_code(value: &str) -> Result<String, String> {
@@ -8723,6 +8727,112 @@ fn friend_sync_href_values(xml: &str) -> Result<Vec<String>, String> {
     }
 
     Ok(values)
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+struct FriendSyncPropfindEntry {
+    href: String,
+    etag: Option<String>,
+    last_modified: Option<String>,
+    content_length: Option<u64>,
+}
+
+impl FriendSyncPropfindEntry {
+    fn signature(&self) -> String {
+        if let Some(ref etag) = self.etag {
+            let trimmed = etag.trim().trim_matches('"');
+            if !trimmed.is_empty() {
+                return trimmed.to_string();
+            }
+        }
+        format!(
+            "{}:{}",
+            self.last_modified.as_deref().unwrap_or(""),
+            self.content_length.unwrap_or(0)
+        )
+    }
+}
+
+fn friend_sync_propfind_entries(xml: &str) -> Result<Vec<FriendSyncPropfindEntry>, String> {
+    use quick_xml::{escape::unescape, events::Event, Reader};
+
+    let mut reader = Reader::from_str(xml);
+    reader.config_mut().trim_text(true);
+    let mut entries = Vec::new();
+    let mut current_entry = FriendSyncPropfindEntry::default();
+    let mut in_response = false;
+    let mut current_tag = Vec::<u8>::new();
+    let mut current_text = String::new();
+
+    loop {
+        match reader.read_event() {
+            Ok(Event::Start(ref event)) => {
+                let name = event.local_name();
+                let lower = name.as_ref();
+                if lower.eq_ignore_ascii_case(b"response") {
+                    in_response = true;
+                    current_entry = FriendSyncPropfindEntry::default();
+                } else if in_response {
+                    current_tag = lower.to_vec();
+                    current_text.clear();
+                }
+            }
+            Ok(Event::Text(ref event)) if in_response && !current_tag.is_empty() => {
+                let text = event
+                    .decode()
+                    .map_err(|e| format!("解析 WebDAV XML 文本失败：{e}"))?;
+                current_text.push_str(&text);
+            }
+            Ok(Event::CData(ref event)) if in_response && !current_tag.is_empty() => {
+                current_text.push_str(&String::from_utf8_lossy(event.as_ref()));
+            }
+            Ok(Event::GeneralRef(ref event)) if in_response && !current_tag.is_empty() => {
+                let reference = event
+                    .decode()
+                    .map_err(|e| format!("解析 WebDAV XML 引用失败：{e}"))?;
+                let escaped = format!("&{reference};");
+                let text = unescape(&escaped).map_err(|e| format!("解析 WebDAV XML 失败：{e}"))?;
+                current_text.push_str(&text);
+            }
+            Ok(Event::End(ref event)) => {
+                let name = event.local_name();
+                let lower = name.as_ref();
+                if lower.eq_ignore_ascii_case(b"response") {
+                    if !current_entry.href.is_empty() {
+                        entries.push(std::mem::take(&mut current_entry));
+                    }
+                    in_response = false;
+                    current_tag.clear();
+                    current_text.clear();
+                } else if in_response && lower.eq_ignore_ascii_case(&current_tag) {
+                    let val = current_text.trim();
+                    if lower.eq_ignore_ascii_case(b"href") {
+                        current_entry.href = val.to_string();
+                    } else if lower.eq_ignore_ascii_case(b"getetag") {
+                        let etag_clean = val.trim_matches('"').to_string();
+                        if !etag_clean.is_empty() {
+                            current_entry.etag = Some(etag_clean);
+                        }
+                    } else if lower.eq_ignore_ascii_case(b"getlastmodified") {
+                        if !val.is_empty() {
+                            current_entry.last_modified = Some(val.to_string());
+                        }
+                    } else if lower.eq_ignore_ascii_case(b"getcontentlength") {
+                        if let Ok(len) = val.parse::<u64>() {
+                            current_entry.content_length = Some(len);
+                        }
+                    }
+                    current_tag.clear();
+                    current_text.clear();
+                }
+            }
+            Ok(Event::Eof) => break,
+            Ok(_) => {}
+            Err(error) => return Err(format!("解析 WebDAV XML 失败：{error}")),
+        }
+    }
+
+    Ok(entries)
 }
 
 fn friend_sync_decode_path_segment(value: &str) -> Option<String> {
@@ -9148,22 +9258,25 @@ fn friend_sync_file_from_href(folder_url: &Url, href: &str) -> Option<(String, U
 fn pull_friend_snapshots(
     config: FriendSyncConfig,
     friend_codes: Vec<String>,
+    known_hashes: Option<std::collections::HashMap<String, String>>,
 ) -> Result<Vec<FriendSyncRemoteSnapshot>, String> {
     let client = friend_sync_client()?;
     let folder_url = friend_sync_resolve_folder_url(&client, &config)?;
-    let mut files = std::collections::BTreeMap::<String, Url>::new();
+    let mut files = std::collections::BTreeMap::<String, (Url, Option<String>)>::new();
+    let known = known_hashes.unwrap_or_default();
 
     // 自动发现只接受 XML href 指向目标共享目录的直接子文件，避免把 XML 文本中的
     // 任意片段误当成好友文件；文件名统一规范化后去重。
     match friend_sync_propfind_with_depth(&client, folder_url.clone(), &config, "1") {
         Ok(response) if response.status().is_success() => match response.text() {
-            Ok(xml) => match friend_sync_href_values(&xml) {
-                Ok(hrefs) => {
-                    for href in hrefs {
+            Ok(xml) => match friend_sync_propfind_entries(&xml) {
+                Ok(entries) => {
+                    for entry in entries {
                         if let Some((file_name, file_url)) =
-                            friend_sync_file_from_href(&folder_url, &href)
+                            friend_sync_file_from_href(&folder_url, &entry.href)
                         {
-                            files.entry(file_name).or_insert(file_url);
+                            let sig = entry.signature();
+                            files.entry(file_name).or_insert((file_url, Some(sig)));
                         }
                     }
                 }
@@ -9183,7 +9296,7 @@ fn pull_friend_snapshots(
         match friend_sync_file_name(&code) {
             Ok(file_name) => {
                 if let Ok(file_url) = folder_url.join(&file_name) {
-                    files.entry(file_name).or_insert(file_url);
+                    files.entry(file_name).or_insert((file_url, None));
                 }
             }
             Err(error) => log::warn!("跳过不安全好友码：{error}"),
@@ -9191,7 +9304,22 @@ fn pull_friend_snapshots(
     }
 
     let mut snapshots = Vec::new();
-    for (file_name, file_url) in files {
+    for (file_name, (file_url, sig)) in files {
+        if let Some(ref server_sig) = sig {
+            if let Some(local_sig) = known.get(&file_name) {
+                if local_sig == server_sig && !server_sig.is_empty() {
+                    // 远端文件签名未发生变化，命中差异缓存，跳过下载 GET 请求
+                    snapshots.push(FriendSyncRemoteSnapshot {
+                        file_name,
+                        payload: String::new(),
+                        server_etag: Some(server_sig.clone()),
+                        unchanged: true,
+                    });
+                    continue;
+                }
+            }
+        }
+
         let response = match friend_sync_auth(client.get(file_url), &config).send() {
             Ok(response) => response,
             Err(error) => {
@@ -9210,8 +9338,19 @@ fn pull_friend_snapshots(
             );
             continue;
         }
+        let etag_header = response
+            .headers()
+            .get("etag")
+            .and_then(|h| h.to_str().ok())
+            .map(|s| s.trim_matches('"').to_string())
+            .or(sig);
         match friend_sync_payload_from_response(response, "读取好友数据") {
-            Ok(payload) => snapshots.push(FriendSyncRemoteSnapshot { file_name, payload }),
+            Ok(payload) => snapshots.push(FriendSyncRemoteSnapshot {
+                file_name,
+                payload,
+                server_etag: etag_header,
+                unchanged: false,
+            }),
             Err(error) => log::warn!("好友文件 {file_name} 无法使用：{error}"),
         }
     }
@@ -9489,6 +9628,29 @@ mod tests {
         assert!(
             friend_sync_href_values("<multistatus><href>&bogus;</href></multistatus>").is_err()
         );
+    }
+
+    #[test]
+    fn friend_sync_propfind_entries_parses_etag_and_last_modified() {
+        let xml = r#"<?xml version="1.0" encoding="utf-8"?>
+            <D:multistatus xmlns:D="DAV:">
+              <D:response>
+                <D:href>/dav/shuaba-friends/shuaba-friend-SB-AAA.json</D:href>
+                <D:propstat>
+                  <D:prop>
+                    <D:getetag>"etag-12345"</D:getetag>
+                    <D:getlastmodified>Tue, 25 Aug 2026 10:00:00 GMT</D:getlastmodified>
+                    <D:getcontentlength>2048</D:getcontentlength>
+                  </D:prop>
+                  <D:status>HTTP/1.1 200 OK</D:status>
+                </D:propstat>
+              </D:response>
+            </D:multistatus>"#;
+        let entries = friend_sync_propfind_entries(xml).unwrap();
+        assert_eq!(entries.len(), 1);
+        assert_eq!(entries[0].href, "/dav/shuaba-friends/shuaba-friend-SB-AAA.json");
+        assert_eq!(entries[0].etag.as_deref(), Some("etag-12345"));
+        assert_eq!(entries[0].signature(), "etag-12345");
     }
 
     #[test]

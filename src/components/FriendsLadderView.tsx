@@ -278,11 +278,17 @@ export function FriendsLadderView({
       if (!cancelled && document.visibilityState === 'visible') void runSyncRef.current(true)
     }
     syncWhenVisible()
-    const timer = window.setInterval(syncWhenVisible, 60_000)
+
+    const handleBackgroundSync = () => {
+      if (!cancelled && mountedRef.current) {
+        setData(loadFriendsSystemData(null, null, null))
+      }
+    }
+    window.addEventListener('shuaba-friends-synced', handleBackgroundSync)
     document.addEventListener('visibilitychange', syncWhenVisible)
     return () => {
       cancelled = true
-      window.clearInterval(timer)
+      window.removeEventListener('shuaba-friends-synced', handleBackgroundSync)
       document.removeEventListener('visibilitychange', syncWhenVisible)
     }
   }, [activeSyncConfig, syncConfigured])

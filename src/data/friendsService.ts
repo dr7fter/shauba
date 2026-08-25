@@ -529,6 +529,8 @@ export async function publishMyFriendSnapshot(profile: FriendProfile, config: Fr
 }
 
 let backgroundSyncInProgress = false
+let cachedTacticalData: TacticalDashboardData | null = null
+let lastTacticalFetchTime = 0
 
 export async function triggerBackgroundSync(reason?: string): Promise<void> {
   const config = getSavedFriendSyncConfig()
@@ -536,14 +538,25 @@ export async function triggerBackgroundSync(reason?: string): Promise<void> {
   if (backgroundSyncInProgress) return
   backgroundSyncInProgress = true
   try {
-    const [tacticalData, bootData, eloStatus] = await Promise.all([
-      getTacticalDashboardStats().catch(() => null),
+    const now = Date.now()
+    let tacticalData = cachedTacticalData
+    if (!tacticalData || now - lastTacticalFetchTime > 300_000 || reason === 'manual' || reason === 'profile_save') {
+      tacticalData = await getTacticalDashboardStats().catch(() => null)
+      if (tacticalData) {
+        cachedTacticalData = tacticalData
+        lastTacticalFetchTime = now
+      }
+    }
+    const [bootData, eloStatus] = await Promise.all([
       bootstrap().catch(() => null),
       getEloStatus().catch(() => null),
     ])
     const profile = buildMyFriendProfile(tacticalData, bootData, eloStatus)
     await publishMyFriendSnapshot(profile, config)
-    await syncFriendSnapshots(config)
+    const result = await syncFriendSnapshots(config)
+    if (typeof window !== 'undefined' && result.updated > 0) {
+      window.dispatchEvent(new CustomEvent('shuaba-friends-synced', { detail: result }))
+    }
   } catch (err) {
     console.debug(`Background sync (${reason || 'unspecified'}) error:`, err)
   } finally {
@@ -559,9 +572,22 @@ export async function syncFriendSnapshots(config: FriendSyncConfig): Promise<Fri
   const attemptedAt = new Date().toISOString()
   for (const code of requestedCodes) updateSyncState({ friendCode: code, lastAttemptAt: attemptedAt })
 
+  const existingFriends = getSavedFriends()
+  const knownHashes: Record<string, string> = {}
+  for (const friend of existingFriends) {
+    if (friend.friendCode) {
+      const fileName = `shuaba-friend-${friend.friendCode}.json`
+      const sig = (friend as { serverEtag?: string }).serverEtag || friend.lastSnapshotHash
+      if (sig) {
+        knownHashes[fileName] = sig
+        knownHashes[friend.friendCode] = sig
+      }
+    }
+  }
+
   let remote: Awaited<ReturnType<typeof pullFriendSnapshots>>
   try {
-    remote = await pullFriendSnapshots(config, requestedCodes)
+    remote = await pullFriendSnapshots(config, requestedCodes, knownHashes)
   } catch (error) {
     const lastError = syncErrorMessage(error)
     for (const code of requestedCodes) markFriendSyncStatus(code, 'failed', attemptedAt, lastError)
@@ -576,13 +602,27 @@ export async function syncFriendSnapshots(config: FriendSyncConfig): Promise<Fri
   const seen = new Set<string>()
   const remoteCodes = new Set<string>()
 
-  const existingFriends = getSavedFriends()
   const knownProfileIds = new Set(existingFriends.map((f) => f.profileId).filter(Boolean))
   const knownCodesSet = new Set(requestedCodes)
 
   for (const item of remote) {
     const sourceCode = fileCode(item.fileName)
     if (sourceCode && isIdentityBlocked(sourceCode)) {
+      continue
+    }
+
+    if (item.unchanged) {
+      if (sourceCode && knownCodesSet.has(sourceCode)) {
+        remoteCodes.add(sourceCode)
+        seen.add(sourceCode)
+        unchanged += 1
+        updateSyncState({
+          friendCode: sourceCode,
+          status: 'synced',
+          lastAttemptAt: attemptedAt,
+          lastSyncedAt: attemptedAt,
+        })
+      }
       continue
     }
 
@@ -615,7 +655,7 @@ export async function syncFriendSnapshots(config: FriendSyncConfig): Promise<Fri
     }
 
     if (sourceCode) remoteCodes.add(sourceCode)
-    const result = addFriendSnapshot(item.payload, { sourceFileName: item.fileName })
+    const result = addFriendSnapshot(item.payload, { sourceFileName: item.fileName, serverEtag: item.serverEtag })
     if (!result.success) {
       invalid += 1
       failedFiles.push(item.fileName)
@@ -1006,7 +1046,7 @@ function sourceFileMatchesSnapshot(profileCode: string, sourceFileName?: string)
 
 export function addFriendSnapshot(
   raw: string,
-  options?: { sourceFileName?: string },
+  options?: { sourceFileName?: string; serverEtag?: string | null },
 ): { success: boolean; message: string; friend?: FriendProfile; changed?: boolean } {
   const parsed = parseFriendSnapshot(raw)
   if (!parsed.ok) {
@@ -1072,6 +1112,7 @@ export function addFriendSnapshot(
     lastSnapshotExportedAt: exportedAt,
     currentActivity: presence?.currentActivity || profile.currentActivity,
     status: presence?.state ?? profile.status,
+    ...(options?.serverEtag ? { serverEtag: options.serverEtag } : {}),
   }
 
   const rest = existing ? friends.filter((item) => item !== existing && item.friendCode !== profile.friendCode && item.profileId !== profile.profileId) : friends

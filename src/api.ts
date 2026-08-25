@@ -598,7 +598,8 @@ export async function publishFriendSnapshot(
 export async function pullFriendSnapshots(
   config: FriendSyncConfig,
   friendCodes: string[],
+  knownHashes?: Record<string, string>,
 ): Promise<FriendSyncRemoteSnapshot[]> {
   if (!isTauri()) return []
-  return invoke('pull_friend_snapshots', { config, friendCodes })
+  return invoke('pull_friend_snapshots', { config, friendCodes, knownHashes: knownHashes ?? null })
 }

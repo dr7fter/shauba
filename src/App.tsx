@@ -527,7 +527,7 @@ export default function App() {
   useEffect(() => {
     let timer: number | undefined
     const doAutoSync = () => {
-      if (document.visibilityState === 'visible') {
+      if (document.visibilityState === 'visible' && !blitzModalOpen && !isZenMode) {
         void triggerBackgroundSync('auto_interval')
       }
     }
@@ -539,7 +539,7 @@ export default function App() {
       if (timer) window.clearInterval(timer)
       document.removeEventListener('visibilitychange', doAutoSync)
     }
-  }, [])
+  }, [blitzModalOpen, isZenMode])
 
   const refresh = useCallback(async () => {
     setLoading(true)

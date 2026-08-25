@@ -1170,6 +1170,8 @@ export type FriendSyncConfig = {
 export type FriendSyncRemoteSnapshot = {
   fileName: string
   payload: string
+  serverEtag?: string | null
+  unchanged?: boolean
 }
 
 export type FriendSyncResult = {

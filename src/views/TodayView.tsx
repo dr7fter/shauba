@@ -37,6 +37,7 @@ import {
   clearPracticeSession,
   createCodexBatchTask,
   createCodexTask,
+  dismissRecommendationBatch,
   getDailyLog,
   getEloStatus,
   getRecommendations,
@@ -150,8 +151,8 @@ export function TodayView({
   initialQueue: RecommendedQuestion[] | null
   initialIndex: number
   attemptMode: AttemptMode
-  onQueueChange: (q: RecommendedQuestion[]) => void
-  refresh: () => void
+  onQueueChange: (q: RecommendedQuestion[] | null) => void
+  refresh: () => Promise<void> | void
   setView: (v: View) => void
   notify: (s: string) => void
   onStartVariant: (questionId: number) => void
@@ -541,6 +542,28 @@ export function TodayView({
     }, 1000)
     return () => window.clearInterval(id)
   }, [revealed, isQuestionTimerStarted, isQuestionTimerPaused, pressureMode, isPressurePaused, isBlitzMode, currentQuestionId, pressureQuestionStartedAtRef])
+
+  const [dismissingBatch, setDismissingBatch] = useState(false)
+
+  const handleDismissActiveBatch = async () => {
+    if (!activeBatch || dismissingBatch) return
+    setDismissingBatch(true)
+    try {
+      await dismissRecommendationBatch(activeBatch.taskId)
+      onQueueChange(null)
+      await refresh()
+      notify(`已取消并退出 AI 题组「${activeBatch.title}」，已恢复常规训练队列`)
+    } catch (err) {
+      notify(`取消题组失败：${String(err)}`)
+    } finally {
+      setDismissingBatch(false)
+    }
+  }
+
+  const handleSwitchNewBatch = () => {
+    setView('learning')
+    notify('已前往学习中心，可挑选或生成新 AI 题组')
+  }
 
   // Keyboard shortcut for Pressure Mode Pause (P / Space)
   useEffect(() => {
@@ -1401,13 +1424,36 @@ export function TodayView({
         </div>
         {activeBatch ? (
           <div className="ai-plan-banner">
-            <Sparkles size={15} />
-            <span>
-              <b>{activeBatch.title}</b>
-              <small>
-                AI 题组 · 剩余 {activeBatch.remainingCount}/{activeBatch.totalCount} 题
-              </small>
-            </span>
+            <div className="ai-plan-banner-main">
+              <Sparkles size={15} />
+              <span className="ai-plan-banner-content">
+                <b>{activeBatch.title}</b>
+                <small>
+                  AI 题组 · 剩余 {activeBatch.remainingCount}/{activeBatch.totalCount} 题
+                </small>
+              </span>
+            </div>
+            <div className="ai-plan-banner-actions">
+              <button
+                type="button"
+                className="ai-plan-btn"
+                onClick={handleSwitchNewBatch}
+                title="前往学习中心挑选或生成新题组"
+              >
+                <RotateCcw size={11} />
+                <span>换新题组</span>
+              </button>
+              <button
+                type="button"
+                className="ai-plan-btn danger"
+                onClick={handleDismissActiveBatch}
+                disabled={dismissingBatch}
+                title="取消并退出当前 AI 题组，恢复常规复习/刷题队列"
+              >
+                <X size={11} />
+                <span>取消题组</span>
+              </button>
+            </div>
           </div>
         ) : data.currentFocusCategoryIds && data.currentFocusCategoryIds.length > 0 ? (
           <div className="chapter-mode">

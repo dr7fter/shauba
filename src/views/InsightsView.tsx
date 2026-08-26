@@ -1254,7 +1254,7 @@ export function InsightsView({
                         onClick={() => setDetailQuestion(item.question)}
                         title="点击展开完整题目与选项"
                       >
-                        <MathText value={item.question.stem.slice(0, 120)} />
+                        <MathText value={item.question.stem} />
                       </div>
 
                       <div className="today-item-actions">

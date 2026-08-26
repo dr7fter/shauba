@@ -701,6 +701,9 @@ fn init_schema(conn: &Connection) -> rusqlite::Result<()> {
     conn.execute_batch(
         "PRAGMA journal_mode=WAL;
          PRAGMA foreign_keys=ON;
+         PRAGMA synchronous=NORMAL;
+         PRAGMA cache_size=10000;
+         PRAGMA temp_store=MEMORY;
          CREATE TABLE IF NOT EXISTS questions (
            id INTEGER PRIMARY KEY,
            stem TEXT NOT NULL,
@@ -764,7 +767,8 @@ fn init_schema(conn: &Connection) -> rusqlite::Result<()> {
             FOREIGN KEY(question_id) REFERENCES questions(id)
           );
          CREATE INDEX IF NOT EXISTS idx_attempts_question ON attempts(question_id);
-CREATE TABLE IF NOT EXISTS progress (
+         CREATE INDEX IF NOT EXISTS idx_attempts_question_time ON attempts(question_id, attempted_at DESC);
+         CREATE TABLE IF NOT EXISTS progress (
            question_id INTEGER PRIMARY KEY,
            favorite INTEGER NOT NULL DEFAULT 0,
            mastery INTEGER,
@@ -7743,7 +7747,7 @@ fn create_learning_task(input: LearningTaskInput, state: State<AppState>) -> Res
 任务编号：{task_id}
 上下文文件：{context_path}
 回传文件：{output}
-稳定行为规则：请先读取仓库根目录的 AI_LEARNING_POLICY.md；若无法读取，以本任务下面的强制约束为准。
+稳定行为规则：请先读取仓库根目录的 characteristic.md（学员微观战力画像）与 AI_LEARNING_POLICY.md；优先针对画像中标记为 [🔴 待验证] 的薄弱漏洞设计变式题，严禁推送 [🟢 已固化] 的同构低价值题。若无法读取，以本任务下面的强制约束为准。
 
 请先读取上下文文件。若 recentRecommendationResults 中存在 result context 文件，请一并读取，把上一组真实作答结果作为下一轮证据。上下文中的 categoryPath 只是候选范围，不等于考法。你必须分析候选题的题干、条件、方法入口和知识点组合，判断：
 1. 用户已经适应了哪些考法；
@@ -8107,6 +8111,7 @@ fn create_codex_task(question_id: i64, state: State<AppState>) -> Result<CodexTa
    - 严禁搬运繁琐教材长证明！必须提供考场极速解题技巧（Taylor展开、King变换、特征多项式、待定系数、几何投影等 30 秒秒解）；若原解法已最优填 null。
 5. 可执行修复动作 (advice)：给出一条明天即可落地刻意练习的专项战术动作。
 6. 公式排版绝对要求：所有数学符号、变量、公式、计算式必须严格使用 $...$ 或 $$...$$ 包裹，严禁裸文本数学式。
+7. 学员微观画像与报告反馈：批改完成后，请依据草稿表现同步更新根目录 characteristic.md 中的微观断点追踪状态（追加新错误或升级已固化）；并在最终回复给学员的文字报告中，专门呈现【🌟 本轮战力突破 / 成功改正】与【⚠️ 本轮新增微观断点与补丁】。
 
 完成后请将结果写入这个绝对路径：
 {output}
@@ -8211,6 +8216,7 @@ fn build_codex_batch_task_prompt(
    - 严禁搬运繁琐教材长证明！必须提供考场极速解题技巧（Taylor展开、King变换、特征多项式、待定系数、几何投影等 30 秒秒解）；若原解法已最优填 null。
 6. 可执行修复动作 (advice)：每道题给出一条可落地执行的专项修复动作。
 7. 公式排版绝对要求：所有数学符号、变量、公式、计算式必须严格使用 $...$ 或 $$...$$ 包裹，严禁裸文本数学式。
+8. 学员微观画像与报告反馈：批改完成后，请依据草稿表现同步更新根目录 characteristic.md 中的微观断点追踪状态（追加新错误或升级已固化）；并在最终回复给学员的文字报告中，专门呈现【🌟 本轮战力突破 / 成功改正】与【⚠️ 本轮新增微观断点与补丁】。
 
 完成后请将结果写入这个绝对路径：
 {output}

@@ -696,6 +696,179 @@ function CompletedResultDrawer({
   )
 }
 
+function CascadingCategoryPicker({
+  categories,
+  selectedId,
+  onChange,
+}: {
+  categories: CategoryNode[]
+  selectedId: number | null
+  onChange: (id: number | null) => void
+}) {
+  const [selectedRoot, setSelectedRoot] = useState<string>('')
+  const [selectedChapterId, setSelectedChapterId] = useState<number | null>(null)
+  const [selectedSubtopicId, setSelectedSubtopicId] = useState<number | null>(null)
+
+  useEffect(() => {
+    if (!selectedId) {
+      setSelectedRoot('')
+      setSelectedChapterId(null)
+      setSelectedSubtopicId(null)
+      return
+    }
+    const node = categories.find((c) => c.id === selectedId)
+    if (!node) return
+    setSelectedRoot(node.rootName)
+    if (node.depth === 1) {
+      setSelectedChapterId(node.id)
+      setSelectedSubtopicId(null)
+    } else if (node.depth >= 2) {
+      setSelectedChapterId(node.parentId)
+      setSelectedSubtopicId(node.id)
+    }
+  }, [selectedId, categories])
+
+  const rootNames = useMemo(() => {
+    const set = new Set<string>()
+    for (const c of categories) {
+      if (c.rootName) set.add(c.rootName)
+    }
+    const order = ['高等数学', '线性代数', '概率统计', '概率论与数理统计', '历年真题']
+    return Array.from(set).sort((a, b) => {
+      const ia = order.indexOf(a)
+      const ib = order.indexOf(b)
+      return (ia === -1 ? 99 : ia) - (ib === -1 ? 99 : ib)
+    })
+  }, [categories])
+
+  const chapters = useMemo(() => {
+    if (!selectedRoot) return []
+    return categories.filter(
+      (c) => c.rootName === selectedRoot && c.depth === 1 && c.questionCount > 0
+    )
+  }, [categories, selectedRoot])
+
+  const subtopics = useMemo(() => {
+    if (!selectedChapterId) return []
+    return categories.filter(
+      (c) => c.parentId === selectedChapterId && c.questionCount > 0
+    )
+  }, [categories, selectedChapterId])
+
+  const handleRootChange = (root: string) => {
+    setSelectedRoot(root)
+    setSelectedChapterId(null)
+    setSelectedSubtopicId(null)
+    if (!root) {
+      onChange(null)
+    } else {
+      const rootNode = categories.find((c) => c.rootName === root && c.depth === 0)
+      onChange(rootNode ? rootNode.id : null)
+    }
+  }
+
+  const handleChapterChange = (chapterId: number | null) => {
+    setSelectedChapterId(chapterId)
+    setSelectedSubtopicId(null)
+    if (!chapterId) {
+      const rootNode = categories.find((c) => c.rootName === selectedRoot && c.depth === 0)
+      onChange(rootNode ? rootNode.id : null)
+    } else {
+      onChange(chapterId)
+    }
+  }
+
+  const handleSubtopicChange = (subtopicId: number | null) => {
+    setSelectedSubtopicId(subtopicId)
+    if (!subtopicId) {
+      onChange(selectedChapterId)
+    } else {
+      onChange(subtopicId)
+    }
+  }
+
+  const currentSelectionLabel = useMemo(() => {
+    if (!selectedRoot) return '🤖 全自动智能识别（根据自然语言需求意图全库精准匹配）'
+    if (selectedSubtopicId) {
+      const sub = categories.find((c) => c.id === selectedSubtopicId)
+      return sub ? `🎯 细分考点：${sub.path}（${sub.questionCount} 题候选）` : ''
+    }
+    if (selectedChapterId) {
+      const ch = categories.find((c) => c.id === selectedChapterId)
+      return ch ? `📚 章节范围：${ch.path}（${ch.questionCount} 题候选）` : ''
+    }
+    const rootTotal = chapters.reduce((acc, ch) => acc + ch.questionCount, 0)
+    return `🏛️ 学科范围：${selectedRoot}（全科综合考点，约 ${rootTotal} 题候选）`
+  }, [selectedRoot, selectedChapterId, selectedSubtopicId, categories, chapters])
+
+  return (
+    <div className="learning-cascade-picker">
+      <div className="learning-cascade-field">
+        <label className="learning-ai-label">
+          <span>一级科目 / 主学科：</span>
+          <select
+            className="learning-ai-select"
+            value={selectedRoot}
+            onChange={(e) => handleRootChange(e.target.value)}
+          >
+            <option value="">🤖 智能自动识别（自然语言全库意图匹配）</option>
+            {rootNames.map((r) => (
+              <option key={r} value={r}>
+                {r}
+              </option>
+            ))}
+          </select>
+        </label>
+      </div>
+
+      {selectedRoot && chapters.length > 0 && (
+        <div className="learning-cascade-field learning-cascade-animate">
+          <label className="learning-ai-label">
+            <span>二级章节 (可选可不选)：</span>
+            <select
+              className="learning-ai-select"
+              value={selectedChapterId ?? ''}
+              onChange={(e) => handleChapterChange(e.target.value ? Number(e.target.value) : null)}
+            >
+              <option value="">全部章节（覆盖 {selectedRoot} 所有章节考点）</option>
+              {chapters.map((ch) => (
+                <option key={ch.id} value={ch.id}>
+                  {ch.name} ({ch.questionCount} 题)
+                </option>
+              ))}
+            </select>
+          </label>
+        </div>
+      )}
+
+      {selectedChapterId && subtopics.length > 0 && (
+        <div className="learning-cascade-field learning-cascade-animate">
+          <label className="learning-ai-label">
+            <span>三级子考点 / 专题细分 (可选可不选)：</span>
+            <select
+              className="learning-ai-select"
+              value={selectedSubtopicId ?? ''}
+              onChange={(e) => handleSubtopicChange(e.target.value ? Number(e.target.value) : null)}
+            >
+              <option value="">全部考点（综合该章节所有解题考法）</option>
+              {subtopics.map((sub) => (
+                <option key={sub.id} value={sub.id}>
+                  {sub.name} ({sub.questionCount} 题)
+                </option>
+              ))}
+            </select>
+          </label>
+        </div>
+      )}
+
+      <div className="learning-cascade-summary">
+        <Sparkles size={12} />
+        <span>{currentSelectionLabel}</span>
+      </div>
+    </div>
+  )
+}
+
 export function LearningCenterView({
   initialData = null,
   featureFlags,
@@ -776,7 +949,7 @@ export function LearningCenterView({
             .slice(0, 4)
         )
         setFailedInboxItems(failed)
-        setAvailableCategories(cats.filter((c) => c.depth >= 1 && c.questionCount > 0))
+        setAvailableCategories(cats.filter((c) => c.questionCount > 0 || c.depth === 0))
         if (requestSeq !== requestSeqRef.current) return
         snapshotRef.current = next
         setSnapshot(next)
@@ -1278,21 +1451,16 @@ export function LearningCenterView({
               />
             </label>
 
-            <label className="learning-ai-label">
-              <span>目标章节 / 考点分类 (可选)：</span>
-              <select
-                className="learning-ai-select"
-                value={aiCategoryId ?? ''}
-                onChange={(e) => setAiCategoryId(e.target.value ? Number(e.target.value) : null)}
-              >
-                <option value="">🤖 智能自动识别（根据需求意图与考法语义精准匹配）</option>
-                {availableCategories.map((c) => (
-                  <option key={c.id} value={c.id}>
-                    {c.path} ({c.questionCount}题)
-                  </option>
-                ))}
-              </select>
-            </label>
+            <div className="learning-cascade-wrapper">
+              <span className="learning-cascade-title">
+                目标考点与章节范围 (逐级可选)：
+              </span>
+              <CascadingCategoryPicker
+                categories={availableCategories}
+                selectedId={aiCategoryId}
+                onChange={setAiCategoryId}
+              />
+            </div>
 
             <label className="learning-ai-label">
               <span>预计可用时间 (分钟)：</span>

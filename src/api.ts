@@ -322,6 +322,14 @@ export async function dismissRecommendationBatch(taskId: string): Promise<void> 
   if (isTauri()) await invoke('dismiss_recommendation_batch', { taskId })
 }
 
+export async function getLearningTaskCandidates(taskId: string): Promise<Question[]> {
+  return isTauri() ? invoke('get_learning_task_candidates', { taskId }) : []
+}
+
+export async function updateRecommendationBatchItems(taskId: string, questionIds: number[]): Promise<void> {
+  if (isTauri()) await invoke('update_recommendation_batch_items', { taskId, questionIds })
+}
+
 export async function createCodexTask(questionId: number): Promise<CodexTask> {
   if (isTauri()) return invoke('create_codex_task', { questionId })
   return {

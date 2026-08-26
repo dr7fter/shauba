@@ -565,6 +565,31 @@ export function TodayView({
     notify('已前往学习中心，可挑选或生成新 AI 题组')
   }
 
+  const handleRemoveQuestionFromQueue = useCallback(
+    (targetIndex: number) => {
+      if (targetIndex < 0 || targetIndex >= queue.length) return
+      const targetQuestion = queue[targetIndex]?.question
+      const targetId = targetQuestion?.id
+      const nextQueue = queue.filter((_, i) => i !== targetIndex)
+
+      if (nextQueue.length === 0) {
+        onQueueChange(null)
+        notify(`已将题目 #${targetId} 移出队列，当前训练队列已清空`)
+        return
+      }
+
+      if (index >= nextQueue.length) {
+        setIndex(nextQueue.length - 1)
+      } else if (targetIndex < index) {
+        setIndex((prev) => Math.max(0, prev - 1))
+      }
+
+      replaceQueueWithinRound(nextQueue)
+      notify(`已将题目 #${targetId} 移出当前训练队列`)
+    },
+    [queue, index, replaceQueueWithinRound, onQueueChange, notify],
+  )
+
   // Keyboard shortcut for Pressure Mode Pause (P / Space)
   useEffect(() => {
     if (!pressureMode) return
@@ -1425,7 +1450,9 @@ export function TodayView({
         {activeBatch ? (
           <div className="ai-plan-banner">
             <div className="ai-plan-banner-main">
-              <Sparkles size={15} />
+              <span className="ai-plan-sparkle-icon">
+                <Sparkles size={15} />
+              </span>
               <span className="ai-plan-banner-content">
                 <b>{activeBatch.title}</b>
                 <small>
@@ -1436,11 +1463,11 @@ export function TodayView({
             <div className="ai-plan-banner-actions">
               <button
                 type="button"
-                className="ai-plan-btn"
+                className="ai-plan-btn switch"
                 onClick={handleSwitchNewBatch}
                 title="前往学习中心挑选或生成新题组"
               >
-                <RotateCcw size={11} />
+                <RotateCcw size={12} />
                 <span>换新题组</span>
               </button>
               <button
@@ -1450,8 +1477,8 @@ export function TodayView({
                 disabled={dismissingBatch}
                 title="取消并退出当前 AI 题组，恢复常规复习/刷题队列"
               >
-                <X size={11} />
-                <span>取消题组</span>
+                <X size={12} />
+                <span>退出题组</span>
               </button>
             </div>
           </div>
@@ -1513,10 +1540,18 @@ export function TodayView({
         </div>
         <div className="queue-list">
           {queue.map((item, i) => (
-            <button
+            <div
               key={item.question.id}
               className={i === index ? 'queue-item active' : 'queue-item'}
               onClick={() => setIndex(i)}
+              role="button"
+              tabIndex={0}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter' || e.key === ' ') {
+                  e.preventDefault()
+                  setIndex(i)
+                }
+              }}
               aria-current={i === index ? 'step' : undefined}
             >
               <span className="queue-number">{String(i + 1).padStart(2, '0')}</span>
@@ -1526,8 +1561,19 @@ export function TodayView({
                   #{item.question.id} · {reasonLabels[item.reasonCode] ?? '智能推荐'}
                 </small>
               </span>
+              <button
+                type="button"
+                className="queue-item-remove-btn"
+                title={`将题目 #${item.question.id} 移出今日队列`}
+                onClick={(e) => {
+                  e.stopPropagation()
+                  handleRemoveQuestionFromQueue(i)
+                }}
+              >
+                <X size={13} />
+              </button>
               <ChevronRight size={15} />
-            </button>
+            </div>
           ))}
         </div>
         <button className="quiet-command" onClick={() => setView('library')}>
@@ -1578,6 +1624,15 @@ export function TodayView({
             }}
           >
             <Heart size={18} fill={current.favorite ? 'currentColor' : 'none'} />
+          </button>
+          <button
+            type="button"
+            className="meta-action-btn remove-queue-btn"
+            title="将当前题目移出训练队列"
+            onClick={() => handleRemoveQuestionFromQueue(index)}
+          >
+            <X size={13} />
+            <span>移出队列</span>
           </button>
         </div>
         <AnimatePresence>

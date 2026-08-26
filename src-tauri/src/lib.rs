@@ -3053,6 +3053,22 @@ fn write_completed_recommendation_contexts(conn: &Connection, data_dir: &Path) -
             "SELECT title,summary,recommendation_reason,status,completed_at FROM recommendation_batches WHERE task_id=?1",
             [&task_id], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?, row.get(4)?)),
         ).map_err(|e| e.to_string())?;
+
+        let orig_payload: Option<CodexPayload> = conn.query_row(
+            "SELECT payload_json FROM codex_inbox WHERE task_id=?1 ORDER BY id DESC LIMIT 1",
+            [&task_id],
+            |r| {
+                let s: String = r.get(0)?;
+                Ok(serde_json::from_str(&s).ok())
+            },
+        ).optional().map_err(|e| e.to_string())?.flatten();
+
+        let question_roles = orig_payload.as_ref().map(|p| p.question_roles.clone()).unwrap_or_default();
+        let coverage = orig_payload.as_ref().map(|p| p.coverage.clone()).unwrap_or_default();
+        let novelty_plan = orig_payload.as_ref().map(|p| p.novelty_plan.clone()).unwrap_or_default();
+        let success_criteria = orig_payload.as_ref().map(|p| p.success_criteria.clone()).unwrap_or_default();
+        let goal = orig_payload.as_ref().and_then(|p| p.goal.clone()).unwrap_or_else(|| batch.0.clone());
+
         let mut stmt = conn.prepare(
             "SELECT rbi.position,rbi.question_id,q.category_path,q.stem,
                     rbi.attempt_id,rbi.result,rbi.outcome,rbi.self_rating,rbi.duration_seconds,
@@ -3061,29 +3077,113 @@ fn write_completed_recommendation_contexts(conn: &Connection, data_dir: &Path) -
              JOIN questions q ON q.id=rbi.question_id
              WHERE rbi.task_id=?1 ORDER BY rbi.position",
         ).map_err(|e| e.to_string())?;
-        let items = stmt.query_map([task_id.as_str()], |row| Ok(json!({
-            "position": row.get::<_, i64>(0)?,
-            "questionId": row.get::<_, i64>(1)?,
-            "categoryPath": row.get::<_, String>(2)?,
-            "stem": row.get::<_, String>(3)?,
-            "attemptId": row.get::<_, Option<i64>>(4)?,
-            "result": row.get::<_, Option<String>>(5)?,
-            "outcome": row.get::<_, Option<String>>(6)?,
-            "selfRating": row.get::<_, Option<i64>>(7)?,
-            "durationSeconds": row.get::<_, Option<i64>>(8)?,
-            "attemptMode": row.get::<_, Option<String>>(9)?,
-            "evidenceSource": row.get::<_, Option<String>>(10)?,
-            "completedAt": row.get::<_, Option<String>>(11)?,
-        }))).map_err(|e| e.to_string())?.collect::<Result<Vec<_>, _>>().map_err(|e| e.to_string())?;
+
+        let mut items = Vec::new();
+        let mut total_count = 0usize;
+        let mut verified_count = 0usize;
+        let mut high_risk_count = 0usize;
+
+        let rows = stmt.query_map([task_id.as_str()], |row| {
+            let pos: i64 = row.get(0)?;
+            let qid: i64 = row.get(1)?;
+            let cat: String = row.get(2)?;
+            let stem: String = row.get(3)?;
+            let attempt_id: Option<i64> = row.get(4)?;
+            let result: Option<String> = row.get(5)?;
+            let outcome: Option<String> = row.get(6)?;
+            let self_rating: Option<i64> = row.get(7)?;
+            let duration_seconds: Option<i64> = row.get(8)?;
+            let attempt_mode: Option<String> = row.get(9)?;
+            let evidence_source: Option<String> = row.get(10)?;
+            let completed_at: Option<String> = row.get(11)?;
+            Ok((pos, qid, cat, stem, attempt_id, result, outcome, self_rating, duration_seconds, attempt_mode, evidence_source, completed_at))
+        }).map_err(|e| e.to_string())?;
+
+        for row in rows {
+            let (pos, qid, cat, stem, attempt_id, result, outcome, self_rating, duration_seconds, attempt_mode, evidence_source, completed_at) = row.map_err(|e| e.to_string())?;
+            total_count += 1;
+            let role = question_roles.get(&qid.to_string()).cloned().unwrap_or_else(|| "consolidate".to_string());
+
+            let (grading_verdict, earliest_error, error_tags) = if let Some(att_id) = attempt_id {
+                let diag: Option<(Option<String>, Option<String>, String)> = conn.query_row(
+                    "SELECT verdict, earliest_error, error_tags_json FROM learning_diagnoses WHERE attempt_id=?1 ORDER BY id DESC LIMIT 1",
+                    [att_id],
+                    |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
+                ).optional().map_err(|e| e.to_string())?;
+
+                if let Some((v, e, tags_json)) = diag {
+                    let tags: Vec<String> = serde_json::from_str(&tags_json).unwrap_or_default();
+                    (v, e, tags)
+                } else {
+                    (None, None, vec![])
+                }
+            } else {
+                (None, None, vec![])
+            };
+
+            let eff_outcome = outcome.as_deref().or(result.as_deref());
+            let rating_val = self_rating.unwrap_or(2);
+            let coverage_status = if eff_outcome == Some("wrong") || grading_verdict.as_deref() == Some("incorrect") {
+                high_risk_count += 1;
+                "high_risk"
+            } else if eff_outcome == Some("uncertain") || grading_verdict.as_deref() == Some("uncertain") {
+                "uncertain"
+            } else if eff_outcome == Some("correct") && rating_val >= 3 {
+                verified_count += 1;
+                "verified"
+            } else {
+                "unverified"
+            };
+
+            items.push(json!({
+                "position": pos,
+                "questionId": qid,
+                "questionRole": role,
+                "categoryPath": cat,
+                "stem": stem,
+                "attemptId": attempt_id,
+                "result": result,
+                "outcome": outcome,
+                "durationSeconds": duration_seconds,
+                "selfRating": self_rating,
+                "attemptMode": attempt_mode.unwrap_or_else(|| "paper".into()),
+                "evidenceSource": evidence_source.unwrap_or_else(|| "self_report".into()),
+                "sawSolution": serde_json::Value::Null,
+                "gradingVerdict": grading_verdict,
+                "earliestError": earliest_error,
+                "errorTags": error_tags,
+                "coverageStatus": coverage_status,
+                "completedAt": completed_at,
+            }));
+        }
+
+        let is_goal_achieved = high_risk_count == 0 && verified_count >= (total_count / 2).max(1);
+        let next_suggested_action = if high_risk_count > 0 {
+            "针对高风险考法安排方法辨析与漏洞修复题，避免继续盲目推进"
+        } else if verified_count == total_count && total_count > 0 {
+            "当前考法已稳定验证，建议进入迁移挑战或扩大新考法覆盖"
+        } else {
+            "继续安排同考法巩固题，验证方法迁移稳定性"
+        };
+
         let context = json!({
-            "schemaVersion": 1,
+            "schemaVersion": 2,
             "kind": "recommendationResult",
             "taskId": task_id,
             "title": batch.0,
             "summary": batch.1,
+            "goal": goal,
             "recommendationReason": batch.2,
             "status": batch.3,
             "completedAt": batch.4,
+            "coverage": coverage,
+            "noveltyPlan": novelty_plan,
+            "successCriteria": success_criteria,
+            "isGoalAchieved": is_goal_achieved,
+            "verifiedCount": verified_count,
+            "highRiskCount": high_risk_count,
+            "totalCount": total_count,
+            "nextSuggestedAction": next_suggested_action,
             "items": items,
             "rules": [
                 "独立作答结果优先于看解析后的正确",
@@ -7474,22 +7574,96 @@ fn save_goal(input: GoalInput, state: State<AppState>) -> Result<(), String> {
     Ok(())
 }
 
-fn learning_category_path(conn: &Connection, category_id: Option<i64>) -> Option<String> {
-    category_id
-        .and_then(|id| conn.query_row("SELECT path FROM categories WHERE id=?1", [id], |r| r.get(0)).optional().ok().flatten())
-        .or_else(|| {
-            setting(conn, "current_chapter_id", "").parse::<i64>().ok().and_then(|id| {
-                conn.query_row("SELECT path FROM categories WHERE id=?1", [id], |r| r.get(0)).optional().ok().flatten()
-            })
-        })
-        .or_else(|| conn.query_row("SELECT category_path FROM learning_diagnoses WHERE normalized_error_class<>'none' ORDER BY updated_at DESC,id DESC LIMIT 1", [], |r| r.get(0)).optional().ok().flatten())
+fn learning_category_path(conn: &Connection, category_id: Option<i64>, request_text: &str) -> Option<String> {
+    if let Some(id) = category_id.filter(|&v| v > 0) {
+        if let Ok(Some(path)) = conn.query_row("SELECT path FROM categories WHERE id=?1", [id], |r| r.get(0)).optional() {
+            return Some(path);
+        }
+    }
+
+    let req_lower = request_text.to_lowercase();
+    let trimmed = req_lower.trim();
+
+    if !trimmed.is_empty() {
+        let topic_rules: &[(&[&str], &str)] = &[
+            // 多元微分
+            (&["多元微分", "多元函数微分", "偏导", "全微分", "切平面", "法线", "方向导数", "极值", "条件极值", "拉格朗日乘数"], "高等数学 / 多元函数微分学"),
+            // 多元积分 / 重积分 / 曲线曲面积分
+            (&["二重积分", "三重积分", "重积分", "曲线积分", "曲面积分", "第一类曲线", "第二类曲线", "格林公式", "高斯公式", "斯托克斯"], "高等数学 / 多元函数积分学"),
+            // 微分方程
+            (&["微分方程", "常微分方程", "一阶微分方程", "二阶常系数", "通解", "特解", "降阶", "伯努利"], "高等数学 / 常微分方程"),
+            // 一元积分
+            (&["定积分", "不定积分", "反常积分", "变限积分", "变上限积分", "积分上限", "分部积分", "换元法", "有理函数积分"], "高等数学 / 一元函数积分学"),
+            // 一元微分 / 导数与中值定理
+            (&["导数", "微分", "中值定理", "罗尔", "拉格朗日中值", "柯西中值", "泰勒", "洛必达", "单调性", "凹凸性", "渐近线", "曲率"], "高等数学 / 一元函数微分学"),
+            // 极限与连续
+            (&["极限", "连续", "间断点", "无穷小", "夹逼", "单调有界", "夹逼准则"], "高等数学 / 函数、极限与连续"),
+            // 无穷级数
+            (&["级数", "无穷级数", "幂级数", "收敛域", "收敛半径", "数项级数", "正项级数", "交错级数", "阿贝尔", "傅里叶"], "高等数学 / 无穷级数"),
+            // 线性代数 - 特征值与二次型
+            (&["特征值", "特征向量", "相似对角化", "对角化", "相似矩阵", "实对称矩阵", "jordan"], "线性代数 / 特征值与特征向量"),
+            (&["二次型", "正定", "负定", "合同", "惯性指数", "标准形", "规范形"], "线性代数 / 二次型"),
+            // 线性代数 - 线性方程组与向量
+            (&["线性方程组", "齐次方程组", "非齐次方程组", "基础解系", "解空间"], "线性代数 / 线性方程组"),
+            (&["向量组", "线性相关", "线性无关", "极大线性无关组", "向量空间", "基与维数"], "线性代数 / 向量"),
+            // 线性代数 - 矩阵与行列式
+            (&["伴随矩阵", "初等变换", "矩阵的秩", "逆矩阵", "矩阵分块", "初等矩阵", "方阵的幂"], "线性代数 / 矩阵"),
+            (&["行列式", "克拉默法则", "代数余子式", "范德蒙"], "线性代数 / 行列式"),
+            // 概率论
+            (&["二维随机变量", "联合分布", "边缘分布", "条件分布", "独立性", "二维连续型"], "概率论与数理统计 / 多维随机变量及其分布"),
+            (&["数字特征", "期望", "方差", "协方差", "相关系数", "矩"], "概率论与数理统计 / 随机变量的数字特征"),
+            (&["大数定律", "中心极限定理", "切比雪夫"], "概率论与数理统计 / 大数定律和中心极限定理"),
+            (&["参数估计", "矩估计", "最大似然估计", "无偏性", "置信区间", "假设检验"], "概率论与数理统计 / 数理统计的基本概念与参数估计"),
+            (&["一维随机变量", "分布律", "概率密度", "正态分布", "泊松分布", "指数分布"], "概率论与数理统计 / 一维随机变量及其分布"),
+            (&["随机事件", "古典概型", "几何概型", "条件概率", "全概率", "贝叶斯"], "概率论与数理统计 / 随机事件与概率"),
+        ];
+
+        for (keywords, target_cat) in topic_rules {
+            for kw in *keywords {
+                if trimmed.contains(kw) {
+                    let found: Option<String> = conn.query_row(
+                        "SELECT path FROM categories WHERE path=?1 OR path LIKE ?1||' / %' OR path LIKE '%'||?1||'%' ORDER BY depth ASC LIMIT 1",
+                        [target_cat],
+                        |r| r.get(0),
+                    ).optional().ok().flatten();
+                    if let Some(p) = found {
+                        return Some(p);
+                    }
+                }
+            }
+        }
+
+        if let Ok(mut stmt) = conn.prepare("SELECT path FROM categories WHERE depth >= 1 ORDER BY depth DESC, id ASC") {
+            if let Ok(paths) = stmt.query_map([], |r| r.get::<_, String>(0)) {
+                for p_res in paths.flatten() {
+                    let leaf = p_res.split(" / ").last().unwrap_or(&p_res);
+                    if trimmed.contains(leaf) || (!leaf.is_empty() && leaf.len() >= 6 && trimmed.contains(&leaf[..6])) {
+                        return Some(p_res);
+                    }
+                }
+            }
+        }
+    }
+
+    let chapter_setting = setting(conn, "current_chapter_id", "");
+    if let Ok(id) = chapter_setting.parse::<i64>() {
+        if let Ok(Some(path)) = conn.query_row("SELECT path FROM categories WHERE id=?1", [id], |r| r.get(0)).optional() {
+            return Some(path);
+        }
+    }
+
+    conn.query_row(
+        "SELECT category_path FROM learning_diagnoses WHERE normalized_error_class<>'none' ORDER BY updated_at DESC,id DESC LIMIT 1",
+        [],
+        |r| r.get(0),
+    ).optional().ok().flatten()
 }
 
 #[tauri::command]
 fn create_learning_task(input: LearningTaskInput, state: State<AppState>) -> Result<CodexTask, String> {
     let conn = state.db.lock().map_err(|e| e.to_string())?;
     let minutes = input.available_minutes.clamp(10, 180);
-    let category_path = learning_category_path(&conn, input.category_id);
+    let category_path = learning_category_path(&conn, input.category_id, &input.request);
     let path_filter = category_path.clone().unwrap_or_default();
     let mut stmt = conn.prepare(
         "SELECT q.id,q.category_path,q.stem,q.question_type,q.difficulty,
@@ -7500,7 +7674,7 @@ fn create_learning_task(input: LearningTaskInput, state: State<AppState>) -> Res
          FROM questions q
          LEFT JOIN attempts a ON a.question_id=q.id
          LEFT JOIN progress p ON p.question_id=q.id
-         WHERE (?1='' OR EXISTS(SELECT 1 FROM question_categories qc JOIN categories c ON c.id=qc.category_id WHERE qc.question_id=q.id AND (c.path=?1 OR c.path LIKE ?1||' / %')))
+         WHERE (?1='' OR q.category_path=?1 OR q.category_path LIKE ?1||' / %' OR q.category_path LIKE '%'||?1||'%' OR EXISTS(SELECT 1 FROM question_categories qc JOIN categories c ON c.id=qc.category_id WHERE qc.question_id=q.id AND (c.path=?1 OR c.path LIKE ?1||' / %' OR c.path LIKE '%'||?1||'%')))
            AND NOT EXISTS(SELECT 1 FROM attempts at WHERE at.question_id=q.id AND substr(at.attempted_at,1,10)=date('now','localtime'))
          GROUP BY q.id
          ORDER BY CASE WHEN COUNT(a.id)=0 THEN 0 WHEN MAX(p.mastery) IS NULL OR MAX(p.mastery)<=2 THEN 1 ELSE 2 END,
@@ -7686,6 +7860,65 @@ fn start_recommendation_batch(
 fn dismiss_recommendation_batch(task_id: String, state: State<AppState>) -> Result<(), String> {
     let conn = state.db.lock().map_err(|e| e.to_string())?;
     dismiss_recommendation_batch_row(&conn, &task_id)
+}
+
+#[tauri::command]
+fn get_learning_task_candidates(
+    task_id: String,
+    state: State<AppState>,
+) -> Result<Vec<Question>, String> {
+    let conn = state.db.lock().map_err(|e| e.to_string())?;
+    let sql = format!(
+        "{QUESTION_SELECT} JOIN learning_task_candidates ltc ON ltc.question_id=q.id WHERE ltc.task_id=?1 GROUP BY q.id ORDER BY q.id"
+    );
+    let mut stmt = conn.prepare(&sql).map_err(|e| e.to_string())?;
+    let rows = stmt
+        .query_map([&task_id], row_to_question)
+        .map_err(|e| e.to_string())?;
+    let questions = rows
+        .map(|q| q.map_err(|e| e.to_string()))
+        .collect::<Result<Vec<_>, _>>()?;
+    Ok(questions)
+}
+
+#[tauri::command]
+fn update_recommendation_batch_items(
+    task_id: String,
+    question_ids: Vec<i64>,
+    state: State<AppState>,
+) -> Result<(), String> {
+    if question_ids.is_empty() {
+        return Err("题组至少需要保留 1 道题目".into());
+    }
+    let conn = state.db.lock().map_err(|e| e.to_string())?;
+    let tx = conn.unchecked_transaction().map_err(|e| e.to_string())?;
+    let status: String = tx
+        .query_row(
+            "SELECT status FROM recommendation_batches WHERE task_id=?1",
+            [&task_id],
+            |r| r.get(0),
+        )
+        .map_err(|_| "找不到指定的推荐批次".to_string())?;
+
+    if status != "pending" && status != "active" {
+        return Err("只能编辑待采用或进行中的题组".into());
+    }
+
+    tx.execute(
+        "DELETE FROM recommendation_batch_items WHERE task_id=?1 AND completed_at IS NULL",
+        [&task_id],
+    )
+    .map_err(|e| e.to_string())?;
+
+    for (pos, qid) in question_ids.iter().enumerate() {
+        tx.execute(
+            "INSERT INTO recommendation_batch_items(task_id, question_id, position) VALUES(?1, ?2, ?3)",
+            params![task_id, qid, pos as i64],
+        )
+        .map_err(|e| e.to_string())?;
+    }
+    tx.commit().map_err(|e| e.to_string())?;
+    Ok(())
 }
 
 #[tauri::command]
@@ -9880,6 +10113,8 @@ pub fn run() {
             get_daily_log,
             start_recommendation_batch,
             dismiss_recommendation_batch,
+            get_learning_task_candidates,
+            update_recommendation_batch_items,
             confirm_inbox,
             create_codex_task,
             create_codex_batch_task,
@@ -12491,6 +12726,34 @@ mod tests {
         assert_eq!(snapshot.training["incentiveAvailable"], false);
         assert!(snapshot.training["xpThisWeek"].is_null());
         assert!(snapshot.training["achievements"].is_null());
+    }
+
+    #[test]
+    fn learning_category_path_matches_natural_language_intent() {
+        let conn = Connection::open_in_memory().unwrap();
+        init_schema(&conn).unwrap();
+        conn.execute(
+            "INSERT INTO categories(id, name, path, root_name, depth) VALUES(1, '多元函数微分学', '高等数学 / 多元函数微分学', '高等数学', 1)",
+            [],
+        ).unwrap();
+        conn.execute(
+            "INSERT INTO categories(id, name, path, root_name, depth) VALUES(2, '特征值与特征向量', '线性代数 / 特征值与特征向量', '线性代数', 1)",
+            [],
+        ).unwrap();
+
+        // 1. Explicit ID
+        let p1 = learning_category_path(&conn, Some(1), "随意测试");
+        assert_eq!(p1.as_deref(), Some("高等数学 / 多元函数微分学"));
+
+        // 2. Natural language intent keywords
+        let p2 = learning_category_path(&conn, None, "我想通过一组题有效的识别我多元微分的漏洞");
+        assert_eq!(p2.as_deref(), Some("高等数学 / 多元函数微分学"));
+
+        let p3 = learning_category_path(&conn, None, "偏导数计算与条件极值专项突破");
+        assert_eq!(p3.as_deref(), Some("高等数学 / 多元函数微分学"));
+
+        let p4 = learning_category_path(&conn, None, "特征值和相似对角化问题");
+        assert_eq!(p4.as_deref(), Some("线性代数 / 特征值与特征向量"));
     }
 
 }

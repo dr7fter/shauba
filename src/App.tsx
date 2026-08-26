@@ -14,6 +14,7 @@ import {
   ListPlus,
   LoaderCircle,
   Maximize2,
+  Minimize2,
   Pause,
   Play,
   RefreshCw,
@@ -250,6 +251,8 @@ function Topbar({
   onOpenHelp,
   data,
   streak,
+  isZenMode,
+  onToggleZen,
 }: {
   view: View
   onRefresh: () => void
@@ -257,6 +260,8 @@ function Topbar({
   onOpenHelp: () => void
   data?: BootstrapData
   streak?: { currentStreak: number; bestStreak: number } | null
+  isZenMode?: boolean
+  onToggleZen?: () => void
 }) {
   const current = navItems.find((item) => item.id === view)
   const [now, setNow] = useState(() => Date.now())
@@ -307,6 +312,18 @@ function Topbar({
         <h1>{current?.label ?? '设置'}</h1>
       </div>
       <div className="topbar-meta">
+        {onToggleZen && (
+          <button
+            type="button"
+            className={`topbar-zen-btn ${isZenMode ? 'active' : ''}`}
+            onClick={onToggleZen}
+            title={isZenMode ? '退出沉浸专注模式 (Alt+Z)' : '进入沉浸专注模式 (Alt+Z)'}
+            aria-label={isZenMode ? '退出沉浸专注模式' : '进入沉浸专注模式'}
+          >
+            {isZenMode ? <Minimize2 size={14} /> : <Maximize2 size={14} />}
+            <span>{isZenMode ? '退出专注' : '专注模式'}</span>
+          </button>
+        )}
         {data && todayProgress && (
           <button
             className={`today-dashboard-trigger ${dashboardExpanded ? 'expanded' : ''}`}
@@ -993,6 +1010,8 @@ export default function App() {
           onOpenHelp={() => setKeyboardHelpOpen(true)}
           data={data ?? undefined}
           streak={streak}
+          isZenMode={isZenMode}
+          onToggleZen={() => setIsZenMode((prev) => !prev)}
         />
         <AnimatePresence mode="wait">
           <motion.div

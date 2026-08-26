@@ -16,7 +16,6 @@ import {
   History,
   Layers,
   LoaderCircle,
-  Maximize2,
   Minimize2,
   Minus,
   Pause,
@@ -1438,47 +1437,38 @@ export function TodayView({
               </span>
             </button>
           )}
-          <button
-            className={`zen-toggle-mini-btn ${isZenMode ? 'active' : ''}`}
-            onClick={onToggleZen}
-            title="切换沉浸专注模式 (Alt+Z)"
-          >
-            {isZenMode ? <Minimize2 size={14} /> : <Maximize2 size={14} />}
-            <span>{isZenMode ? '退出专注' : '专注模式'}</span>
-          </button>
         </div>
         {activeBatch ? (
-          <div className="ai-plan-banner">
-            <div className="ai-plan-banner-main">
-              <span className="ai-plan-sparkle-icon">
-                <Sparkles size={15} />
-              </span>
-              <span className="ai-plan-banner-content">
-                <b>{activeBatch.title}</b>
-                <small>
-                  AI 题组 · 剩余 {activeBatch.remainingCount}/{activeBatch.totalCount} 题
-                </small>
+          <div className="sidebar-ai-plan-card">
+            <div className="sidebar-ai-plan-head">
+              <div className="sidebar-ai-plan-badge">
+                <Sparkles size={13} />
+                <span>AI 题组</span>
+              </div>
+              <span className="sidebar-ai-plan-count">
+                剩余 <b>{activeBatch.remainingCount}</b>/{activeBatch.totalCount} 题
               </span>
             </div>
-            <div className="ai-plan-banner-actions">
+            <div className="sidebar-ai-plan-title" title={activeBatch.title}>
+              {activeBatch.title}
+            </div>
+            <div className="sidebar-ai-plan-actions">
               <button
                 type="button"
-                className="ai-plan-btn switch"
+                className="sidebar-ai-plan-btn switch"
                 onClick={handleSwitchNewBatch}
                 title="前往学习中心挑选或生成新题组"
               >
-                <RotateCcw size={12} />
-                <span>换新题组</span>
+                <RotateCcw size={12} /> 换题组
               </button>
               <button
                 type="button"
-                className="ai-plan-btn danger"
+                className="sidebar-ai-plan-btn danger"
                 onClick={handleDismissActiveBatch}
                 disabled={dismissingBatch}
                 title="取消并退出当前 AI 题组，恢复常规复习/刷题队列"
               >
-                <X size={12} />
-                <span>退出题组</span>
+                <X size={12} /> 退出
               </button>
             </div>
           </div>

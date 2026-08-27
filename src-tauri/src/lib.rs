@@ -9994,6 +9994,128 @@ fn set_user_profile(profile: UserProfileSettings, state: State<AppState>) -> Res
     Ok(())
 }
 
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct MistakeTimelineItem {
+    pub attempt_id: i64,
+    pub question_id: i64,
+    pub stem: String,
+    pub category_path: String,
+    pub question_type: String,
+    pub difficulty: i32,
+    pub attempted_at: String,
+    pub duration_seconds: i32,
+    pub result: String,
+    pub outcome: Option<String>,
+    pub earliest_error: Option<String>,
+    pub advice: Option<String>,
+    pub mastery: Option<i32>,
+    pub favorite: bool,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct MistakeDayGroup {
+    pub date: String,
+    pub display_date: String,
+    pub total_count: usize,
+    pub items: Vec<MistakeTimelineItem>,
+}
+
+#[tauri::command]
+fn get_mistake_timeline(
+    limit_days: Option<i64>,
+    state: State<AppState>,
+) -> Result<Vec<MistakeDayGroup>, String> {
+    let conn = state.db.lock().map_err(|e| e.to_string())?;
+    let days_limit = limit_days.unwrap_or(90).clamp(1, 365);
+
+    let mut stmt = conn
+        .prepare(
+            "SELECT a.id, a.question_id, q.stem, q.category_path, q.question_type, q.difficulty,
+                    a.attempted_at, a.duration_seconds, a.result, a.outcome,
+                    s.earliest_error, s.advice,
+                    p.mastery, COALESCE(p.favorite, 0),
+                    substr(a.attempted_at, 1, 10) as day
+             FROM attempts a
+             JOIN questions q ON q.id = a.question_id
+             LEFT JOIN progress p ON p.question_id = a.question_id
+             LEFT JOIN (
+                 SELECT question_id, earliest_error, advice,
+                        ROW_NUMBER() OVER(PARTITION BY question_id ORDER BY id DESC) as rn
+                 FROM codex_inbox
+                 WHERE earliest_error IS NOT NULL OR advice IS NOT NULL
+             ) s ON s.question_id = a.question_id AND s.rn = 1
+             WHERE COALESCE(a.outcome, a.result) IN ('wrong', 'incorrect', 'uncertain')
+             ORDER BY a.attempted_at DESC, a.id DESC",
+        )
+        .map_err(|e| e.to_string())?;
+
+    let today = Local::now().format("%Y-%m-%d").to_string();
+    let yesterday = (Local::now() - chrono::Duration::days(1))
+        .format("%Y-%m-%d")
+        .to_string();
+
+    let mut groups_map: std::collections::BTreeMap<String, Vec<MistakeTimelineItem>> =
+        std::collections::BTreeMap::new();
+    let mut date_order: Vec<String> = Vec::new();
+
+    let rows = stmt
+        .query_map([], |row| {
+            let item = MistakeTimelineItem {
+                attempt_id: row.get(0)?,
+                question_id: row.get(1)?,
+                stem: row.get(2)?,
+                category_path: row.get(3)?,
+                question_type: row.get(4)?,
+                difficulty: row.get(5)?,
+                attempted_at: row.get(6)?,
+                duration_seconds: row.get(7)?,
+                result: row.get(8)?,
+                outcome: row.get(9)?,
+                earliest_error: row.get(10)?,
+                advice: row.get(11)?,
+                mastery: row.get(12)?,
+                favorite: row.get::<_, i32>(13)? == 1,
+            };
+            let day: String = row.get(14)?;
+            Ok((day, item))
+        })
+        .map_err(|e| e.to_string())?;
+
+    for row_res in rows {
+        let (day, item) = row_res.map_err(|e| e.to_string())?;
+        if !groups_map.contains_key(&day) {
+            date_order.push(day.clone());
+        }
+        groups_map.entry(day).or_default().push(item);
+        if date_order.len() > days_limit as usize {
+            break;
+        }
+    }
+
+    let mut result = Vec::new();
+    for day in date_order {
+        if let Some(items) = groups_map.remove(&day) {
+            let display_date = if day == today {
+                format!("{day} (今天)")
+            } else if day == yesterday {
+                format!("{day} (昨天)")
+            } else {
+                day.clone()
+            };
+            result.push(MistakeDayGroup {
+                date: day,
+                display_date,
+                total_count: items.len(),
+                items,
+            });
+        }
+    }
+
+    Ok(result)
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
@@ -10139,6 +10261,7 @@ pub fn run() {
             get_pressure_grading_report,
             list_pressure_sessions,
             get_today_attempted_questions,
+            get_mistake_timeline,
             get_app_version,
             get_system_proxy,
             get_user_profile,

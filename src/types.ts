@@ -935,8 +935,32 @@ export type LearningCenterSnapshot = LearningCenterData & {
 }
 
 export type FontScaleMode = 'standard' | 'medium' | 'large'
-export type View = 'today' | 'library' | 'review' | 'mastery' | 'insights' | 'friends' | 'learning' | 'settings'
+export type View = 'today' | 'mistakes' | 'library' | 'review' | 'mastery' | 'insights' | 'friends' | 'learning' | 'settings'
 export type AttemptMode = 'paper' | 'review'
+
+export type MistakeTimelineItem = {
+  attemptId: number
+  questionId: number
+  stem: string
+  categoryPath: string
+  questionType: string
+  difficulty: number
+  attemptedAt: string
+  durationSeconds: number
+  result: string
+  outcome?: string | null
+  earliestError?: string | null
+  advice?: string | null
+  mastery?: number | null
+  favorite: boolean
+}
+
+export type MistakeDayGroup = {
+  date: string
+  displayDate: string
+  totalCount: number
+  items: MistakeTimelineItem[]
+}
 
 export type TodayAttemptItem = {
   attemptId: number

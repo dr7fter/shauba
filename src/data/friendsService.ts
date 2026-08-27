@@ -562,8 +562,28 @@ export async function publishMyFriendSnapshot(profile: FriendProfile, config: Fr
 let backgroundSyncInProgress = false
 let cachedTacticalData: TacticalDashboardData | null = null
 let lastTacticalFetchTime = 0
+let syncDebounceTimer: ReturnType<typeof setTimeout> | null = null
+let lastPublishedPayloadHash = ''
 
-export async function triggerBackgroundSync(reason?: string): Promise<void> {
+export function triggerBackgroundSync(reason?: string): void {
+  const config = getSavedFriendSyncConfig()
+  if (!isSyncConfigReady(config)) return
+
+  if (syncDebounceTimer) {
+    clearTimeout(syncDebounceTimer)
+    syncDebounceTimer = null
+  }
+
+  // 作答时延迟 4 秒防抖，避免在快速做题/切换题目时阻塞网络与渲染
+  const delay = reason === 'attempt_recorded' ? 4000 : 300
+
+  syncDebounceTimer = setTimeout(() => {
+    syncDebounceTimer = null
+    void executeBackgroundSync(reason)
+  }, delay)
+}
+
+async function executeBackgroundSync(reason?: string): Promise<void> {
   const config = getSavedFriendSyncConfig()
   if (!isSyncConfigReady(config)) return
   if (backgroundSyncInProgress) return
@@ -583,7 +603,15 @@ export async function triggerBackgroundSync(reason?: string): Promise<void> {
       getEloStatus().catch(() => null),
     ])
     const profile = buildMyFriendProfile(tacticalData, bootData, eloStatus)
-    await publishMyFriendSnapshot(profile, config)
+    const current = publicProfile({ ...profile, profileId: profile.profileId ?? getSavedMyCustomProfile().profileId })
+    const sharePayload = createFriendShareSnapshot(current)
+
+    // 差异哈希比对：自身战绩未发生任何变化时不重复执行 WebDAV PUT 上传
+    if (sharePayload !== lastPublishedPayloadHash) {
+      await publishFriendSnapshot(config, current.friendCode, sharePayload)
+      lastPublishedPayloadHash = sharePayload
+    }
+
     const result = await syncFriendSnapshots(config)
     if (typeof window !== 'undefined' && result.updated > 0) {
       window.dispatchEvent(new CustomEvent('shuaba-friends-synced', { detail: result }))

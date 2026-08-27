@@ -74,6 +74,7 @@ import { InsightsView } from './views/InsightsView'
 import { LearningCenterView } from './views/LearningCenterView'
 import { LibraryView } from './views/LibraryView'
 import { MasteryMapView } from './views/MasteryMapView'
+import { MistakesView } from './views/MistakesView'
 import { ReviewMapView } from './views/ReviewView'
 import { SettingsView } from './views/SettingsView'
 import { TodayView } from './views/TodayView'
@@ -81,6 +82,7 @@ import { TodayView } from './views/TodayView'
 const navItems: Array<{ id: View; label: string; icon: typeof BookOpen }> = [
   { id: 'learning', label: '学习中心', icon: GraduationCap },
   { id: 'today', label: '今日', icon: Zap },
+  { id: 'mistakes', label: '错题本', icon: BookMarked },
   { id: 'insights', label: '数据', icon: BarChart3 },
   { id: 'friends', label: '好友', icon: Users },
   { id: 'review', label: '复盘', icon: TimerReset },
@@ -1145,6 +1147,38 @@ export default function App() {
                 onBlitzFinish={handleBlitzFinish}
                 onOpenPressureReport={(sessionId) => openPressureReport({ sessionId })}
                 pressureReportLoading={pressureReportLoading}
+              />
+            )}
+            {view === 'mistakes' && (
+              <MistakesView
+                onNavigate={(target) => {
+                  if (target.type === 'today') {
+                    if (target.questionId) {
+                      getQuestion(target.questionId)
+                        .then((q) => {
+                          if (q) {
+                            setPracticeQueue([
+                              {
+                                question: q,
+                                score: 100,
+                                reason: '来自错题本靶向训练',
+                                reasonCode: 'due',
+                              },
+                            ])
+                            setPracticeStartIndex(0)
+                            setAttemptMode('paper')
+                            setView('today')
+                          } else {
+                            setView('today')
+                          }
+                        })
+                        .catch(() => setView('today'))
+                    } else {
+                      setView('today')
+                    }
+                  }
+                }}
+                onNotify={setNotice}
               />
             )}
             {view === 'library' && data && (

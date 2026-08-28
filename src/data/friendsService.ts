@@ -565,6 +565,25 @@ let lastTacticalFetchTime = 0
 let syncDebounceTimer: ReturnType<typeof setTimeout> | null = null
 let lastPublishedPayloadHash = ''
 
+// 后台同步默认每分钟触发一次。全量 bootstrap / ELO 查询与好友文件拉取都是重活，
+// 没必要每分钟跑一遍：心跳发布（单次带差异哈希的 PUT）保持高频即可维持 presence 新鲜度，
+// 而拉取好友数据降频到 3 分钟一轮，兼顾实时性与流畅度。
+const TACTICAL_CACHE_MS = 300_000
+const BOOT_CACHE_MS = 120_000
+const PULL_INTERVAL_MS = 180_000
+let cachedBootData: BootstrapData | null = null
+let cachedEloStatus: EloStatus | null = null
+let lastBootFetchTime = 0
+let lastPullTime = 0
+
+export function invalidateBackgroundSyncCache(): void {
+  cachedBootData = null
+  cachedEloStatus = null
+  lastBootFetchTime = 0
+  lastTacticalFetchTime = 0
+  lastPullTime = 0
+}
+
 export function triggerBackgroundSync(reason?: string): void {
   const config = getSavedFriendSyncConfig()
   if (!isSyncConfigReady(config)) return
@@ -590,19 +609,30 @@ async function executeBackgroundSync(reason?: string): Promise<void> {
   backgroundSyncInProgress = true
   try {
     const now = Date.now()
+    // 手动同步、保存名片与刚记录作答这三种情形战绩确实变了，强制重取；其余走缓存
+    const force = reason === 'manual' || reason === 'profile_save' || reason === 'attempt_recorded'
+
     let tacticalData = cachedTacticalData
-    if (!tacticalData || now - lastTacticalFetchTime > 300_000 || reason === 'manual' || reason === 'profile_save') {
+    if (!tacticalData || now - lastTacticalFetchTime > TACTICAL_CACHE_MS || force) {
       tacticalData = await getTacticalDashboardStats().catch(() => null)
       if (tacticalData) {
         cachedTacticalData = tacticalData
         lastTacticalFetchTime = now
       }
     }
-    const [bootData, eloStatus] = await Promise.all([
-      bootstrap().catch(() => null),
-      getEloStatus().catch(() => null),
-    ])
-    const profile = buildMyFriendProfile(tacticalData, bootData, eloStatus)
+
+    // 全量 bootstrap 会一次性查询题库、作答、推荐等多张表，是后台同步里最重的一步
+    if (force || !cachedBootData || now - lastBootFetchTime > BOOT_CACHE_MS) {
+      const [bootData, eloStatus] = await Promise.all([
+        bootstrap().catch(() => null),
+        getEloStatus().catch(() => null),
+      ])
+      if (bootData) cachedBootData = bootData
+      if (eloStatus) cachedEloStatus = eloStatus
+      lastBootFetchTime = now
+    }
+
+    const profile = buildMyFriendProfile(tacticalData, cachedBootData, cachedEloStatus)
     const current = publicProfile({ ...profile, profileId: profile.profileId ?? getSavedMyCustomProfile().profileId })
     const sharePayload = createFriendShareSnapshot(current)
 
@@ -612,9 +642,13 @@ async function executeBackgroundSync(reason?: string): Promise<void> {
       lastPublishedPayloadHash = sharePayload
     }
 
-    const result = await syncFriendSnapshots(config)
-    if (typeof window !== 'undefined' && result.updated > 0) {
-      window.dispatchEvent(new CustomEvent('shuaba-friends-synced', { detail: result }))
+    // 拉取好友文件要 PROPFIND 列目录再逐个 GET，降频执行
+    if (force || now - lastPullTime > PULL_INTERVAL_MS) {
+      lastPullTime = now
+      const result = await syncFriendSnapshots(config)
+      if (typeof window !== 'undefined' && result.updated > 0) {
+        window.dispatchEvent(new CustomEvent('shuaba-friends-synced', { detail: result }))
+      }
     }
   } catch (err) {
     console.debug(`Background sync (${reason || 'unspecified'}) error:`, err)

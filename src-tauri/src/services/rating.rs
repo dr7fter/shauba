@@ -295,6 +295,13 @@ const HLTV3_W_PACING: f64 = 0.20;
 const HLTV3_INTERCEPT: f64 = 0.26;
 const HLTV3_SLOPE: f64 = 0.0125;
 
+/// 计时可信区间（秒）。低于下界的记录多半来自批量导入、误触或计时未启动；
+/// 高于上界的记录多半是漏停计时器。
+const PACING_MIN_PLAUSIBLE_SECONDS: f64 = 5.0;
+const PACING_MAX_PLAUSIBLE_SECONDS: f64 = 1800.0;
+/// 计时不可信时的中性节奏分：既不奖励也不惩罚，等价于「按基准耗时完成」。
+const PACING_NEUTRAL_WHEN_IMPLAUSIBLE: f64 = 100.0;
+
 /// Codex 六维证据（0-100），任一存在即走 HLTV 合成。
 #[derive(Debug, Clone, Copy, Default, PartialEq)]
 pub struct DimensionEvidence {
@@ -385,13 +392,23 @@ pub fn hltv_rating(
     // 4. Pacing (时间节奏分)
     let duration = duration_seconds.max(1) as f64;
     let bench = benchmark_seconds.max(1) as f64;
+    // 计时护栏：纸笔作答的最短路程不可能在 5 秒内完成，超过 30 分钟多半是漏停计时器。
+    // 这类记录的耗时不可信，此前会被 (bench/duration) 直接顶到 115 的满分上限，
+    // 导致脏数据反而拿到最高节奏分，系统性虚高 rating。这里回落到中性值 100。
+    let timing_plausible =
+        duration >= PACING_MIN_PLAUSIBLE_SECONDS && duration <= PACING_MAX_PLAUSIBLE_SECONDS;
     let pacing = dims.speed.unwrap_or_else(|| {
-        ((bench / duration) * 100.0).clamp(45.0, 115.0)
+        if timing_plausible {
+            ((bench / duration) * 100.0).clamp(45.0, 115.0)
+        } else {
+            PACING_NEUTRAL_WHEN_IMPLAUSIBLE
+        }
     });
 
     // 5. EcoDrag (经济黑洞非线性惩罚: 做错且超时严重)
     let eco_drag = if outcome == "wrong" || outcome == "incorrect" {
-        if duration > bench * 1.2 {
+        // 计时不可信时（漏停表等）不据此加重惩罚，只按「做错」的基础档计
+        if timing_plausible && duration > bench * 1.2 {
             (((duration / bench) - 1.0).clamp(0.0, 1.5)) * 24.0
         } else {
             8.0

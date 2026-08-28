@@ -3206,8 +3206,10 @@ fn write_completed_recommendation_contexts(conn: &Connection, data_dir: &Path) -
     Ok(())
 }
 
+// 启动加载与每次刷新都会走这里，需要汇总题库、作答、推荐等多张表。声明为 async 后由
+// Tauri 调度到异步运行时，避免这类重量级查询直接卡住主线程造成界面停顿。
 #[tauri::command]
-fn bootstrap(state: State<AppState>) -> Result<BootstrapData, String> {
+async fn bootstrap(state: State<'_, AppState>) -> Result<BootstrapData, String> {
     scan_inbox(&state)?;
     let mut conn = state.db.lock().map_err(|e| e.to_string())?;
     let mut count: i64 = conn
@@ -6065,9 +6067,12 @@ fn season_status(conn: &Connection) -> Result<SeasonStatus, String> {
             let s_start_rfc = s_start_date.and_hms_opt(0, 0, 0).unwrap().to_string();
             let s_end_rfc = s_end_date.and_hms_opt(23, 59, 59).unwrap().to_string();
 
+            // elo_events.created_at 是带时区的 RFC3339（2026-08-30T20:00:00+08:00），而区间
+            // 边界是不带时区的 "YYYY-MM-DD HH:MM:SS"。直接做字符串比较时 ' '(0x20) < 'T'(0x54)，
+            // 区间结束日当天的记录会被全部判为超出范围，导致赛季峰值漏统计。统一提取日期比较。
             let peak: f64 = conn
                 .query_row(
-                    "SELECT COALESCE(MAX(rating_after), ?1) FROM elo_events WHERE created_at >= ?2 AND created_at <= ?3",
+                    "SELECT COALESCE(MAX(rating_after), ?1) FROM elo_events WHERE date(created_at) >= date(?2) AND date(created_at) <= date(?3)",
                     params![current, s_start_rfc, s_end_rfc],
                     |r| r.get(0),
                 )
@@ -6623,10 +6628,12 @@ struct TacticalAttemptRow {
     strategy_insight: Option<f64>,
 }
 
+// 这是一次全库六维聚合，属于重量级查询。声明为 async 后由 Tauri 调度到异步运行时执行，
+// 不再占用主线程——此前同步执行会让打开好友页、后台同步时界面出现可感知的停顿。
 #[tauri::command]
-fn get_tactical_dashboard_stats(
+async fn get_tactical_dashboard_stats(
     scope: String,
-    state: State<AppState>,
+    state: State<'_, AppState>,
 ) -> Result<TacticalDashboardData, String> {
     let conn = state.db.lock().map_err(|e| e.to_string())?;
     let mode_filter = match scope.as_str() {
@@ -9675,8 +9682,7 @@ fn friend_sync_payload_from_response(
     String::from_utf8(bytes.to_vec()).map_err(|_| format!("{action}失败：响应不是有效 UTF-8 JSON"))
 }
 
-#[tauri::command]
-fn test_friend_sync(config: FriendSyncConfig) -> Result<String, String> {
+fn test_friend_sync_impl(config: FriendSyncConfig) -> Result<String, String> {
     let client = friend_sync_client()?;
 
     let root_response = friend_sync_propfind(&client, friend_sync_base_url(&config)?, &config)?;
@@ -9755,8 +9761,17 @@ fn test_friend_sync(config: FriendSyncConfig) -> Result<String, String> {
     }
 }
 
+// 好友同步全部走阻塞式 HTTP 客户端。若直接以同步命令形式执行，会占用 Tauri 主线程并冻结
+// WebView（表现为主界面周期性卡顿）。这里统一用 async 命令 + spawn_blocking 把网络 I/O
+// 转移到专用阻塞线程池，主线程只负责接收结果，全程不阻塞渲染。
 #[tauri::command]
-fn publish_friend_snapshot(
+async fn test_friend_sync(config: FriendSyncConfig) -> Result<String, String> {
+    tauri::async_runtime::spawn_blocking(move || test_friend_sync_impl(config))
+        .await
+        .map_err(|e| format!("好友同步后台任务异常退出：{e}"))?
+}
+
+fn publish_friend_snapshot_impl(
     config: FriendSyncConfig,
     friend_code: String,
     payload: String,
@@ -9812,6 +9827,19 @@ fn publish_friend_snapshot(
     }
 }
 
+#[tauri::command]
+async fn publish_friend_snapshot(
+    config: FriendSyncConfig,
+    friend_code: String,
+    payload: String,
+) -> Result<String, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        publish_friend_snapshot_impl(config, friend_code, payload)
+    })
+    .await
+    .map_err(|e| format!("好友数据上传后台任务异常退出：{e}"))?
+}
+
 fn friend_sync_file_from_href(folder_url: &Url, href: &str) -> Option<(String, Url)> {
     let candidate = friend_sync_href_url(folder_url, href)?;
     let folder_segments = friend_sync_decoded_path_segments(folder_url)?;
@@ -9830,8 +9858,7 @@ fn friend_sync_file_from_href(folder_url: &Url, href: &str) -> Option<(String, U
     Some((canonical_name, candidate))
 }
 
-#[tauri::command]
-fn pull_friend_snapshots(
+fn pull_friend_snapshots_impl(
     config: FriendSyncConfig,
     friend_codes: Vec<String>,
     known_hashes: Option<std::collections::HashMap<String, String>>,
@@ -9931,6 +9958,19 @@ fn pull_friend_snapshots(
         }
     }
     Ok(snapshots)
+}
+
+#[tauri::command]
+async fn pull_friend_snapshots(
+    config: FriendSyncConfig,
+    friend_codes: Vec<String>,
+    known_hashes: Option<std::collections::HashMap<String, String>>,
+) -> Result<Vec<FriendSyncRemoteSnapshot>, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        pull_friend_snapshots_impl(config, friend_codes, known_hashes)
+    })
+    .await
+    .map_err(|e| format!("好友数据拉取后台任务异常退出：{e}"))?
 }
 
 #[tauri::command]

@@ -220,6 +220,15 @@ pub fn init_schema(conn: &Connection) -> rusqlite::Result<()> {
          CREATE INDEX IF NOT EXISTS idx_review_tasks_question ON review_tasks(question_id, updated_at DESC);
          CREATE INDEX IF NOT EXISTS idx_review_tasks_attempt ON review_tasks(last_attempt_id, updated_at DESC);
          CREATE INDEX IF NOT EXISTS idx_learning_projection_failures_pending ON learning_projection_failures(resolved, last_failed_at DESC);",
+    )?;
+    // 历史数据修复：早期版本创建/重开错题任务时把 next_review_at 硬编码为 NULL，
+    // 而到期判定要求 next_review_at IS NOT NULL，导致这些任务永远不会被判为到期、
+    // 错题排雷闭环实际处于停滞状态。这里为存量任务补上到期日，让积压任务重新进入队列。
+    // 仅处理未关闭的任务，已完成归档的任务不重新唤醒；补的是本地日期，与 today 口径一致。
+    conn.execute_batch(
+        "UPDATE review_tasks SET next_review_at = date('now','localtime')
+          WHERE next_review_at IS NULL AND COALESCE(status,'') <> 'closed'
+            AND COALESCE(stage,'') <> 'closed';",
     )
 }
 
@@ -946,17 +955,23 @@ pub fn upsert_diagnosis(
                 |row| row.get(0),
             )
             .optional()?;
+        // 新诊断出的错题应立刻进入排雷队列。此前这两处把 next_review_at 硬编码为 NULL，
+        // 而到期判定要求 next_review_at IS NOT NULL（见 lib.rs 的 dueReviews 查询），
+        // 结果任务一旦创建就永远不会被判为到期，错题排雷闭环实际从未运转过。
+        // 用本地日期，与 lib.rs 中 today（Local::now().date_naive()）保持同一口径，
+        // 否则 UTC+8 的凌晨时段会整体差一天。
+        let next_review = Local::now().date_naive().to_string();
         if existing_task.is_none() {
             conn.execute(
                 "INSERT INTO review_tasks(task_id,question_id,category_key,stage,status,next_action,is_variant,delayed_review_required,last_outcome,last_attempt_id,next_review_at,created_at,updated_at)
-                 VALUES(?1,?2,?3,?4,'pending',?5,?6,?7,?8,?9,NULL,?10,?10)",
-                params![&input.task_id,input.question_id,&input.category_key,stage,next_action,if input.is_variant {1}else{0},if input.is_delayed_review {1}else{0},&input.verdict,input.attempt_id,&now],
+                 VALUES(?1,?2,?3,?4,'pending',?5,?6,?7,?8,?9,?10,?11,?11)",
+                params![&input.task_id,input.question_id,&input.category_key,stage,next_action,if input.is_variant {1}else{0},if input.is_delayed_review {1}else{0},&input.verdict,input.attempt_id,&next_review,&now],
             )?;
         } else if semantic_changed {
             // Only a genuine diagnostic change re-opens a completed/closed/archived task.
             conn.execute(
-                "UPDATE review_tasks SET category_key=?1,stage=?2,status='pending',next_action=?3,is_variant=?4,delayed_review_required=?5,last_outcome=?6,last_attempt_id=COALESCE(?7,last_attempt_id),next_review_at=NULL,updated_at=?8 WHERE task_id=?9 AND question_id=?10",
-                params![&input.category_key,stage,next_action,if input.is_variant {1}else{0},if input.is_delayed_review {1}else{0},&input.verdict,input.attempt_id,&now,&input.task_id,input.question_id],
+                "UPDATE review_tasks SET category_key=?1,stage=?2,status='pending',next_action=?3,is_variant=?4,delayed_review_required=?5,last_outcome=?6,last_attempt_id=COALESCE(?7,last_attempt_id),next_review_at=?8,updated_at=?9 WHERE task_id=?10 AND question_id=?11",
+                params![&input.category_key,stage,next_action,if input.is_variant {1}else{0},if input.is_delayed_review {1}else{0},&input.verdict,input.attempt_id,&next_review,&now,&input.task_id,input.question_id],
             )?;
         } else if input.attempt_id.is_some() {
             // Binding an older diagnosis to a newly located attempt is metadata-only, never a reopen.
@@ -1495,6 +1510,47 @@ mod tests {
             assert_eq!(actual_status, status);
             assert_eq!(last_attempt_id, Some(881));
         }
+    }
+
+    #[test]
+    fn new_review_task_is_scheduled_instead_of_never_due() {
+        let conn = conn();
+        upsert_diagnosis(&conn, diagnosis("SB-due", 555, Some(777), "incorrect")).unwrap();
+        let next_review: Option<String> = conn
+            .query_row(
+                "SELECT next_review_at FROM review_tasks WHERE task_id='SB-due' AND question_id=555",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        // 回归测试：这里曾经恒为 NULL，而到期查询要求 next_review_at IS NOT NULL，
+        // 结果任务一旦创建就永远不会被判为到期，错题排雷闭环形同虚设。
+        let next_review = next_review.expect("新建错题任务必须带上到期日");
+        assert_eq!(next_review, Local::now().date_naive().to_string());
+    }
+
+    #[test]
+    fn legacy_null_next_review_at_is_repaired_by_schema_init() {
+        let conn = conn();
+        upsert_diagnosis(&conn, diagnosis("SB-legacy-null", 888, Some(999), "incorrect")).unwrap();
+        conn.execute(
+            "UPDATE review_tasks SET next_review_at=NULL WHERE task_id='SB-legacy-null' AND question_id=888",
+            [],
+        )
+        .unwrap();
+        // 重跑 schema 初始化，模拟历史库升级
+        init_schema(&conn).unwrap();
+        let next_review: Option<String> = conn
+            .query_row(
+                "SELECT next_review_at FROM review_tasks WHERE task_id='SB-legacy-null' AND question_id=888",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert!(
+            next_review.is_some(),
+            "存量任务缺失的到期日应在 schema 初始化时被补上"
+        );
     }
 
     #[test]

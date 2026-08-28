@@ -1,5 +1,6 @@
 import { AnimatePresence, motion } from 'framer-motion'
 import {
+  AlertTriangle,
   BarChart3,
   BookMarked,
   BookOpen,
@@ -422,19 +423,24 @@ function Topbar({
   )
 }
 
+// 提示语没有携带类型，历史上一律显示成功图标，导致「加载失败」「同步失败」也打绿勾。
+// 这里按文案判定是否属于失败提示，让错误真正以错误样式呈现。
+const FAILURE_HINT = /失败|错误|异常|无法|出错|被拒绝|超时|不存在|未找到/
+
 function Toast({ text, close }: { text: string; close: () => void }) {
   useEffect(() => {
     const t = setTimeout(close, 3500)
     return () => clearTimeout(t)
   }, [close])
+  const isError = FAILURE_HINT.test(text)
   return (
     <motion.div
-      className="toast"
+      className={isError ? 'toast toast-error' : 'toast'}
       initial={{ opacity: 0, y: 15 }}
       animate={{ opacity: 1, y: 0 }}
       exit={{ opacity: 0, y: 8 }}
     >
-      <Check size={16} />
+      {isError ? <AlertTriangle size={16} /> : <Check size={16} />}
       <span>{text}</span>
       <button onClick={close} aria-label="关闭提示">
         <X size={15} />

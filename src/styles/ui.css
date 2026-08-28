@@ -169,6 +169,8 @@
 .ui-toast svg, .toast svg { color: var(--success); flex: 0 0 auto; }
 .ui-toast button, .toast button { border: 0; background: none; color: var(--quiet); cursor: pointer; display: grid; place-items: center; padding: 2px; border-radius: var(--r-xs); }
 .ui-toast button:hover, .toast button:hover { color: var(--ink); background: var(--sunken); }
+.toast-error { border-color: var(--line-danger); }
+.toast-error svg { color: var(--danger); }
 .ui-empty,
 .empty-state { padding: 32px 24px; display: flex; flex-direction: column; align-items: center; gap: 6px; text-align: center; color: var(--quiet); }
 .ui-empty svg, .empty-state svg { color: var(--line-strong); }

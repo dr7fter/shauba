@@ -72,6 +72,9 @@ struct RecommendedQuestion {
     score: f64,
     reason: String,
     reason_code: String,
+    /// AI 给这道题指定的角色（diagnosis / method_choice / consolidate /
+    /// integration / transfer / timed / challenge / review），只有 AI 题组的题才有值。
+    question_role: Option<String>,
 }
 
 #[derive(Debug, Serialize)]
@@ -895,6 +898,7 @@ fn init_schema(conn: &Connection) -> rusqlite::Result<()> {
            task_id TEXT NOT NULL,
            question_id INTEGER NOT NULL,
            position INTEGER NOT NULL,
+           role TEXT,
            completed_at TEXT,
            attempt_id INTEGER,
            result TEXT,
@@ -1004,6 +1008,7 @@ fn migrate_schema_impl(conn: &Connection, inject_failure: bool) -> rusqlite::Res
         ensure_column(conn, "recommendation_batch_items", "duration_seconds", "duration_seconds INTEGER")?;
         ensure_column(conn, "recommendation_batch_items", "attempt_mode", "attempt_mode TEXT")?;
         ensure_column(conn, "recommendation_batch_items", "evidence_source", "evidence_source TEXT")?;
+        ensure_column(conn, "recommendation_batch_items", "role", "role TEXT")?;
         ensure_column(conn, "elo_events", "session_id", "session_id TEXT")?;
         ensure_column(
             conn,
@@ -1045,7 +1050,10 @@ fn migrate_schema_impl(conn: &Connection, inject_failure: bool) -> rusqlite::Res
             "UPDATE attempts SET outcome = result WHERE outcome IS NULL;
              UPDATE attempts SET evidence_source = 'legacy' WHERE evidence_source IS NULL;
              UPDATE attempts SET fluency_rating = self_rating WHERE fluency_rating IS NULL;",
-        )
+        )?;
+        backfill_recommendation_item_roles(conn)
+            .map_err(|e| rusqlite::Error::ToSqlConversionFailure(Box::new(std::io::Error::other(e))))?;
+        Ok(())
     })();
 
     match result {
@@ -1473,6 +1481,54 @@ fn recommendation_batch_title(summary: &str) -> String {
     }
 }
 
+/// 回填历史 AI 题组的角色标签。
+///
+/// `role` 列是后来加的，早先导入的题组（包括正在做的那批）items 上 role 为 NULL。
+/// 角色原本只存在于 `codex_inbox.payload_json` 里，这里把它搬到 items 上，
+/// 老题组不用重新推送就能显示标签。
+fn backfill_recommendation_item_roles(conn: &Connection) -> Result<(), String> {
+    let task_ids: Vec<String> = {
+        let mut stmt = conn
+            .prepare(
+                "SELECT DISTINCT task_id FROM recommendation_batch_items
+                 WHERE role IS NULL OR role=''",
+            )
+            .map_err(|e| e.to_string())?;
+        let rows = stmt
+            .query_map([], |r| r.get::<_, String>(0))
+            .map_err(|e| e.to_string())?;
+        rows.collect::<Result<Vec<_>, _>>()
+            .map_err(|e| e.to_string())?
+    };
+    for task_id in task_ids {
+        let raw: Option<String> = conn
+            .query_row(
+                "SELECT payload_json FROM codex_inbox WHERE task_id=?1 ORDER BY id DESC LIMIT 1",
+                [task_id.as_str()],
+                |r| r.get(0),
+            )
+            .optional()
+            .map_err(|e| e.to_string())?
+            .flatten();
+        let Some(raw) = raw else { continue };
+        let Ok(payload) = serde_json::from_str::<CodexPayload>(&raw) else {
+            continue;
+        };
+        for (question_id, role) in &payload.question_roles {
+            let Ok(parsed) = question_id.parse::<i64>() else {
+                continue;
+            };
+            conn.execute(
+                "UPDATE recommendation_batch_items SET role=?1
+                 WHERE task_id=?2 AND question_id=?3 AND (role IS NULL OR role='')",
+                params![role, task_id, parsed],
+            )
+            .map_err(|e| e.to_string())?;
+        }
+    }
+    Ok(())
+}
+
 fn create_recommendation_batch(conn: &Connection, payload: &CodexPayload) -> Result<(), String> {
     if payload.recommended_question_ids.is_empty() {
         return Err("推荐题组没有有效题目".into());
@@ -1559,9 +1615,10 @@ fn create_recommendation_batch(conn: &Connection, payload: &CodexPayload) -> Res
     }
 
     for (position, question_id) in question_ids.iter().enumerate() {
+        let role = payload.question_roles.get(&question_id.to_string()).cloned();
         conn.execute(
-            "INSERT INTO recommendation_batch_items(task_id,question_id,position) VALUES(?1,?2,?3)",
-            params![payload.task_id, question_id, position as i64],
+            "INSERT INTO recommendation_batch_items(task_id,question_id,position,role) VALUES(?1,?2,?3,?4)",
+            params![payload.task_id, question_id, position as i64, role],
         )
         .map_err(|e| e.to_string())?;
     }
@@ -1636,15 +1693,39 @@ fn active_recommendation_queue(
         .map_err(|e| e.to_string())?;
         return Ok(None);
     }
+    // AI 题组的每道题带一个角色标签（诊断 / 巩固 / 攻坚 …），做题时直接显示在题号旁，
+    // 让用户一眼知道这道题该怎么对待。角色只在该题被编入 AI 题组时才有值。
+    let mut role_map: HashMap<i64, String> = HashMap::new();
+    {
+        let mut role_stmt = conn
+            .prepare(
+                "SELECT question_id, role FROM recommendation_batch_items
+                 WHERE task_id=?1 AND role IS NOT NULL AND role<>''",
+            )
+            .map_err(|e| e.to_string())?;
+        let role_rows = role_stmt
+            .query_map([batch.task_id.as_str()], |row| {
+                Ok((row.get::<_, i64>(0)?, row.get::<_, String>(1)?))
+            })
+            .map_err(|e| e.to_string())?;
+        for entry in role_rows {
+            let (qid, role) = entry.map_err(|e| e.to_string())?;
+            role_map.insert(qid, role);
+        }
+    }
     Ok(Some(
         questions
             .into_iter()
             .enumerate()
-            .map(|(position, question)| RecommendedQuestion {
-                question,
-                score: 120.0 - position as f64,
-                reason: batch.recommendation_reason.clone(),
-                reason_code: "codex".into(),
+            .map(|(position, question)| {
+                let question_role = role_map.get(&question.id).cloned();
+                RecommendedQuestion {
+                    question,
+                    score: 120.0 - position as f64,
+                    reason: batch.recommendation_reason.clone(),
+                    reason_code: "codex".into(),
+                    question_role,
+                }
             })
             .collect(),
     ))
@@ -1723,6 +1804,7 @@ fn recommendations(conn: &Connection, limit: usize) -> Result<Vec<RecommendedQue
             score,
             reason: reason.into(),
             reason_code: code.into(),
+            question_role: None,
         });
     }
 
@@ -4016,6 +4098,7 @@ fn focus_queue(
             score: 100.0,
             reason: reason_label.clone(),
             reason_code: "focus_branch".into(),
+            question_role: None,
         })
     })
     .collect::<Result<Vec<_>, _>>()
@@ -4128,6 +4211,7 @@ fn variant_queue(
             score: 100.0,
             reason: reason_label.clone(),
             reason_code: "variant_practice".into(),
+            question_role: None,
         })
         .collect())
 }
@@ -4156,6 +4240,7 @@ fn chapter_queue(
             score: 100.0,
             reason: format!("当前章节首轮 · {root_name}"),
             reason_code: "chapter".into(),
+            question_role: None,
         })
     })
     .collect::<Result<Vec<_>, _>>()
@@ -4177,6 +4262,7 @@ fn review_queue(conn: &Connection, limit: usize) -> Result<Vec<RecommendedQuesti
             score: 110.0,
             reason: "今天到期，按遗忘节奏复习".into(),
             reason_code: "due".into(),
+            question_role: None,
         })
     })
     .collect::<Result<Vec<_>, _>>()
@@ -4873,6 +4959,7 @@ fn load_practice_session_row(conn: &Connection) -> Result<Option<PracticeSession
                 score: item.score,
                 reason: item.reason,
                 reason_code: item.reason_code,
+                question_role: None,
             });
         }
     }
@@ -7915,6 +8002,25 @@ fn update_recommendation_batch_items(
         return Err("只能编辑待采用或进行中的题组".into());
     }
 
+    // 先把已有条目的角色标签捞出来，重建时按题号继承，避免编辑题组后标签全丢。
+    let mut inherited_roles: HashMap<i64, Option<String>> = HashMap::new();
+    {
+        let mut role_stmt = tx
+            .prepare(
+                "SELECT question_id, role FROM recommendation_batch_items WHERE task_id=?1",
+            )
+            .map_err(|e| e.to_string())?;
+        let role_rows = role_stmt
+            .query_map([task_id.as_str()], |row| {
+                Ok((row.get::<_, i64>(0)?, row.get::<_, Option<String>>(1)?))
+            })
+            .map_err(|e| e.to_string())?;
+        for entry in role_rows {
+            let (qid, role) = entry.map_err(|e| e.to_string())?;
+            inherited_roles.insert(qid, role);
+        }
+    }
+
     tx.execute(
         "DELETE FROM recommendation_batch_items WHERE task_id=?1 AND completed_at IS NULL",
         [&task_id],
@@ -7922,9 +8028,10 @@ fn update_recommendation_batch_items(
     .map_err(|e| e.to_string())?;
 
     for (pos, qid) in question_ids.iter().enumerate() {
+        let role = inherited_roles.get(qid).cloned().flatten();
         tx.execute(
-            "INSERT INTO recommendation_batch_items(task_id, question_id, position) VALUES(?1, ?2, ?3)",
-            params![task_id, qid, pos as i64],
+            "INSERT INTO recommendation_batch_items(task_id, question_id, position, role) VALUES(?1, ?2, ?3, ?4)",
+            params![task_id, qid, pos as i64, role],
         )
         .map_err(|e| e.to_string())?;
     }
@@ -10780,6 +10887,40 @@ mod tests {
         start_recommendation_batch_row(&conn, "SB-REC-V2-ORDER").unwrap();
         let queue = recommendations(&conn, 5).unwrap();
         assert_eq!(queue.iter().map(|item| item.question.id).collect::<Vec<_>>(), vec![2, 1]);
+    }
+
+    #[test]
+    fn backfill_restores_missing_item_roles_from_inbox_payload() {
+        let conn = Connection::open_in_memory().unwrap();
+        init_schema(&conn).unwrap();
+        insert_test_question(&conn, 1, "高等数学 / 测试");
+        insert_test_question(&conn, 2, "高等数学 / 测试");
+        let mut payload = make_recommendation_payload("SB-REC-ROLE", vec![1, 2]);
+        payload
+            .question_roles
+            .insert("1".into(), "diagnosis".into());
+        insert_codex_payload(&conn, &payload).unwrap();
+        // 正常路径：创建时即写入 role
+        let role: Option<String> = conn
+            .query_row(
+                "SELECT role FROM recommendation_batch_items WHERE task_id='SB-REC-ROLE' AND question_id=1",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(role.as_deref(), Some("diagnosis"));
+        // 模拟旧版遗留数据：role 列为空 → 回填后恢复
+        conn.execute("UPDATE recommendation_batch_items SET role=NULL", [])
+            .unwrap();
+        backfill_recommendation_item_roles(&conn).unwrap();
+        let restored: Option<String> = conn
+            .query_row(
+                "SELECT role FROM recommendation_batch_items WHERE task_id='SB-REC-ROLE' AND question_id=1",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(restored.as_deref(), Some("diagnosis"));
     }
 
     #[test]

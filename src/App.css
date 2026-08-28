@@ -766,6 +766,46 @@
 .question-content { padding: 30px clamp(28px,5vw,74px) 28px; max-width: 960px; width: 100%; margin: 0 auto; color: var(--ink); }
 .question-index { color: var(--green); font-size: var(--fs-base); font-weight: 700; margin-bottom: 14px; }
 .question-index span { color: var(--quiet); font-weight: 500; margin-left: 8px; }
+/* AI 题目角色徽章：题号旁告诉你这道题该怎么对待 */
+.qrole-badge {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 8px;
+  margin-left: 12px;
+  padding: 3px 9px;
+  border-radius: var(--r-xs);
+  font-size: var(--fs-xs);
+  font-weight: 700;
+  vertical-align: 2px;
+  cursor: help;
+  white-space: nowrap;
+}
+.qrole-badge .qrole-hint {
+  font-style: normal;
+  font-weight: 500;
+  opacity: 0.78;
+}
+/* 侧边队列里的迷你版：只留标签 */
+.qrole-mini {
+  display: inline-block;
+  font-style: normal;
+  font-weight: 700;
+  font-size: 11px;
+  margin-left: 6px;
+  padding: 1px 6px;
+  border-radius: 999px;
+  vertical-align: 1px;
+}
+.qrole-badge.scan, .qrole-mini.scan { color: var(--info); background: var(--info-soft); }
+.qrole-badge.method, .qrole-mini.method { color: var(--violet-strong); background: var(--violet-soft); }
+.qrole-badge.solid, .qrole-mini.solid { color: var(--green-dark); background: var(--green-soft); }
+.qrole-badge.synthetic, .qrole-mini.synthetic { color: var(--gold-strong); background: var(--gold-soft); }
+.qrole-badge.transfer, .qrole-mini.transfer { color: var(--cyan-strong); background: var(--cyan-soft); }
+.qrole-badge.blitz, .qrole-mini.blitz { color: var(--danger-strong); background: var(--warn-soft); }
+.qrole-badge.boss, .qrole-mini.boss { color: var(--on-color, #fff); background: var(--danger-strong); }
+.qrole-badge.review, .qrole-mini.review { color: var(--muted); background: var(--sunken, rgba(0,0,0,0.05)); }
+/* 沉浸模式收敛：只留徽章，不留提示小字 */
+.zen-mode .qrole-badge .qrole-hint { display: none; }
 .question-stem { display: block; font-family: var(--font-stem); font-size: var(--fs-2xl); font-weight: 500; line-height: 1.82; color: var(--ink); }
 /* 选择题选项样式统一 */
 .options-list {

@@ -64,6 +64,7 @@ import {
   localToday,
   normalizeAnswer,
 } from '../utils'
+import { questionRoleMeta } from '../utils/questionRole'
 import {
   areSameCodexBatchQuestionIds,
   buildCodexBatchQueueSnapshot,
@@ -1549,6 +1550,12 @@ export function TodayView({
                 <b>{item.question.categoryPath.split(' / ').slice(-2).join(' · ')}</b>
                 <small>
                   #{item.question.id} · {reasonLabels[item.reasonCode] ?? '智能推荐'}
+                  {(() => {
+                    const role = questionRoleMeta(item.questionRole)
+                    return role ? (
+                      <i className={`qrole-mini ${role.tone}`}>{role.label}</i>
+                    ) : null
+                  })()}
                 </small>
               </span>
               <button
@@ -1671,6 +1678,12 @@ export function TodayView({
                         <small>
                           #{item.question.id} ·{' '}
                           {reasonLabels[item.reasonCode] ?? item.reason}
+                          {(() => {
+                            const role = questionRoleMeta(item.questionRole)
+                            return role ? (
+                              <i className={`qrole-mini ${role.tone}`}>{role.label}</i>
+                            ) : null
+                          })()}
                         </small>
                       </div>
                       <ChevronRight size={15} />
@@ -1705,6 +1718,21 @@ export function TodayView({
         <article className="question-content">
           <div className="question-index">
             第 {index + 1} 题 <span>#{current.id}</span>
+            {(() => {
+              const role = questionRoleMeta(queue[index]?.questionRole)
+              if (!role) return null
+              return (
+                <span
+                  className={`qrole-badge ${role.tone}`}
+                  title={role.hint || undefined}
+                >
+                  {role.label}
+                  {!isZenMode && role.hint && (
+                    <i className="qrole-hint">{role.hint}</i>
+                  )}
+                </span>
+              )
+            })()}
           </div>
 
           {/* Per-Question Dedicated Timer */}

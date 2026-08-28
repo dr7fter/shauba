@@ -29,6 +29,10 @@ export type RecommendedQuestion = {
   score: number
   reason: string
   reasonCode: 'due' | 'weakness' | 'explore' | 'fit' | string
+  /** AI 给这道题指定的角色（diagnosis / method_choice / consolidate /
+   *  integration / transfer / timed / challenge / review），
+   *  仅 AI 题组的题目有值，做题时显示为题号旁的角色徽章。 */
+  questionRole?: string | null
 }
 
 export type BootstrapData = {

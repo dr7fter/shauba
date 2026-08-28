@@ -10032,20 +10032,43 @@ fn get_mistake_timeline(
 
     let mut stmt = conn
         .prepare(
-            "SELECT a.id, a.question_id, q.stem, q.category_path, q.question_type, q.difficulty,
+            "WITH latest_advice AS (
+                 SELECT q_id, advice, earliest_error FROM (
+                     SELECT question_id as q_id,
+                            json_extract(payload_json, '$.advice') as advice,
+                            json_extract(payload_json, '$.earliestError') as earliest_error,
+                            id,
+                            ROW_NUMBER() OVER(PARTITION BY question_id ORDER BY id DESC) as rn
+                     FROM codex_inbox
+                     WHERE kind = 'analysis' AND (json_extract(payload_json, '$.advice') IS NOT NULL OR json_extract(payload_json, '$.earliestError') IS NOT NULL)
+                     
+                     UNION ALL
+                     
+                     SELECT CAST(json_extract(b.value, '$.questionId') AS INTEGER) as q_id,
+                            json_extract(b.value, '$.advice') as advice,
+                            json_extract(b.value, '$.earliestError') as earliest_error,
+                            i.id,
+                            ROW_NUMBER() OVER(PARTITION BY json_extract(b.value, '$.questionId') ORDER BY i.id DESC) as rn
+                     FROM codex_inbox i, json_each(json_extract(i.payload_json, '$.batchAttempts')) b
+                     WHERE i.kind = 'batch' AND (json_extract(b.value, '$.advice') IS NOT NULL OR json_extract(b.value, '$.earliestError') IS NOT NULL)
+                 ) WHERE rn = 1
+             )
+             SELECT a.id, a.question_id, q.stem, q.category_path, q.question_type, q.difficulty,
                     a.attempted_at, a.duration_seconds, a.result, a.outcome,
-                    s.earliest_error, s.advice,
+                    COALESCE(la.earliest_error, ld.earliest_error) as earliest_error,
+                    la.advice,
                     p.mastery, COALESCE(p.favorite, 0),
                     substr(a.attempted_at, 1, 10) as day
              FROM attempts a
              JOIN questions q ON q.id = a.question_id
              LEFT JOIN progress p ON p.question_id = a.question_id
              LEFT JOIN (
-                 SELECT question_id, earliest_error, advice,
+                 SELECT question_id, earliest_error,
                         ROW_NUMBER() OVER(PARTITION BY question_id ORDER BY id DESC) as rn
-                 FROM codex_inbox
-                 WHERE earliest_error IS NOT NULL OR advice IS NOT NULL
-             ) s ON s.question_id = a.question_id AND s.rn = 1
+                 FROM learning_diagnoses
+                 WHERE earliest_error IS NOT NULL
+             ) ld ON ld.question_id = a.question_id AND ld.rn = 1
+             LEFT JOIN latest_advice la ON la.q_id = a.question_id
              WHERE COALESCE(a.outcome, a.result) IN ('wrong', 'incorrect', 'uncertain')
              ORDER BY a.attempted_at DESC, a.id DESC",
         )
@@ -12885,4 +12908,68 @@ mod tests {
         assert_eq!(p4.as_deref(), Some("线性代数 / 特征值与特征向量"));
     }
 
+    #[test]
+    fn mistake_timeline_query_extracts_earliest_error_and_advice() {
+        let conn = Connection::open_in_memory().unwrap();
+        init_schema(&conn).unwrap();
+        conn.execute_batch(
+            "INSERT INTO questions(id, stem, options_json, correct_answer, explanation, source, category_path, question_type, difficulty) VALUES (1, '测试题目1', '[]', 'A', '解析', '真题', '高等数学', 'single_choice', 3);
+             INSERT INTO attempts(id, question_id, attempted_at, duration_seconds, result, outcome, self_rating) VALUES (1, 1, '2026-08-28T10:00:00+08:00', 120, 'wrong', 'wrong', 1);
+             INSERT INTO learning_diagnoses(task_id, question_id, category_key, verdict, earliest_error, confidence, created_at, updated_at) VALUES ('t1', 1, '高等数学', 'incorrect', '第1行错误', 0.95, '2026-08-28T10:00:00+08:00', '2026-08-28T10:00:00+08:00');
+             INSERT INTO codex_inbox(task_id, kind, question_id, payload_json, status, created_at) VALUES ('t1', 'analysis', 1, '{\"advice\":\"专项修复建议\"}', 'confirmed', '2026-08-28T10:00:00+08:00');"
+        ).unwrap();
+
+        let mut stmt = conn.prepare(
+            "WITH latest_advice AS (
+                 SELECT q_id, advice, earliest_error FROM (
+                     SELECT question_id as q_id,
+                            json_extract(payload_json, '$.advice') as advice,
+                            json_extract(payload_json, '$.earliestError') as earliest_error,
+                            id,
+                            ROW_NUMBER() OVER(PARTITION BY question_id ORDER BY id DESC) as rn
+                     FROM codex_inbox
+                     WHERE kind = 'analysis' AND (json_extract(payload_json, '$.advice') IS NOT NULL OR json_extract(payload_json, '$.earliestError') IS NOT NULL)
+                     
+                     UNION ALL
+                     
+                     SELECT CAST(json_extract(b.value, '$.questionId') AS INTEGER) as q_id,
+                            json_extract(b.value, '$.advice') as advice,
+                            json_extract(b.value, '$.earliestError') as earliest_error,
+                            i.id,
+                            ROW_NUMBER() OVER(PARTITION BY json_extract(b.value, '$.questionId') ORDER BY i.id DESC) as rn
+                     FROM codex_inbox i, json_each(json_extract(i.payload_json, '$.batchAttempts')) b
+                     WHERE i.kind = 'batch' AND (json_extract(b.value, '$.advice') IS NOT NULL OR json_extract(b.value, '$.earliestError') IS NOT NULL)
+                 ) WHERE rn = 1
+             )
+             SELECT a.id, a.question_id, q.stem, q.category_path, q.question_type, q.difficulty,
+                    a.attempted_at, a.duration_seconds, a.result, a.outcome,
+                    COALESCE(la.earliest_error, ld.earliest_error) as earliest_error,
+                    la.advice,
+                    p.mastery, COALESCE(p.favorite, 0),
+                    substr(a.attempted_at, 1, 10) as day
+             FROM attempts a
+             JOIN questions q ON q.id = a.question_id
+             LEFT JOIN progress p ON p.question_id = a.question_id
+             LEFT JOIN (
+                 SELECT question_id, earliest_error,
+                        ROW_NUMBER() OVER(PARTITION BY question_id ORDER BY id DESC) as rn
+                 FROM learning_diagnoses
+                 WHERE earliest_error IS NOT NULL
+             ) ld ON ld.question_id = a.question_id AND ld.rn = 1
+             LEFT JOIN latest_advice la ON la.q_id = a.question_id
+             WHERE COALESCE(a.outcome, a.result) IN ('wrong', 'incorrect', 'uncertain')
+             ORDER BY a.attempted_at DESC, a.id DESC"
+        ).unwrap();
+
+        let row = stmt.query_row([], |r| {
+            let earliest_err: Option<String> = r.get(10)?;
+            let adv: Option<String> = r.get(11)?;
+            Ok((earliest_err, adv))
+        }).unwrap();
+
+        assert_eq!(row.0.as_deref(), Some("第1行错误"));
+        assert_eq!(row.1.as_deref(), Some("专项修复建议"));
+    }
+
 }
+

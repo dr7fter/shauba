@@ -5285,6 +5285,43 @@ const ELO_PROMOTION_PROTECTION: i64 = 3;
 const ELO_WRONG_DELTA_FLOOR: f64 = -1.0;
 const ELO_CORRECT_DELTA_FLOOR: f64 = 0.5;
 
+/// 自适应期望锚点：用自己近期的真实水平替代固定的 0.50 基线。
+///
+/// 为什么需要（v1.6.9，基于 94 次真实结算的离线回放）：
+/// 固定 0.50 基线假设「Rating 1.00 是常规水平」，但 performance 的实际分布中心在
+/// 1.30，导致 `score − expected` 恒为正、分数只涨不跌。回放显示，在正确率崩塌到
+/// 平均 35% 的四天里，仅有结果闸门的版本仍让 ELO 涨了 14 分；改用自适应锚点后
+/// 同期为 −10 分，分数才真正跟着水平走。
+///
+/// 取**中位数**而非均值：表现分里有约 21% 落在崩盘区（<0.8），均值会被极端值拉偏。
+/// 混合 30% 固定基线：防止锚点自身跟着分布漂走——否则长期退步的人会感觉不到退步。
+const ELO_ANCHOR_WINDOW: usize = 30;
+const ELO_ANCHOR_MIN_SAMPLES: usize = 10;
+const ELO_ANCHOR_BLEND: f64 = 0.70;
+
+/// 计算自适应期望锚点：近 `ELO_ANCHOR_WINDOW` 次 performance 折算 score 后的中位数，
+/// 与固定基线按 `ELO_ANCHOR_BLEND` 混合。样本不足（定级期）时退回固定基线，
+/// 保证冷启动行为与从前一致。
+fn adaptive_anchor(conn: &Connection) -> Result<f64, String> {
+    let mut stmt = conn
+        .prepare("SELECT performance FROM elo_events ORDER BY id DESC LIMIT ?1")
+        .map_err(|e| e.to_string())?;
+    let rows = stmt
+        .query_map([ELO_ANCHOR_WINDOW as i64], |row| row.get::<_, f64>(0))
+        .map_err(|e| e.to_string())?;
+    let mut scores: Vec<f64> = Vec::new();
+    for item in rows {
+        scores.push(item.map_err(|e| e.to_string())? / 2.0);
+    }
+    drop(stmt);
+    if scores.len() < ELO_ANCHOR_MIN_SAMPLES {
+        return Ok(ELO_EXPECTED_BASE);
+    }
+    scores.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
+    let median = scores[scores.len() / 2];
+    Ok(ELO_ANCHOR_BLEND * median + (1.0 - ELO_ANCHOR_BLEND) * ELO_EXPECTED_BASE)
+}
+
 fn current_elo(conn: &Connection) -> Result<(i64, f64), String> {
     let settlements: i64 = conn
         .query_row("SELECT COUNT(*) FROM elo_events", [], |r| r.get(0))
@@ -5361,7 +5398,9 @@ fn settle_elo(
     let dm = input.difficulty_multiplier.unwrap_or(1.0);
     let mastery_offset = mastery - 2.0;
     let diff_offset = dm - 1.0;
-    let mut expected = ELO_EXPECTED_BASE + ELO_EXPECTED_MASTERY_STEP * mastery_offset
+    // 期望基线锚定在自己近期的真实水平上，而非写死的 0.50
+    let anchor = adaptive_anchor(conn)?;
+    let mut expected = anchor + ELO_EXPECTED_MASTERY_STEP * mastery_offset
         - ELO_EXPECTED_DIFFICULTY_STEP * diff_offset;
     if input.mode.as_deref() == Some("review") {
         expected += ELO_REVIEW_BONUS;
@@ -11631,6 +11670,107 @@ mod tests {
         assert!(
             spread > 3.0,
             "难度杠杆必须产生实质收益差距（原实现下仅约 0.5 分）：难题 {hard} vs 易题 {easy}，差 {spread}"
+        );
+    }
+
+    #[test]
+    fn adaptive_anchor_falls_back_until_enough_samples() {
+        // 定级期样本不足时行为必须与固定基线完全一致，保证冷启动不变
+        let conn = Connection::open_in_memory().unwrap();
+        init_schema(&conn).unwrap();
+        assert_eq!(
+            adaptive_anchor(&conn).unwrap(),
+            ELO_EXPECTED_BASE,
+            "无任何结算时应退回固定基线"
+        );
+        for _ in 0..(ELO_ANCHOR_MIN_SAMPLES - 1) {
+            conn.execute(
+                "INSERT INTO elo_events(question_id,delta,rating_after,performance,expected,created_at,reason) VALUES(1,1,1401,1.6,0.5,'2026-08-29T10:00:00+08:00','match')",
+                [],
+            )
+            .unwrap();
+        }
+        assert_eq!(
+            adaptive_anchor(&conn).unwrap(),
+            ELO_EXPECTED_BASE,
+            "样本不足 {} 时应退回固定基线",
+            ELO_ANCHOR_MIN_SAMPLES
+        );
+    }
+
+    #[test]
+    fn adaptive_anchor_uses_median_blended_with_fixed_base() {
+        // 锚点 = 70% 近期中位数 + 30% 固定基线。固定基线的存在是为了防止
+        // 锚点自身跟着分布漂走（否则长期退步的人感觉不到退步）。
+        let anchor_after = |perf: f64| -> f64 {
+            let conn = Connection::open_in_memory().unwrap();
+            init_schema(&conn).unwrap();
+            for _ in 0..ELO_ANCHOR_MIN_SAMPLES {
+                conn.execute(
+                    "INSERT INTO elo_events(question_id,delta,rating_after,performance,expected,created_at,reason) VALUES(1,1,1401,?1,0.5,'2026-08-29T10:00:00+08:00','match')",
+                    [perf],
+                )
+                .unwrap();
+            }
+            adaptive_anchor(&conn).unwrap()
+        };
+        let at_par = anchor_after(1.0);
+        let strong = anchor_after(2.0);
+        assert!(
+            (at_par - ELO_EXPECTED_BASE).abs() < 1e-9,
+            "performance 1.0 的中位数即 0.50，锚点应等于固定基线：{at_par}"
+        );
+        assert!(
+            (strong - 0.85).abs() < 1e-9,
+            "performance 2.0 → 中位数 1.0，混合后应为 0.7×1.0 + 0.3×0.5 = 0.85，实际 {strong}"
+        );
+    }
+
+    #[test]
+    fn adaptive_anchor_reduces_gains_when_own_level_is_high() {
+        // 核心契约：同样的表现分，在自身水平已经提高之后应该涨得更少（甚至转负）。
+        // 固定 0.50 基线做不到这一点，分数会随练习量无限膨胀——这正是自适应锚点
+        // 要解决的问题（回放：正确率崩塌期，固定基线仍 +14 分，自适应 −10 分）。
+        //
+        // 用 partial 而非 correct：correct 会被结果闸门抬到至少 +0.5，会掩盖锚点本身的效果。
+        let settle_after_history = |prior_perf: f64| -> f64 {
+            let conn = Connection::open_in_memory().unwrap();
+            init_schema(&conn).unwrap();
+            conn.execute(
+                "INSERT INTO questions(id,stem,options_json,correct_answer,explanation,source,question_type,category_path,image_paths_json,is_core,difficulty,content_hash) VALUES(1,'题','[]','A','解析','测试','single_choice','高等数学 / 章节','[]',0,2,'')",
+                [],
+            )
+            .unwrap();
+            // 两组都播种同样条数的历史，使 K 值一致，唯一变量是锚点高低
+            for _ in 0..ELO_ANCHOR_MIN_SAMPLES {
+                conn.execute(
+                    "INSERT INTO elo_events(question_id,delta,rating_after,performance,expected,created_at,reason) VALUES(1,1,1500,?1,0.5,'2026-08-29T10:00:00+08:00','match')",
+                    [prior_perf],
+                )
+                .unwrap();
+            }
+            let before = current_elo(&conn).unwrap().1;
+            record_attempt_row(
+                &conn,
+                &AttemptInput {
+                    question_id: 1,
+                    duration_seconds: 120,
+                    result: "partial".into(),
+                    self_rating: 3,
+                    mode: Some("paper".into()),
+                    ai_rating: Some(1.4),
+                    ..Default::default()
+                },
+            )
+            .unwrap();
+            current_elo(&conn).unwrap().1 - before
+        };
+
+        let after_weak = settle_after_history(0.8);
+        let after_strong = settle_after_history(1.8);
+        assert!(
+            after_strong < after_weak,
+            "自身水平更高时，同样的表现分应涨得更少：弱历史 {after_weak:+} vs 强历史 {after_strong:+}"
         );
     }
 

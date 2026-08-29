@@ -485,6 +485,17 @@ export async function listPressureSessions(): Promise<PressureSession[]> {
   return []
 }
 
+/**
+ * 按 Codex 任务号读取整组批改报告。
+ *
+ * 覆盖「没有走压力模拟」的日常训练：这些报告只落在 codex_inbox，
+ * 不产生 pressure session，无法用 getPressureGradingReport 取到。
+ */
+export async function getCodexBatchReport(taskId: string): Promise<GradingReport | null> {
+  if (isTauri()) return invoke('get_codex_batch_report', { taskId })
+  return null
+}
+
 export async function getAppVersion(): Promise<string> {
   if (isTauri()) {
     try {

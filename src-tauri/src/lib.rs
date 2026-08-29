@@ -9193,6 +9193,194 @@ fn get_pressure_session(
     Ok(result)
 }
 
+/// 把 Codex 整组批改回传载荷（`kind = "batch"`）适配成与 pressure_reports 一致的报告结构。
+///
+/// 背景（v1.6.9 修复）：压力模拟之外的日常整组批改（taskId 形如 `SB-BATCH-xxx`）
+/// 既不会写入 `pressure_sessions`，也不会写入 `pressure_reports`——它只落在主库的
+/// `codex_inbox`。而前端原先只有 `get_pressure_grading_report` 这一条读取路径，
+/// 且必须先在 pressure 会话列表里按 taskId 找到对应 session 才能取报告。
+/// 结果就是：不走压力模拟生成的报告，写了却永远打不开（固定提示「没有找到这次
+/// 压力模拟」）。这里直接以 `codex_inbox` 为数据源，让两种模式共用同一个报告组件。
+fn build_codex_batch_report(
+    conn: &Connection,
+    task_id: &str,
+    payload: &Value,
+    status: &str,
+    created_at: &str,
+) -> Value {
+    let attempts = payload
+        .get("batchAttempts")
+        .and_then(|v| v.as_array())
+        .cloned()
+        .unwrap_or_default();
+
+    let mut grades = Vec::new();
+    let mut question_ids: Vec<i64> = Vec::new();
+    let mut correct_count = 0_i64;
+    let mut partial_count = 0_i64;
+    let mut wrong_count = 0_i64;
+    let mut uncertain_count = 0_i64;
+    let mut total_duration = 0_i64;
+
+    for item in &attempts {
+        let question_id = item.get("questionId").and_then(|v| v.as_i64()).unwrap_or(0);
+        if question_id <= 0 {
+            continue;
+        }
+        question_ids.push(question_id);
+
+        let result = item
+            .get("result")
+            .and_then(|v| v.as_str())
+            .unwrap_or("uncertain");
+        let verdict = item.get("verdict").and_then(|v| v.as_str()).unwrap_or(result);
+        match verdict {
+            "correct" => correct_count += 1,
+            "partial" => partial_count += 1,
+            "uncertain" => uncertain_count += 1,
+            _ => wrong_count += 1,
+        }
+        let duration = item
+            .get("durationSeconds")
+            .and_then(|v| v.as_i64())
+            .unwrap_or(0);
+        total_duration += duration;
+
+        // batch 回传载荷本身不含标准答案与用户作答，从库里补齐
+        let correct_answer: String = conn
+            .query_row(
+                "SELECT correct_answer FROM questions WHERE id=?1",
+                [question_id],
+                |row| row.get(0),
+            )
+            .unwrap_or_default();
+        let user_answer: String = conn
+            .query_row(
+                "SELECT COALESCE(selected_answer,'') FROM attempts WHERE question_id=?1
+                 ORDER BY id DESC LIMIT 1",
+                [question_id],
+                |row| row.get(0),
+            )
+            .unwrap_or_default();
+
+        grades.push(json!({
+            "questionId": question_id,
+            "correct": verdict == "correct",
+            "userAnswer": user_answer,
+            "correctAnswer": correct_answer,
+            "feedback": item.get("summary").and_then(|v| v.as_str()).unwrap_or(""),
+            "duration": duration,
+            "result": result,
+            "verdict": verdict,
+            "selfRating": item.get("selfRating"),
+            "earliestError": item.get("earliestError"),
+            "errorTags": item.get("errorTags"),
+            "weaknessTags": item.get("weaknessTags"),
+            "advice": item.get("advice"),
+            "betterSolution": item.get("betterSolution"),
+            "confidence": item.get("confidence"),
+            "rating": item.get("rating"),
+            "ratingTier": item.get("ratingTier"),
+            "difficultyMultiplier": item.get("difficultyMultiplier"),
+            "dimensions": item.get("dimensions"),
+        }));
+    }
+
+    let graded_count = grades.len() as i64;
+    let accuracy = if graded_count > 0 {
+        (correct_count as f64 / graded_count as f64 * 100.0).round() as i64
+    } else {
+        0
+    };
+    let average_duration = if graded_count > 0 {
+        (total_duration as f64 / graded_count as f64).round() as i64
+    } else {
+        0
+    };
+
+    let weaknesses: Vec<String> = payload
+        .get("weaknessTags")
+        .and_then(|v| v.as_array())
+        .map(|arr| {
+            arr.iter()
+                .filter_map(|v| v.as_str().map(|s| s.to_string()))
+                .collect()
+        })
+        .unwrap_or_default();
+    // batch 载荷的 summary 是整组文字总评（而非统计对象），放进 suggestions 供报告展示
+    let mut suggestions: Vec<String> = Vec::new();
+    if let Some(text) = payload.get("summary").and_then(|v| v.as_str()) {
+        if !text.trim().is_empty() {
+            suggestions.push(text.to_string());
+        }
+    }
+
+    let created_ms = chrono::DateTime::parse_from_rfc3339(created_at)
+        .map(|dt| dt.timestamp_millis())
+        .unwrap_or_else(|_| Local::now().timestamp_millis());
+    // codex_inbox 的状态是 confirmed/dismissed，报告的语义状态是 graded/graded_partial
+    let report_status = if status == "confirmed" {
+        "graded"
+    } else {
+        "graded_partial"
+    };
+
+    json!({
+        "sessionId": format!("codex-{task_id}"),
+        "sourceTaskId": task_id,
+        "status": report_status,
+        "questionIds": question_ids,
+        "ungradedQuestionIds": [],
+        "grades": grades,
+        "summary": {
+            "correctCount": correct_count,
+            "totalCount": graded_count,
+            "accuracy": accuracy,
+            "strengths": Vec::<String>::new(),
+            "weaknesses": weaknesses,
+            "suggestions": suggestions,
+            "partialCount": partial_count,
+            "wrongCount": wrong_count,
+            "uncertainCount": uncertain_count,
+            "gradedCount": graded_count,
+            "totalDuration": total_duration,
+            "averageDuration": average_duration,
+        },
+        "createdAt": created_ms,
+        "confirmedAt": created_ms,
+    })
+}
+
+/// 按 Codex 任务号读取整组批改报告，覆盖「未走压力模拟」的日常训练。
+/// 返回结构与 `get_pressure_grading_report` 一致，可共用同一个报告组件。
+#[tauri::command]
+fn get_codex_batch_report(task_id: String, state: State<AppState>) -> Result<Option<Value>, String> {
+    let conn = state.db.lock().map_err(|e| e.to_string())?;
+    let row: Option<(String, String, String)> = conn
+        .query_row(
+            "SELECT payload_json, status, created_at FROM codex_inbox WHERE task_id=?1",
+            [&task_id],
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+        )
+        .optional()
+        .map_err(|e| e.to_string())?;
+    let (payload_json, status, created_at) = match row {
+        Some(value) => value,
+        None => return Ok(None),
+    };
+    let payload: Value = serde_json::from_str(&payload_json).unwrap_or(Value::Null);
+    if payload.get("kind").and_then(|v| v.as_str()) != Some("batch") {
+        return Ok(None);
+    }
+    Ok(Some(build_codex_batch_report(
+        &conn,
+        &task_id,
+        &payload,
+        &status,
+        &created_at,
+    )))
+}
+
 #[tauri::command]
 fn get_pressure_grading_report(
     session_id: String,
@@ -10569,6 +10757,7 @@ pub fn run() {
             save_pressure_grading_report,
             get_pressure_session,
             get_pressure_grading_report,
+            get_codex_batch_report,
             list_pressure_sessions,
             get_today_attempted_questions,
             get_mistake_timeline,
@@ -11545,6 +11734,107 @@ mod tests {
         assert!(
             gap_after.get("高等数学").copied().unwrap_or(1.0) == 0.0,
             "高数占比 70% 已超过其 56% 的分值占比，缺口同样应为 0"
+        );
+    }
+
+    #[test]
+    fn codex_batch_report_is_readable_without_pressure_session() {
+        // 回归测试：日常（非压力模拟）的整组批改只落在 codex_inbox，不产生
+        // pressure session。v1.6.9 之前 App 只有 get_pressure_grading_report
+        // 一条读取路径，这些报告生成了却永远打不开。
+        let conn = Connection::open_in_memory().unwrap();
+        init_schema(&conn).unwrap();
+        for (id, answer) in [(1_i64, "B"), (2_i64, "C")] {
+            conn.execute(
+                "INSERT INTO questions(id,stem,options_json,correct_answer,explanation,source,question_type,category_path,image_paths_json,is_core,difficulty,content_hash) VALUES(?1,'题','[]',?2,'解析','测试','single_choice','高等数学 / 章节','[]',0,2,'')",
+                params![id, answer],
+            )
+            .unwrap();
+        }
+        conn.execute(
+            "INSERT INTO attempts(question_id,attempted_at,duration_seconds,result,self_rating,mode,selected_answer) VALUES(1,'2026-08-29T10:00:00+08:00',120,'correct',4,'paper','B')",
+            [],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO attempts(question_id,attempted_at,duration_seconds,result,self_rating,mode,selected_answer) VALUES(2,'2026-08-29T10:05:00+08:00',300,'wrong',2,'paper','A')",
+            [],
+        )
+        .unwrap();
+
+        let payload = json!({
+            "schemaVersion": 1,
+            "kind": "batch",
+            "taskId": "SB-BATCH-20260829-0001",
+            "summary": "整组总评：第 2 题在变限积分处出错",
+            "errorTags": ["瞄准失误"],
+            "weaknessTags": ["变限积分求导"],
+            "confidence": 0.95,
+            "recommendedQuestionIds": [],
+            "batchAttempts": [
+                {
+                    "questionId": 1, "result": "correct", "selfRating": 4,
+                    "durationSeconds": 120, "summary": "思路正确",
+                    "verdict": "correct", "earliestError": null,
+                    "errorTags": [], "weaknessTags": [],
+                    "advice": null, "betterSolution": null,
+                    "confidence": 0.95, "rating": 1.3, "ratingTier": "A"
+                },
+                {
+                    "questionId": 2, "result": "wrong", "selfRating": 2,
+                    "durationSeconds": 300, "summary": "变限积分求导漏项",
+                    "verdict": "partial", "earliestError": "第 3 行漏掉上限求导",
+                    "errorTags": ["瞄准失误"], "weaknessTags": ["变限积分求导"],
+                    "advice": "补练变限积分", "betterSolution": "莱布尼茨公式",
+                    "confidence": 0.9, "rating": 0.8, "ratingTier": "C"
+                }
+            ]
+        });
+        conn.execute(
+            "INSERT INTO codex_inbox(task_id,kind,payload_json,status,created_at) VALUES('SB-BATCH-20260829-0001','batch',?1,'confirmed','2026-08-29T14:00:00+08:00')",
+            [payload.to_string()],
+        )
+        .unwrap();
+
+        let report = build_codex_batch_report(
+            &conn,
+            "SB-BATCH-20260829-0001",
+            &payload,
+            "confirmed",
+            "2026-08-29T14:00:00+08:00",
+        );
+
+        assert_eq!(report["status"], "graded");
+        assert_eq!(report["sourceTaskId"], "SB-BATCH-20260829-0001");
+        let grades = report["grades"].as_array().unwrap();
+        assert_eq!(grades.len(), 2, "两道批改都应进入报告");
+        // batch 回传载荷不含标准答案与用户作答，应从库里补齐
+        assert_eq!(grades[0]["correctAnswer"], "B");
+        assert_eq!(grades[1]["correctAnswer"], "C");
+        assert_eq!(grades[0]["userAnswer"], "B");
+        assert_eq!(grades[0]["correct"], true);
+        assert_eq!(grades[1]["correct"], false);
+        // 逐题诊断要落到报告能渲染的字段上
+        assert_eq!(grades[1]["feedback"], "变限积分求导漏项");
+        assert_eq!(grades[1]["earliestError"], "第 3 行漏掉上限求导");
+        assert_eq!(grades[1]["advice"], "补练变限积分");
+
+        let summary = &report["summary"];
+        assert_eq!(summary["totalCount"], 2);
+        assert_eq!(summary["correctCount"], 1);
+        assert_eq!(summary["partialCount"], 1);
+        assert_eq!(summary["accuracy"], 50);
+        assert_eq!(summary["totalDuration"], 420);
+        assert_eq!(summary["averageDuration"], 210);
+        // 整组文字总评必须落到 suggestions，否则报告正文一片空白
+        assert_eq!(
+            summary["suggestions"][0], "整组总评：第 2 题在变限积分处出错",
+            "整组 summary 必须进 suggestions，否则报告无正文可读"
+        );
+        assert_eq!(summary["weaknesses"][0], "变限积分求导");
+        assert!(
+            report["createdAt"].as_i64().unwrap() > 0,
+            "createdAt 应为毫秒时间戳而非原始字符串"
         );
     }
 

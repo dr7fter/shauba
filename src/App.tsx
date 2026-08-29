@@ -36,6 +36,7 @@ import {
   checkAppUpdate,
   clearPracticeSession,
   getAppVersion,
+  getCodexBatchReport,
   getMasteryMap,
   getPressureGradingReport,
   getQuestion,
@@ -607,29 +608,14 @@ export default function App() {
   const openPressureReport = useCallback(
     async ({ sessionId, taskId }: { sessionId?: string; taskId?: string }) => {
       setPressureReportLoading(true)
-      try {
-        const sessions = await listPressureSessions()
-        const session = sessionId
-          ? sessions.find((item) => item.sessionId === sessionId)
-          : taskId
-          ? sessions.find((item) => item.taskId === taskId)
-          : sessions.find(
-              (item) => item.status === 'graded' || item.status === 'graded_partial'
-            )
-        if (!session) {
-          setNotice('没有找到这次压力模拟，暂时无法打开学习报告')
-          return false
-        }
-        const report = await getPressureGradingReport(session.sessionId)
-        if (!report) {
-          setNotice('学习报告还未生成。请先在 Codex 收件箱确认整组批改，再刷新报告')
-          return false
-        }
+
+      // 报告组件需要题干原文，这里按报告涉及的题号批量补齐
+      const loadReportQuestions = async (report: GradingReport, extraIds: number[] = []) => {
         const questionIds = Array.from(
           new Set([
             ...(report.questionIds ?? []),
             ...report.grades.map((grade) => grade.questionId),
-            ...(session.questionIds ?? []),
+            ...extraIds,
           ])
         )
         const loaded = await Promise.all(
@@ -648,6 +634,42 @@ export default function App() {
               .map((question) => [question.id, question])
           )
         )
+      }
+
+      try {
+        // ① 按 Codex 任务号读取：覆盖「没有走压力模拟」的整组批改。
+        //    v1.6.9 修复：这类报告只落在 codex_inbox，不产生 pressure session，
+        //    原先无论从哪里点都只会提示「没有找到这次压力模拟」，写了却读不了。
+        if (taskId) {
+          const report = await getCodexBatchReport(taskId)
+          if (report) {
+            await loadReportQuestions(report)
+            setPressureReportSession(null)
+            setPressureReport(report)
+            setPressureReportOpen(true)
+            return true
+          }
+        }
+
+        // ② 压力模拟既有路径
+        const sessions = await listPressureSessions()
+        const session = sessionId
+          ? sessions.find((item) => item.sessionId === sessionId)
+          : taskId
+          ? sessions.find((item) => item.taskId === taskId)
+          : sessions.find(
+              (item) => item.status === 'graded' || item.status === 'graded_partial'
+            )
+        if (!session) {
+          setNotice('没有找到这次压力模拟，暂时无法打开学习报告')
+          return false
+        }
+        const report = await getPressureGradingReport(session.sessionId)
+        if (!report) {
+          setNotice('学习报告还未生成。请先在 Codex 收件箱确认整组批改，再刷新报告')
+          return false
+        }
+        await loadReportQuestions(report, session.questionIds ?? [])
         setPressureReportSession(session)
         setPressureReport(report)
         setPressureReportOpen(true)

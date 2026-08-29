@@ -850,6 +850,18 @@ export function TodayView({
         correct,
       })
       void refresh()
+    } catch (error) {
+      // 提交失败必须让用户看见。
+      //
+      // 此前这里没有 catch 分支，recordAttempt 抛错（DB 锁、序列化异常、磁盘写入失败）
+      // 时 Promise 会直接 reject，配合调用点 `void submit()` 把异常彻底吞掉：
+      // 界面停在原地、Toast 不出现、队列不推进，用户会以为作答已经保存。
+      // 这是全项目唯一一处会直接导致用户作答数据静默丢失的缺陷。
+      //
+      // 这里只做提示与状态复位，不推进队列——保持现场，让用户可直接重试。
+      // TODO(阶段三)：与后端统一错误类型后改成按错误码判定，而非依赖文案正则。
+      console.error('[TodayView] 提交作答失败，本次作答未保存', error)
+      notify('提交失败：本次作答未能保存，请重试')
     } finally {
       submittingRef.current = false
     }

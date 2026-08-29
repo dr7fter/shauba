@@ -194,7 +194,7 @@ td code{font-size:11.5px}
     <div>分析样本<b>246 次作答 / 208 题</b></div>
     <div>数据区间<b>08-14 → 08-29（16 天）</b></div>
     <div>代码规模<b>48,389 行</b></div>
-    <div>当前版本<b>v1.6.7</b></div>
+    <div>当前版本<b>v1.6.10</b></div>
   </div>
 </div>
 
@@ -219,8 +219,19 @@ td code{font-size:11.5px}
   <div class="t">核心诊断</div>
   <p><strong>刷吧的工程能力，已经跑到了它的产品逻辑前面。</strong></p>
   <p>它有 79 个后端命令、六维 HLTV 评分、ELO 天梯、SRS 间隔复习、好友同步、AI 批改闭环、97 个 Rust 测试——
-  这些是一个成熟产品的骨架。但它每天给你的<strong>核心反馈信号是错的</strong>：你的正确率从 75% 一路跌到 37.5%，
-  而 ELO 在这段时间里从 1455 涨到了 1612。<strong>你越练得差，分数越高。</strong></p>
+  这些是一个成熟产品的骨架。但它的天梯分给出的信号是<strong>偏的</strong>：你的正确率从 75% 一路跌到 37.5%，
+  而 ELO 在这段时间里从 1455 涨到了 1612。</p>
+</div>
+
+<div class="callout warn">
+  <div class="t">2026-08-29 更正：「分数与实际水平完全脱钩」的说法不准确</div>
+  <p>初版这里写的是「核心反馈信号是错的」「你越练得差，分数越高」。做完离线回放（94 次真实结算）后必须更正：
+  <strong>三套参数下，每日 ELO 增量与当日正确率的相关系数都在 +0.70 左右的正值</strong>——方向一直是对的。</p>
+  <p>我当时只看到「累计 ELO 从 1455 单调涨到 1612」就下了结论，但<strong>累计值只要平均增量为正就必然单调上涨</strong>，
+  这并不等于脱钩。真正的问题是：<strong>期望基线偏低（写死的 0.50）导致绝对分数膨胀</strong>。
+  准确表述应为「方向对，但基线偏了」。</p>
+  <p>这个更正<strong>不改变修复的必要性</strong>——做错零代价、难度杠杆失效、概率统计零覆盖、评分通胀都是确凿的问题——
+  但它改变了对问题性质的判断。详见 <a href="#s2" style="color:inherit">第 2.4 节</a>。</p>
 </div>
 
 <div class="grid g3">
@@ -413,6 +424,43 @@ rating = <span class="n">0.26</span> + <span class="n">0.0125</span> × <span cl
 </table>
 
 <p>原因：难度系数实际只落在 <code>0.94 ~ 1.10</code> 区间，而公式里 <code>−0.25 × (dm − 1)</code> 在这个区间只能产生 ±0.04 的影响。<strong>想让难题真正有吸引力，难度步长得放大一个数量级。</strong></p>
+
+<h3>2.4 离线回放验证：三套参数谁更可信 <span class="badge b-ok">v1.6.10 已完成</span></h3>
+
+<p>按项目约定「调参前先写回放验证」，我用 <code>elo_events</code> 里已有的 94 次真实结算，
+离线复现了 <code>settle_elo</code> 在三套参数下的完整演化（脚本已固化到
+<code>scripts/replay_elo_params.py</code>）。</p>
+
+<table>
+<thead><tr><th>参数组合</th><th>最终ELO</th><th>做对均变动</th><th>做错均变动</th><th>做错仍涨分</th><th>崩塌期总变动</th><th>与正确率相关性</th></tr></thead>
+<tbody>
+<tr><td>v1.6.7 原始</td><td class="num">1518</td><td class="num">+2.75</td><td class="num" style="color:var(--danger)">−0.06</td><td class="num" style="color:var(--danger);font-weight:700">49%</td><td class="num" style="color:var(--danger)">+14</td><td class="num">+0.732</td></tr>
+<tr><td>v1.6.8（结果闸门 + 难度杠杆）</td><td class="num">1506</td><td class="num">+3.58</td><td class="num" style="color:var(--ok)">−1.04</td><td class="num" style="color:var(--ok);font-weight:700">0%</td><td class="num" style="color:var(--danger)">+14</td><td class="num">+0.749</td></tr>
+<tr style="background:var(--ok-soft)"><td><strong>v1.6.10（+ 自适应锚点）</strong></td><td class="num"><strong>1460</strong></td><td class="num">+2.76</td><td class="num" style="color:var(--ok)"><strong>−1.22</strong></td><td class="num" style="color:var(--ok);font-weight:700">0%</td><td class="num" style="color:var(--ok);font-weight:700"><strong>−10</strong></td><td class="num">+0.703</td></tr>
+</tbody>
+</table>
+
+<div class="callout ok">
+  <div class="t">决定性判据：正确率崩塌的那四天</div>
+  <p>只看「与正确率的相关性」会得出「自适应锚点略差（+0.703 vs +0.749）」的错误结论——
+  <strong>那个指标只有 8 个数据点，统计上不可靠</strong>。真正的判据是曲线行为：</p>
+  <p>8/26 – 8/29 四天，你的正确率是 25% / 43% / 35% / 38%（平均 35%，水平明显下滑）：</p>
+  <p><strong>v1.6.8：+14 分</strong>（水平掉下去，分数还在涨）<br>
+  <strong>v1.6.10：−10 分</strong>（水平掉下去，分数跟着掉）✓</p>
+  <p>这就是自适应锚点的价值：<strong>只有超出你自己当前水平的表现，才该涨分。</strong></p>
+</div>
+
+<h4>实施要点</h4>
+<ul>
+  <li><strong>取中位数而非均值</strong>：你的表现分里约 21% 落在崩盘区（&lt;0.8），均值会被极端值拉偏。</li>
+  <li><strong>保留 30% 固定基线</strong>：防止锚点自身跟着分布漂走——否则一个长期退步的人会感觉不到自己在退步。</li>
+  <li><strong>样本 &lt;10 次时退回固定基线</strong>：冷启动行为完全不变，也因此所有既有的 ELO 测试都不受影响。</li>
+  <li><strong>历史 ELO 不重算</strong>：从上线之日起按新规则演化，避免分数突变。</li>
+</ul>
+
+<p style="font-size:13px;color:var(--text-3)">回放的已知近似：脚本用 <code>progress.mastery</code> 的当前值近似历史值（mastery 随时变化，无法还原），
+导致 v1.6.7 口径复现的平均绝对误差约 0.04。<strong>相对比较可信，绝对分数有偏差</strong>——上表的 1518 / 1506 / 1460
+不能直接与 App 里显示的分数对照。</p>
 
 <!-- ============ 3 覆盖与复习 ============ -->
 <h2 id="s3"><span class="num">3</span>产品体检：覆盖率与复习闭环</h2>
@@ -911,18 +959,27 @@ v1.6.6 已经加了计时护栏（&lt;5 秒 / &gt;30 分钟回退到中性节奏
 </div>
 
 <div class="phase">
-  <div class="ph"><span class="chip">阶段二</span><strong>标定：让评分体系重新可信</strong><span class="dur">建议 3–5 天</span></div>
-  <p>阶段一是止损，阶段二才是治本。核心是<strong>重新校准评分尺子</strong>，并让历史数据也归位。</p>
+  <div class="ph"><span class="chip">阶段二</span><strong>标定：让评分体系重新可信</strong><span class="dur" style="color:var(--ok)">核心项已于 v1.6.10 完成</span></div>
+  <p>阶段一是止损，阶段二才是治本。核心是<strong>重新校准评分尺子</strong>。</p>
   <ol>
-    <li><strong>算法修复 7.1</strong>（自适应锚点）——ELO 停止单向漂移的根本解法。</li>
-    <li><strong>算法修复 7.4</strong>（计时脏数据清洗 + 源头防护）。</li>
-    <li><strong>回放验证</strong>：用 <code>elo_events</code> 里已有的 94 次 <code>performance / expected</code> 做离线回放，对比新旧参数下的 ELO 曲线——<strong>新曲线应当与正确率走势同向</strong>。这一步是 AGENTS.md 里明确要求的「调参先写回放验证」。</li>
-    <li><strong>历史重算</strong>：回放通过后，用新参数重放全部 94 次结算，得到一条诚实的 ELO 基线（预计会从 1618 回落到 1500 上下）。</li>
-    <li><strong>F3 / F4 契约治理</strong>：引入 tauri-specta 或至少补齐 <code>GradingSummary</code> 三字段、消除段位表双写。</li>
+    <li><span class="badge b-ok">已完成</span><strong>回放验证</strong>（v1.6.10）：用 <code>elo_events</code> 里已有的 94 次结算
+      离线复现三套参数。这是 AGENTS.md 要求的「调参先写回放验证」，也是本阶段所有决策的依据，
+      结论见 <a href="#s2" style="color:inherit">2.4 节</a>。脚本已固化到 <code>scripts/replay_elo_params.py</code>。</li>
+    <li><span class="badge b-ok">已完成</span><strong>算法修复 7.1</strong>（自适应锚点，v1.6.10）：期望基线改为近 30 次
+      表现分的中位数（混合 30% 固定基线）。回放显示，在正确率崩塌期它让分数从 +14 分变为 <strong>−10 分</strong>。</li>
+    <li><span class="badge b-p2">决定不做</span><s><strong>历史重算</strong></s>：原计划重放 94 次结算、把 ELO 从 1618
+      校准到 1500 上下。实际改为<strong>不重算</strong>——从上线之日起按新规则演化即可，避免分数突变。
+      若日后确实需要校准，应单独提供入口而非自动执行。</li>
+    <li><strong>算法修复 7.4</strong>（计时脏数据清洗 + 源头防护）：尚未开始。当前 21% 的作答计时 &lt;5 秒，
+      会持续污染 Pacing 维度与所有基于耗时的洞察。</li>
+    <li><strong>F3 / F4 契约治理</strong>：尚未开始。引入 tauri-specta，或至少补齐 <code>GradingSummary</code>
+      三字段、消除段位表三处双写。</li>
   </ol>
   <div class="callout warn" style="margin-top:12px">
-    <div class="t">心理预期管理</div>
-    <p>重算后你的 ELO <strong>大概率会下跌 100 分左右</strong>。这不是退步，是把虚高的水分挤掉。建议在设置页提供「重新校准天梯分」入口，并明确告知用户这是修正而非惩罚。</p>
+    <div class="t">计划外修复：v1.6.9 报告读取</div>
+    <p>实施过程中你反馈「不走压力模拟生成的批改报告无法阅读」，已一并修复：这类报告只落在
+      <code>codex_inbox</code>，而前端唯一的读取入口会先在 <code>pressure_sessions</code> 里按 taskId 反查，
+      查不到就放弃。现已新增 <code>get_codex_batch_report</code>，两种模式共用同一个报告组件。</p>
   </div>
 </div>
 

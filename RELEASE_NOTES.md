@@ -1,5 +1,38 @@
 # Release Notes
 
+## v1.6.9 (2026-08-29)
+
+### 🐛 修复：未走压力模拟的整组批改报告无法阅读
+
+- **问题**：日常训练（非压力模拟）生成的整组批改报告，虽然已写入收件箱并确认，
+  但在 App 内**始终打不开**，只会提示「没有找到这次压力模拟，暂时无法打开学习报告」。
+  - **根因**：这类报告只落在主库 `codex_inbox`，不会产生 `pressure_sessions` 记录；
+    而前端唯一的读取入口 `openPressureReport` 会先调 `listPressureSessions()`，
+    在压力会话列表里按 taskId 反查 session，查不到就直接放弃。
+  - **实测证据**：`SB-BATCH-20260829-6268`（8/29 生成，8 题批改）在 `codex_inbox`
+    中载荷完整（13277 字节，含逐题诊断与整组总评），但 `pressure_sessions` 中无
+    对应记录——这是第一份不走压力模拟生成的报告，此前几份 batch 都走了压力模拟，
+    所以能正常打开，问题一直没暴露。
+
+- **修复**：
+  - 后端新增 `get_codex_batch_report` 命令与 `build_codex_batch_report` 适配函数，
+    直接以 `codex_inbox` 为数据源，把 batch 回传载荷转换成与 `pressure_reports`
+    一致的报告结构，两种模式共用同一个报告组件。
+  - 适配细节：逐题诊断映射为 `feedback`；从题库补齐 `correctAnswer`、从作答记录
+    补齐 `userAnswer`（batch 回传载荷本身不含这两项）；统计出正确率、用时与
+    verdict 分布；整组文字总评落入 `summary.suggestions`，避免报告正文空白；
+    `created_at` 由 RFC3339 字符串转为毫秒时间戳。
+  - 前端 `openPressureReport` 改为 **taskId 优先**：先按 Codex 任务号读取，
+    取不到再回落压力模拟既有路径。抽出 `loadReportQuestions` 复用题目加载。
+  - 非压力路径不触发公开战报同步——该逻辑依赖 `session` 的时间与模式字段，
+    语义上属于高压演练。
+
+- **受影响的入口**：收件箱中「已确认的整组批改」的查看报告按钮
+  （确认批改后也会自动尝试打开），此前对非压力报告一律无效。
+
+**测试**：新增回归测试 `codex_batch_report_is_readable_without_pressure_session`，
+103 个后端测试 + 26 个前端测试全绿。
+
 ## v1.6.8 (2026-08-29)
 
 ### ⚖️ 天梯可信度修复、生产日志恢复与科目覆盖均衡

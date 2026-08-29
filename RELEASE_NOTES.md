@@ -1,5 +1,17 @@
 # Release Notes
 
+## v1.6.11 (2026-08-29)
+
+### 🚀 修复：日常题组与非压力整组批改确认后未自动完成队列题目
+
+- **问题**：在日常刷题与 AI 推荐题组中，用户使用真实纸笔作答并上传整组草稿批改后，在收件箱确认批改报告时，报告虽然显示成功，但今日训练队列中的题目**没有自动被标记完成**，依然停留在做题队列中；用户需要手动点击每道题的提交才能推进题组。
+  - **根因**：非压力模式下的批改确认走 `BoundNonPressureAdjudication` 逻辑，此前仅当存在预先提交的屏幕作答 ID 时才绑定 sidecar 诊断；若学员直接在纸笔草稿上作答（无预先屏幕作答），系统只写入了诊断信号，未正式调用 `record_attempt_row` 沉淀 `paper-codex` 作答记录，导致未能触发 `complete_active_recommendation_item` 完成队列题目与更新掌握度。
+- **修复**：
+  - **自动沉淀作答与结算**：`BoundNonPressureAdjudication` 针对明确判定结果的纸笔题目自动生成 `paper-codex` 作答记录，同步完成 ELO 结算、掌握度更新与学习闭环；
+  - **队列自动推进**：整组批改确认后自动联动更新 `recommendation_batch_items`，将已批改题目标记为完成并推进今日题单；
+  - **历史遗留自愈**：应用启动时通过 `backfill_confirmed_batch_attempts` 自动扫描历史已确认的整组批改，补齐作答记录并收尾已完成题单；
+  - **门禁测试覆盖**：新增 `nonpressure_batch_confirms_and_advances_active_recommendation_queue` 单元测试，107 项 Rust 测试与 26 项前端测试全绿。
+
 ## v1.6.10 (2026-08-29)
 
 ### 🎯 ELO 自适应期望锚点（离线回放验证后上线）

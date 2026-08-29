@@ -1053,6 +1053,8 @@ fn migrate_schema_impl(conn: &Connection, inject_failure: bool) -> rusqlite::Res
         )?;
         backfill_recommendation_item_roles(conn)
             .map_err(|e| rusqlite::Error::ToSqlConversionFailure(Box::new(std::io::Error::other(e))))?;
+        backfill_confirmed_batch_attempts(conn)
+            .map_err(|e| rusqlite::Error::ToSqlConversionFailure(Box::new(std::io::Error::other(e))))?;
         Ok(())
     })();
 
@@ -1524,6 +1526,88 @@ fn backfill_recommendation_item_roles(conn: &Connection) -> Result<(), String> {
                 params![role, task_id, parsed],
             )
             .map_err(|e| e.to_string())?;
+        }
+    }
+    Ok(())
+}
+
+fn backfill_confirmed_batch_attempts(conn: &Connection) -> Result<(), String> {
+    let mut stmt = conn
+        .prepare(
+            "SELECT task_id, payload_json FROM codex_inbox
+             WHERE kind='batch' AND (status='confirmed' OR status='applied')
+             ORDER BY id ASC",
+        )
+        .map_err(|e| e.to_string())?;
+    let rows = stmt
+        .query_map([], |r| {
+            Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?))
+        })
+        .map_err(|e| e.to_string())?;
+
+    for row in rows {
+        let (task_id, raw) = row.map_err(|e| e.to_string())?;
+        let Ok(payload) = serde_json::from_str::<CodexPayload>(&raw) else {
+            continue;
+        };
+        for attempt in &payload.batch_attempts {
+            if attempt.result == "uncertain" {
+                continue;
+            }
+            let diag_id = format!("{}-{}", task_id, attempt.question_id);
+            let exists: bool = conn
+                .query_row(
+                    "SELECT 1 FROM attempts WHERE question_id=?1 AND (session_id=?2 OR diagnosis_id=?3)",
+                    params![attempt.question_id, &task_id, &diag_id],
+                    |_| Ok(true),
+                )
+                .unwrap_or(false);
+            if !exists {
+                if let Ok(attempt_id) = record_attempt_row(
+                    conn,
+                    &AttemptInput {
+                        question_id: attempt.question_id,
+                        duration_seconds: resolved_batch_duration(attempt, None),
+                        result: attempt.result.clone(),
+                        self_rating: attempt.self_rating,
+                        selected_answer: None,
+                        mode: Some("paper-codex".into()),
+                        outcome: Some(
+                            attempt
+                                .verdict
+                                .clone()
+                                .unwrap_or_else(|| attempt.result.clone()),
+                        ),
+                        evidence_source: Some("codex".into()),
+                        fluency_rating: Some(attempt.self_rating),
+                        confidence: Some(attempt.confidence),
+                        session_id: Some(task_id.clone()),
+                        diagnosis_id: Some(diag_id),
+                        ai_rating: attempt.rating,
+                        difficulty_multiplier: attempt.difficulty_multiplier,
+                        technique_level: attempt
+                            .dimensions
+                            .get("strategyInsight")
+                            .and_then(|d| d.technique_level),
+                        dimensions: Some(AttemptDimensions::from_dimension_map(
+                            &attempt.dimensions,
+                        )),
+                    },
+                ) {
+                    let _ = complete_active_recommendation_item(conn, attempt.question_id, attempt_id);
+                }
+            } else {
+                let attempt_id: i64 = conn
+                    .query_row(
+                        "SELECT id FROM attempts WHERE question_id=?1 AND (session_id=?2 OR diagnosis_id=?3) ORDER BY id DESC LIMIT 1",
+                        params![attempt.question_id, &task_id, &diag_id],
+                        |r| r.get(0),
+                    )
+                    .unwrap_or(0);
+                if attempt_id > 0 {
+                    let _ = complete_active_recommendation_item(conn, attempt.question_id, attempt_id);
+                }
+            }
         }
     }
     Ok(())
@@ -2523,7 +2607,46 @@ fn apply_batch_payload_in_tx(
             BatchApplicationMode::BoundNonPressureAdjudication => {
                 let attempt_id =
                     task_context_attempt_id(conn, &payload.task_id, attempt.question_id)?;
-                save_analysis_signal_raw(conn, &signal, attempt_id)?;
+                if let Some(existing_attempt_id) = attempt_id {
+                    save_analysis_signal_raw(conn, &signal, Some(existing_attempt_id))?;
+                    complete_active_recommendation_item(conn, attempt.question_id, existing_attempt_id)?;
+                } else if attempt.result != "uncertain" {
+                    let new_attempt_id = record_attempt_row(
+                        conn,
+                        &AttemptInput {
+                            question_id: attempt.question_id,
+                            duration_seconds: resolved_batch_duration(attempt, pressure_durations),
+                            result: attempt.result.clone(),
+                            self_rating: attempt.self_rating,
+                            selected_answer: None,
+                            mode: Some("paper-codex".into()),
+                            outcome: Some(
+                                attempt
+                                    .verdict
+                                    .clone()
+                                    .unwrap_or_else(|| attempt.result.clone()),
+                            ),
+                            evidence_source: Some("codex".into()),
+                            fluency_rating: Some(attempt.self_rating),
+                            confidence: Some(attempt.confidence),
+                            session_id: Some(payload.task_id.clone()),
+                            diagnosis_id: Some(format!("{}-{}", payload.task_id, attempt.question_id)),
+                            ai_rating: attempt.rating,
+                            difficulty_multiplier: attempt.difficulty_multiplier,
+                            technique_level: attempt
+                                .dimensions
+                                .get("strategyInsight")
+                                .and_then(|d| d.technique_level),
+                            dimensions: Some(AttemptDimensions::from_dimension_map(
+                                &attempt.dimensions,
+                            )),
+                        },
+                    )?;
+                    save_analysis_signal_raw(conn, &signal, Some(new_attempt_id))?;
+                } else {
+                    save_analysis_signal_raw(conn, &signal, None)?;
+                    complete_active_recommendation_item(conn, attempt.question_id, 0)?;
+                }
             }
             BatchApplicationMode::FormalPressureAttempt => {
                 if attempt.result == "uncertain" {
@@ -3158,35 +3281,27 @@ fn dismiss_recommendation_batch_row(conn: &Connection, task_id: &str) -> Result<
 }
 
 fn complete_active_recommendation_item(conn: &Connection, question_id: i64, attempt_id: i64) -> Result<(), String> {
-    let active_task: Option<String> = conn
-        .query_row(
-            "SELECT task_id FROM recommendation_batches WHERE status='active' ORDER BY started_at DESC,created_at DESC LIMIT 1",
-            [],
-            |row| row.get(0),
-        )
-        .optional()
-        .map_err(|e| e.to_string())?;
-    let Some(task_id) = active_task else {
-        return Ok(());
-    };
     let now = Local::now().to_rfc3339();
     conn.execute(
         "UPDATE recommendation_batch_items
          SET completed_at=?1,
-             attempt_id=?4,
-             result=(SELECT result FROM attempts WHERE id=?4),
-             outcome=(SELECT outcome FROM attempts WHERE id=?4),
-             self_rating=(SELECT self_rating FROM attempts WHERE id=?4),
-             duration_seconds=(SELECT duration_seconds FROM attempts WHERE id=?4),
-             attempt_mode=(SELECT mode FROM attempts WHERE id=?4),
-             evidence_source=(SELECT evidence_source FROM attempts WHERE id=?4)
-         WHERE task_id=?2 AND question_id=?3 AND completed_at IS NULL",
-        params![now, task_id, question_id, attempt_id],
+             attempt_id=?3,
+             result=(SELECT result FROM attempts WHERE id=?3),
+             outcome=(SELECT outcome FROM attempts WHERE id=?3),
+             self_rating=(SELECT self_rating FROM attempts WHERE id=?3),
+             duration_seconds=(SELECT duration_seconds FROM attempts WHERE id=?3),
+             attempt_mode=(SELECT mode FROM attempts WHERE id=?3),
+             evidence_source=(SELECT evidence_source FROM attempts WHERE id=?3)
+         WHERE question_id=?2 AND completed_at IS NULL",
+        params![now, question_id, attempt_id],
     )
     .map_err(|e| e.to_string())?;
     conn.execute(
-        "UPDATE recommendation_batches SET status='completed',completed_at=?1 WHERE task_id=?2 AND NOT EXISTS(SELECT 1 FROM recommendation_batch_items WHERE task_id=?2 AND completed_at IS NULL)",
-        params![Local::now().to_rfc3339(), task_id],
+        "UPDATE recommendation_batches
+         SET status='completed', completed_at=?1
+         WHERE status='active'
+           AND NOT EXISTS(SELECT 1 FROM recommendation_batch_items WHERE task_id=recommendation_batches.task_id AND completed_at IS NULL)",
+        params![now],
     )
     .map_err(|e| e.to_string())?;
     Ok(())
@@ -11395,6 +11510,95 @@ mod tests {
     }
 
     #[test]
+    fn nonpressure_batch_confirms_and_advances_active_recommendation_queue() {
+        let mut conn = Connection::open_in_memory().unwrap();
+        init_schema(&conn).unwrap();
+        import_library(&mut conn, Path::new(DEFAULT_LIBRARY)).unwrap();
+        insert_codex_payload(
+            &conn,
+            &make_recommendation_payload("SB-REC-NONPRESSURE", vec![155, 160]),
+        )
+        .unwrap();
+        start_recommendation_batch_row(&conn, "SB-REC-NONPRESSURE").unwrap();
+
+        let batch_payload = CodexPayload {
+            schema_version: 1,
+            kind: "batch".into(),
+            task_id: "SB-BATCH-AUTO-QUEUE".into(),
+            question_id: None,
+            summary: "整组批改".into(),
+            verdict: None,
+            earliest_error: None,
+            error_tags: vec![],
+            weakness_tags: vec![],
+            advice: None,
+            better_solution: None,
+            confidence: 0.9,
+            recommended_question_ids: vec![],
+            recommendation_reason: None,
+            paper_title: None,
+            paper_attempts: vec![],
+            batch_attempts: vec![
+                BatchAttempt {
+                    question_id: 155,
+                    result: "correct".into(),
+                    self_rating: 3,
+                    duration_seconds: 120,
+                    summary: "解答正确".into(),
+                    verdict: Some("correct".into()),
+                    earliest_error: None,
+                    error_tags: vec![],
+                    weakness_tags: vec![],
+                    advice: None,
+                    better_solution: None,
+                    confidence: 0.95,
+                    ..Default::default()
+                },
+                BatchAttempt {
+                    question_id: 160,
+                    result: "wrong".into(),
+                    self_rating: 2,
+                    duration_seconds: 180,
+                    summary: "断点在第3步".into(),
+                    verdict: Some("partial".into()),
+                    earliest_error: Some("第3步通分错".into()),
+                    error_tags: vec!["计算笔误".into()],
+                    weakness_tags: vec![],
+                    advice: None,
+                    better_solution: None,
+                    confidence: 0.9,
+                    ..Default::default()
+                },
+            ],
+            ..Default::default()
+        };
+        apply_batch_payload(
+            &conn,
+            &batch_payload,
+            None,
+            BatchApplicationMode::BoundNonPressureAdjudication,
+        )
+        .unwrap();
+
+        // 验证两道题的作答记录均已建立
+        let attempts_count: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM attempts WHERE session_id='SB-BATCH-AUTO-QUEUE'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(attempts_count, 2);
+
+        // 验证推荐题组已全部完成，队列自动推进收尾
+        let batch = recommendation_batch_by_task(&conn, "SB-REC-NONPRESSURE")
+            .unwrap()
+            .unwrap();
+        assert_eq!(batch.status, "completed");
+        assert_eq!(batch.remaining_count, 0);
+    }
+
+    #[test]
     fn dismissed_recommendation_never_enters_queue() {
         let mut conn = Connection::open_in_memory().unwrap();
         init_schema(&conn).unwrap();
@@ -12143,9 +12347,8 @@ mod tests {
             .unwrap()
             .collect::<Result<_, _>>()
             .unwrap();
-        // 普通题组已有作答记录才允许 sidecar 裁决；该 legacy payload 没有
-        // 不可变 task context，因此不得创建 paper-codex attempt 或猜测旧记录。
-        assert!(attempts.is_empty());
+        // 明确给出作答结果的题自动沉淀为 paper-codex 作答；未上传草稿（uncertain）的题不建 attempt。
+        assert_eq!(attempts, vec![(155, "wrong".into(), "paper-codex".into())]);
         let signals: Vec<(String, i64)> = conn
             .prepare("SELECT task_id,question_id FROM codex_analysis_signals")
             .unwrap()
@@ -13255,8 +13458,14 @@ mod tests {
         )
         .unwrap();
 
-        assert_eq!(attempt_and_elo_counts(&conn), before_history);
-        assert_eq!(progress_snapshot(&conn, 1), before_progress);
+        let new_attempt_id: i64 = conn
+            .query_row(
+                "SELECT id FROM attempts WHERE session_id='SB-BATCH-UNBOUND' AND question_id=1",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_ne!(new_attempt_id, historical_attempt_id);
         let diagnosis_attempt_id: Option<i64> = conn
             .query_row(
                 "SELECT attempt_id FROM learning_diagnoses WHERE task_id='SB-BATCH-UNBOUND-1' AND question_id=1",
@@ -13264,7 +13473,7 @@ mod tests {
                 |row| row.get(0),
             )
             .unwrap();
-        assert_eq!(diagnosis_attempt_id, None);
+        assert_eq!(diagnosis_attempt_id, Some(new_attempt_id));
         let adjudications: i64 = conn
             .query_row(
                 "SELECT COUNT(*) FROM learning_evidence WHERE source='codex_adjudication' AND supersedes_attempt_id=?1",

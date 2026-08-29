@@ -1053,8 +1053,6 @@ fn migrate_schema_impl(conn: &Connection, inject_failure: bool) -> rusqlite::Res
         )?;
         backfill_recommendation_item_roles(conn)
             .map_err(|e| rusqlite::Error::ToSqlConversionFailure(Box::new(std::io::Error::other(e))))?;
-        backfill_confirmed_batch_attempts(conn)
-            .map_err(|e| rusqlite::Error::ToSqlConversionFailure(Box::new(std::io::Error::other(e))))?;
         Ok(())
     })();
 
@@ -1526,88 +1524,6 @@ fn backfill_recommendation_item_roles(conn: &Connection) -> Result<(), String> {
                 params![role, task_id, parsed],
             )
             .map_err(|e| e.to_string())?;
-        }
-    }
-    Ok(())
-}
-
-fn backfill_confirmed_batch_attempts(conn: &Connection) -> Result<(), String> {
-    let mut stmt = conn
-        .prepare(
-            "SELECT task_id, payload_json FROM codex_inbox
-             WHERE kind='batch' AND (status='confirmed' OR status='applied')
-             ORDER BY id ASC",
-        )
-        .map_err(|e| e.to_string())?;
-    let rows = stmt
-        .query_map([], |r| {
-            Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?))
-        })
-        .map_err(|e| e.to_string())?;
-
-    for row in rows {
-        let (task_id, raw) = row.map_err(|e| e.to_string())?;
-        let Ok(payload) = serde_json::from_str::<CodexPayload>(&raw) else {
-            continue;
-        };
-        for attempt in &payload.batch_attempts {
-            if attempt.result == "uncertain" {
-                continue;
-            }
-            let diag_id = format!("{}-{}", task_id, attempt.question_id);
-            let exists: bool = conn
-                .query_row(
-                    "SELECT 1 FROM attempts WHERE question_id=?1 AND (session_id=?2 OR diagnosis_id=?3)",
-                    params![attempt.question_id, &task_id, &diag_id],
-                    |_| Ok(true),
-                )
-                .unwrap_or(false);
-            if !exists {
-                if let Ok(attempt_id) = record_attempt_row(
-                    conn,
-                    &AttemptInput {
-                        question_id: attempt.question_id,
-                        duration_seconds: resolved_batch_duration(attempt, None),
-                        result: attempt.result.clone(),
-                        self_rating: attempt.self_rating,
-                        selected_answer: None,
-                        mode: Some("paper-codex".into()),
-                        outcome: Some(
-                            attempt
-                                .verdict
-                                .clone()
-                                .unwrap_or_else(|| attempt.result.clone()),
-                        ),
-                        evidence_source: Some("codex".into()),
-                        fluency_rating: Some(attempt.self_rating),
-                        confidence: Some(attempt.confidence),
-                        session_id: Some(task_id.clone()),
-                        diagnosis_id: Some(diag_id),
-                        ai_rating: attempt.rating,
-                        difficulty_multiplier: attempt.difficulty_multiplier,
-                        technique_level: attempt
-                            .dimensions
-                            .get("strategyInsight")
-                            .and_then(|d| d.technique_level),
-                        dimensions: Some(AttemptDimensions::from_dimension_map(
-                            &attempt.dimensions,
-                        )),
-                    },
-                ) {
-                    let _ = complete_active_recommendation_item(conn, attempt.question_id, attempt_id);
-                }
-            } else {
-                let attempt_id: i64 = conn
-                    .query_row(
-                        "SELECT id FROM attempts WHERE question_id=?1 AND (session_id=?2 OR diagnosis_id=?3) ORDER BY id DESC LIMIT 1",
-                        params![attempt.question_id, &task_id, &diag_id],
-                        |r| r.get(0),
-                    )
-                    .unwrap_or(0);
-                if attempt_id > 0 {
-                    let _ = complete_active_recommendation_item(conn, attempt.question_id, attempt_id);
-                }
-            }
         }
     }
     Ok(())

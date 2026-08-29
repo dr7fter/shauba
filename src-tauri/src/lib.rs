@@ -1731,6 +1731,71 @@ fn active_recommendation_queue(
     ))
 }
 
+/// 考研数学一各科分值占比（高等数学 56% / 线性代数 22% / 概率统计 22%）。
+///
+/// 用于按「覆盖缺口」加权出题：覆盖度越低于其分值权重的科目，抽中概率越高。
+///
+/// 背景（v1.6.8）：实测题库 5388 题中，高等数学已做 194 题、线性代数仅 14 题、
+/// 概率统计 **0 题**——而概率在数一中约占 33 分。原打分函数完全没有科目维度，
+/// 新题靠 `ORDER BY RANDOM()` 抽取，这类结构性失衡不会被自动纠正，只会被固化。
+/// "历年真题"不在此列：它是三科混合，单独加权会重复计入。
+const SUBJECT_EXAM_WEIGHTS: [(&str, f64); 3] = [
+    ("高等数学", 0.56),
+    ("线性代数", 0.22),
+    ("概率统计", 0.22),
+];
+
+/// 缺口权重放大系数。缺口 0.22（概率当前状态）约产生 +9.9 分——足以让完全未触达的
+/// 科目稳定进入今日队列，又不足以霸占队列：到期复习题的 due_score 为 28、
+/// 昨日错题变式为 160，优先级都高于它。
+const SUBJECT_GAP_WEIGHT: f64 = 45.0;
+
+/// 取 category_path 的一级科目名，如 "高等数学 / 一元微分 / ..." → "高等数学"。
+fn subject_of(category_path: &str) -> &str {
+    category_path.split('/').next().unwrap_or("").trim()
+}
+
+/// 计算各科覆盖缺口：`max(0, 考研分值占比 − 该科在已做题目中的占比)`。
+///
+/// 只奖励缺口、不惩罚超额（`max(0, ..)`），避免高数这类题量本就最大的科目被过度压制。
+/// 随着薄弱科目被逐步覆盖，缺口自动收敛、权重自然回落，无需人工干预。
+fn subject_gap_scores(conn: &Connection) -> Result<HashMap<String, f64>, String> {
+    let mut attempted: HashMap<String, f64> = HashMap::new();
+    let mut total_attempted = 0.0_f64;
+    let mut stmt = conn
+        .prepare(
+            "SELECT q.category_path, COUNT(*) FROM attempts a
+             JOIN questions q ON q.id = a.question_id
+             GROUP BY q.category_path",
+        )
+        .map_err(|e| e.to_string())?;
+    let rows = stmt
+        .query_map([], |row| {
+            Ok((row.get::<_, String>(0)?, row.get::<_, i64>(1)?))
+        })
+        .map_err(|e| e.to_string())?;
+    for row in rows {
+        let (path, count) = row.map_err(|e| e.to_string())?;
+        *attempted
+            .entry(subject_of(&path).to_string())
+            .or_insert(0.0) += count as f64;
+        total_attempted += count as f64;
+    }
+    drop(stmt);
+
+    let mut gaps = HashMap::new();
+    for (subject, exam_weight) in SUBJECT_EXAM_WEIGHTS {
+        let share = if total_attempted > 0.0 {
+            attempted.get(subject).copied().unwrap_or(0.0) / total_attempted
+        } else {
+            // 冷启动：没有任何作答时按分值占比直接铺开，天然均衡
+            0.0
+        };
+        gaps.insert(subject.to_string(), (exam_weight - share).max(0.0));
+    }
+    Ok(gaps)
+}
+
 fn recommendations(conn: &Connection, limit: usize) -> Result<Vec<RecommendedQuestion>, String> {
     if let Some(queue) = active_recommendation_queue(conn)? {
         return Ok(queue);
@@ -1762,6 +1827,7 @@ fn recommendations(conn: &Connection, limit: usize) -> Result<Vec<RecommendedQue
         }
     }
     let diagnosis_paths = accepted_diagnosis_paths(conn)?;
+    let subject_gaps = subject_gap_scores(conn)?;
     let mut scored = Vec::new();
     for q in candidates {
         let due = q
@@ -1781,12 +1847,19 @@ fn recommendations(conn: &Connection, limit: usize) -> Result<Vec<RecommendedQue
             .iter()
             .map(|path| diagnosis_match_score(path, &q.category_path))
             .fold(0.0_f64, f64::max);
+        // 科目缺口加权：该科在考研中占分越高、而你练得越少，这道题越该出现。
+        let subject_gap_score = subject_gaps
+            .get(subject_of(&q.category_path))
+            .copied()
+            .unwrap_or(0.0)
+            * SUBJECT_GAP_WEIGHT;
         let score = due_score
             + weakness
             + mastery_gap
             + exploration
             + difficulty_fit
             + diagnosis_score
+            + subject_gap_score
             + rand::rng().random_range(0.0..6.0);
         let (reason, code) = if due {
             ("到了该回看的时间，先把记忆接上", "due")
@@ -1794,6 +1867,8 @@ fn recommendations(conn: &Connection, limit: usize) -> Result<Vec<RecommendedQue
             ("针对 Codex 已确认的薄弱板块安排", "diagnosis")
         } else if q.attempts > 0 && q.accuracy.unwrap_or(1.0) < 0.65 {
             ("命中你近期不稳定的题型", "weakness")
+        } else if q.attempts == 0 && subject_gap_score > 6.0 {
+            ("这门课在考研里占比不低，但你的覆盖还很低", "subject_gap")
         } else if q.attempts == 0 {
             ("补齐尚未触达的数一范围", "explore")
         } else {
@@ -5181,16 +5256,34 @@ const ELO_K_CALIBRATION: f64 = 30.0;
 const ELO_CALIBRATION_SETTLEMENTS: i64 = 10;
 const ELO_K: f64 = 10.0;
 /// 期望基准：均值性能（Rating 1.00 折算 score 0.50）对应基准期望 0.50；
-/// 掌握度越高（熟题）期望略微提高 +0.04；难度系数越大（难题）期望降低 −0.25，收敛到 [0.20, 0.80]。
+/// 掌握度越高（熟题）期望略微提高 +0.04；难度系数越大（难题）期望降低，收敛到 [0.20, 0.80]。
+///
+/// 难度步长校准记录（v1.6.8）：原值 0.25 使难度杠杆形同虚设——难度系数实际只落在
+/// 0.94~1.10 区间，对期望的影响仅 ±0.04，导致「攻克难题收益最大」的设计意图完全失效
+/// （实测最难题与最易题的期望差仅 0.073）。放大到 2.50 后，同样区间可产生 ±0.40 的
+/// 真实差距：简单题做对几乎不涨分、做错重罚；难题做对大涨、做错轻罚。
 const ELO_EXPECTED_BASE: f64 = 0.50;
 const ELO_EXPECTED_MASTERY_STEP: f64 = 0.04;
-const ELO_EXPECTED_DIFFICULTY_STEP: f64 = 0.25;
+const ELO_EXPECTED_DIFFICULTY_STEP: f64 = 2.50;
 const ELO_EXPECTED_MIN: f64 = 0.20;
 const ELO_EXPECTED_MAX: f64 = 0.80;
 const ELO_REVIEW_BONUS: f64 = 0.06;
 const ELO_MOMENTUM_MULTIPLIER: f64 = 1.15;
 const ELO_MOMENTUM_MIN_STREAK: usize = 3;
 const ELO_PROMOTION_PROTECTION: i64 = 3;
+
+/// 结果闸门：防止 ELO 退化为「打卡计数器」。
+///
+/// 背景（v1.6.8 修复）：实测 94 次结算中做对 44 次**全部涨分、零次扣分**，
+/// 做错 50 次里仍有 24 次（48%）在涨分，ELO 呈单向棘轮——同期正确率从 75% 跌到
+/// 37.5%，天梯分反而从 1455 涨到 1612。根因是 performance 分布中心（≈1.30）远高于
+/// expected 基线（≈0.50），使 score − expected 恒为正。
+///
+/// 闸门直接对 delta 的**符号**设下界：做错至少扣 ELO_WRONG_DELTA_FLOOR 分，
+/// 做对至少加 ELO_CORRECT_DELTA_FLOOR 分。晋级保护（升段后 3 次免负分）在其后生效，
+/// 仍可把扣分归零——那是刻意保留的设计。
+const ELO_WRONG_DELTA_FLOOR: f64 = -1.0;
+const ELO_CORRECT_DELTA_FLOOR: f64 = 0.5;
 
 fn current_elo(conn: &Connection) -> Result<(i64, f64), String> {
     let settlements: i64 = conn
@@ -5305,6 +5398,31 @@ fn settle_elo(
     }
 
     let mut delta = (k * (score - expected)).round();
+    // 结果闸门：对 delta 的符号设下界。只有当公式本身已经给出正确方向且幅度更大时才放行，
+    // 避免 performance 分布整体右移时把 ELO 变成「做题就涨分」的打卡计数器。
+    // 晋级保护在其后生效，仍可把扣分归零——那是刻意保留的设计，不在此处绕过。
+    match outcome {
+        "wrong" | "incorrect" => {
+            if delta > ELO_WRONG_DELTA_FLOOR {
+                log::debug!(
+                    "ELO 闸门介入：做错本应 {delta:+} 分，已下压至 {ELO_WRONG_DELTA_FLOOR:+}（qid={}, score={score:.3}, expected={expected:.3}）",
+                    input.question_id
+                );
+                delta = ELO_WRONG_DELTA_FLOOR;
+            }
+        }
+        "correct" => {
+            if delta < ELO_CORRECT_DELTA_FLOOR {
+                log::debug!(
+                    "ELO 闸门介入：做对本应 {delta:+} 分，已上抬至 {ELO_CORRECT_DELTA_FLOOR:+}（qid={}, score={score:.3}, expected={expected:.3}）",
+                    input.question_id
+                );
+                delta = ELO_CORRECT_DELTA_FLOOR;
+            }
+        }
+        // partial / uncertain 不设闸门：居中的结果本就该由公式自由裁定
+        _ => {}
+    }
     // 晋级保护：刚升段的 3 次结算内不因失误掉分
     let mut protection_left: i64 = setting(conn, "elo_protection_left", "0")
         .parse()
@@ -10286,11 +10404,40 @@ fn get_mistake_timeline(
     Ok(result)
 }
 
+/// 日志插件装配：开发期 Info 级打终端，生产期 Warn 级落盘。
+///
+/// 历史教训：v1.6.7 及之前日志插件只在 `cfg!(debug_assertions)` 下注册，
+/// 导致 release 构建中 21 处 `log::warn!` 全部空转——生产环境零可观测性，
+/// 用户报障只能靠猜。这里改为两种模式都注册，只是目标与级别不同。
+///
+/// 生产日志落在 OS 日志目录（Windows: `%LOCALAPPDATA%\com.shuaba.math\logs`），
+/// 保留最近 7 个分片、单文件上限 2 MB、使用本地时区便于对照用户描述的时间点。
+fn build_log_plugin<R: tauri::Runtime>() -> tauri::plugin::TauriPlugin<R> {
+    if cfg!(debug_assertions) {
+        tauri_plugin_log::Builder::default()
+            .level(log::LevelFilter::Info)
+            .build()
+    } else {
+        tauri_plugin_log::Builder::default()
+            .level(log::LevelFilter::Warn)
+            .rotation_strategy(tauri_plugin_log::RotationStrategy::KeepSome(7))
+            .timezone_strategy(tauri_plugin_log::TimezoneStrategy::UseLocal)
+            .max_file_size(2 * 1024 * 1024)
+            .target(tauri_plugin_log::Target::new(
+                tauri_plugin_log::TargetKind::LogDir {
+                    file_name: Some("shuaba".into()),
+                },
+            ))
+            .build()
+    }
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_updater::Builder::new().build())
         .plugin(tauri_plugin_process::init())
+        .plugin(build_log_plugin())
         .setup(|app| {
             let data_dir = app.path().app_data_dir()?;
             fs::create_dir_all(data_dir.join("codex-inbox").join("processed"))?;
@@ -10350,13 +10497,6 @@ pub fn run() {
                 library_dir: Mutex::new(PathBuf::from(library_path)),
                 image_cache: Mutex::new(HashMap::new()),
             });
-            if cfg!(debug_assertions) {
-                app.handle().plugin(
-                    tauri_plugin_log::Builder::default()
-                        .level(log::LevelFilter::Info)
-                        .build(),
-                )?;
-            }
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
@@ -11184,13 +11324,227 @@ mod tests {
             .unwrap();
             current_elo(&conn).unwrap().1
         };
-        // 薄弱章节(掌握度1) + 难题(难度1.10)：期望 0.45，收益最大
+        // 薄弱章节(掌握度1) + 难题(难度1.10)：期望 0.21，收益最大
         let weak_hard = settle_once(Some(1), Some(1.10));
-        // 已掌握章节(掌握度4) + 简单题(难度0.94)：期望 0.55，收益缩水
+        // 已掌握章节(掌握度4) + 简单题(难度0.94)：期望 0.73，收益缩水
         let strong_easy = settle_once(Some(4), Some(0.94));
         assert!(
             weak_hard > strong_easy,
             "薄弱章节难题应比碾压简单题加分多：{weak_hard} vs {strong_easy}"
+        );
+    }
+
+    #[test]
+    fn elo_wrong_answer_always_costs_points() {
+        // 回归测试：v1.6.7 及之前，实测 50 次做错中仍有 24 次（48%）在涨分，
+        // ELO 退化为「做题就涨分」的单向棘轮。这里锁死「做错必扣分」的契约。
+        let conn = Connection::open_in_memory().unwrap();
+        init_schema(&conn).unwrap();
+        conn.execute(
+            "INSERT INTO questions(id,stem,options_json,correct_answer,explanation,source,question_type,category_path,image_paths_json,is_core,difficulty,content_hash) VALUES(1,'题','[]','A','解析','测试','single_choice','路径','[]',0,2,'')",
+            [],
+        )
+        .unwrap();
+        record_attempt_row(
+            &conn,
+            &AttemptInput {
+                question_id: 1,
+                duration_seconds: 120,
+                result: "wrong".into(),
+                self_rating: 1,
+                mode: Some("paper".into()),
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        let (_, after) = current_elo(&conn).unwrap();
+        assert!(
+            after < ELO_START,
+            "做错必须扣分，否则 ELO 会退化成打卡计数器：{after}"
+        );
+        assert!(
+            after <= ELO_START + ELO_WRONG_DELTA_FLOOR,
+            "做错扣分不得低于闸门下限 {}：{after}",
+            ELO_WRONG_DELTA_FLOOR
+        );
+    }
+
+    #[test]
+    fn elo_falls_under_repeated_failures() {
+        // 直接针对单向棘轮的回归测试：连续做错 5 题，ELO 必须单调下跌。
+        // 背景：v1.6.7 实测中，正确率从 75% 跌到 37.5% 的同一周，ELO 反而从
+        // 1455 涨到 1612——分数与实际水平完全脱钩。
+        let conn = Connection::open_in_memory().unwrap();
+        init_schema(&conn).unwrap();
+        conn.execute(
+            "INSERT INTO questions(id,stem,options_json,correct_answer,explanation,source,question_type,category_path,image_paths_json,is_core,difficulty,content_hash) VALUES(1,'题','[]','A','解析','测试','single_choice','路径','[]',0,2,'')",
+            [],
+        )
+        .unwrap();
+        let mut previous = ELO_START;
+        for round in 1..=5 {
+            record_attempt_row(
+                &conn,
+                &AttemptInput {
+                    question_id: 1,
+                    duration_seconds: 240,
+                    result: "wrong".into(),
+                    self_rating: 1,
+                    mode: Some("paper".into()),
+                    ..Default::default()
+                },
+            )
+            .unwrap();
+            let (_, current) = current_elo(&conn).unwrap();
+            assert!(
+                current < previous,
+                "第 {round} 次做错后 ELO 必须继续下跌：{previous} -> {current}"
+            );
+            previous = current;
+        }
+        assert!(
+            previous <= ELO_START - 5.0,
+            "连续 5 次做错后累计跌幅应显著：{previous}"
+        );
+    }
+
+    #[test]
+    fn elo_difficulty_lever_is_material() {
+        // 回归测试：原步长 0.25 在难度系数的真实区间（0.94~1.10）只产生 ±0.04 的
+        // 期望变化，「攻克难题收益最大」的设计意图形同虚设。放大到 2.50 后，
+        // 同样区间应产生数量级差距。
+        let settle_with_difficulty = |dm: f64| -> f64 {
+            let conn = Connection::open_in_memory().unwrap();
+            init_schema(&conn).unwrap();
+            conn.execute(
+                "INSERT INTO questions(id,stem,options_json,correct_answer,explanation,source,question_type,category_path,image_paths_json,is_core,difficulty,content_hash) VALUES(1,'题','[]','A','解析','测试','single_choice','路径','[]',0,2,'')",
+                [],
+            )
+            .unwrap();
+            record_attempt_row(
+                &conn,
+                &AttemptInput {
+                    question_id: 1,
+                    duration_seconds: 120,
+                    result: "correct".into(),
+                    self_rating: 4,
+                    mode: Some("paper".into()),
+                    difficulty_multiplier: Some(dm),
+                    ..Default::default()
+                },
+            )
+            .unwrap();
+            current_elo(&conn).unwrap().1
+        };
+        let hard = settle_with_difficulty(1.10);
+        let easy = settle_with_difficulty(0.94);
+        let spread = hard - easy;
+        assert!(
+            spread > 3.0,
+            "难度杠杆必须产生实质收益差距（原实现下仅约 0.5 分）：难题 {hard} vs 易题 {easy}，差 {spread}"
+        );
+    }
+
+    #[test]
+    fn recommendations_prioritize_undercovered_subjects() {
+        // 回归测试：概率统计在考研数一中占约 22% 分值，但实测 317 道概率题一道未练，
+        // 而 v1.6.7 的打分函数完全没有科目维度，新题靠 ORDER BY RANDOM() 抽取，
+        // 结构性失衡会被不断固化。这里构造「高数已练、概率空白」的场景，
+        // 断言队列会主动补齐薄弱科目。
+        let conn = Connection::open_in_memory().unwrap();
+        init_schema(&conn).unwrap();
+        let mut id = 1_i64;
+        for subject in ["高等数学", "概率统计"] {
+            for _ in 0..20 {
+                conn.execute(
+                    "INSERT INTO questions(id,stem,options_json,correct_answer,explanation,source,question_type,category_path,image_paths_json,is_core,difficulty,content_hash) VALUES(?1,'题','[]','A','解析','测试','single_choice',?2,'[]',0,2,'')",
+                    params![id, format!("{subject} / 章节")],
+                )
+                .unwrap();
+                id += 1;
+            }
+        }
+        // 高数 20 题已做对且排到未来复习；概率 20 题零作答
+        let yesterday = (Local::now() - Duration::days(1)).to_rfc3339();
+        for qid in 1_i64..=20 {
+            conn.execute(
+                "INSERT INTO attempts(question_id,attempted_at,duration_seconds,result,self_rating,mode) VALUES(?1,?2,120,'correct',4,'paper')",
+                params![qid, yesterday],
+            )
+            .unwrap();
+            conn.execute(
+                "INSERT INTO progress(question_id,mastery,next_review) VALUES(?1,4,date('now','+15 days'))",
+                [qid],
+            )
+            .unwrap();
+        }
+
+        let queue = recommendations(&conn, 10).unwrap();
+        let probability_count = queue
+            .iter()
+            .filter(|item| item.question.category_path.starts_with("概率统计"))
+            .count();
+        assert_eq!(queue.len(), 10, "队列应被填满");
+        assert!(
+            probability_count >= 8,
+            "概率统计零覆盖时应优先补齐，实际仅 {probability_count}/10；\
+             理由分布：{:?}",
+            queue
+                .iter()
+                .map(|item| item.reason_code.as_str())
+                .collect::<Vec<_>>()
+        );
+    }
+
+    #[test]
+    fn subject_gap_converges_as_coverage_grows() {
+        // 缺口是自平衡的：随着薄弱科目被覆盖，其权重应自动回落，
+        // 避免「补一科就永远只出这一科」。
+        let conn = Connection::open_in_memory().unwrap();
+        init_schema(&conn).unwrap();
+        conn.execute(
+            "INSERT INTO questions(id,stem,options_json,correct_answer,explanation,source,question_type,category_path,image_paths_json,is_core,difficulty,content_hash) VALUES(1,'题','[]','A','解析','测试','single_choice','概率统计 / 章节','[]',0,2,'')",
+            [],
+        )
+        .unwrap();
+        let gap_before = subject_gap_scores(&conn).unwrap();
+        assert!(
+            gap_before.get("概率统计").copied().unwrap_or(0.0) > 0.2,
+            "零覆盖时概率缺口应接近其分值占比 0.22"
+        );
+
+        // 1 号题已是概率统计，再补 2、3 号，使概率共 3 题
+        for qid in 2_i64..=3 {
+            conn.execute(
+                "INSERT INTO questions(id,stem,options_json,correct_answer,explanation,source,question_type,category_path,image_paths_json,is_core,difficulty,content_hash) VALUES(?1,'题','[]','A','解析','测试','single_choice','概率统计 / 章节','[]',0,2,'')",
+                [qid],
+            )
+            .unwrap();
+        }
+        // 4~10 号为高等数学，共 7 题
+        for qid in 4_i64..=10 {
+            conn.execute(
+                "INSERT INTO questions(id,stem,options_json,correct_answer,explanation,source,question_type,category_path,image_paths_json,is_core,difficulty,content_hash) VALUES(?1,'题','[]','A','解析','测试','single_choice','高等数学 / 章节','[]',0,2,'')",
+                [qid],
+            )
+            .unwrap();
+        }
+        // 合计 10 次作答：概率 3 次（30%）+ 高数 7 次（70%）
+        for qid in 1_i64..=10 {
+            conn.execute(
+                "INSERT INTO attempts(question_id,attempted_at,duration_seconds,result,self_rating,mode) VALUES(?1,'2026-01-01T10:00:00+08:00',120,'correct',4,'paper')",
+                [qid],
+            )
+            .unwrap();
+        }
+        let gap_after = subject_gap_scores(&conn).unwrap();
+        assert!(
+            gap_after.get("概率统计").copied().unwrap_or(1.0) == 0.0,
+            "概率占比 30% 已超过其 22% 的分值占比，缺口应收敛为 0（只奖励缺口、不惩罚超额）"
+        );
+        assert!(
+            gap_after.get("高等数学").copied().unwrap_or(1.0) == 0.0,
+            "高数占比 70% 已超过其 56% 的分值占比，缺口同样应为 0"
         );
     }
 

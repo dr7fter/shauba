@@ -296,6 +296,17 @@ export type AttemptHighlight = {
   rating: number
 }
 
+export type UndoLastAttemptResult = {
+  question: Question
+  removedEloDelta: number | null
+}
+
+export type ConfirmInboxResult = {
+  appliedAttempts: number
+  appliedCorrect: number
+  highlight: AttemptHighlight | null
+}
+
 export type PeriodBucket = {
   attempted: number
   correct: number

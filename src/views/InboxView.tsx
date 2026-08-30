@@ -21,8 +21,10 @@ import {
   getTaskPrompt,
 } from '../api'
 import { EmptyState } from '../components/EmptyState'
+import { HighlightMoment } from '../components/HighlightMoment'
 import { MathText } from '../components/MathText'
-import type { FailedInboxItem, InboxItem } from '../types'
+import { playHighlightSound } from '../data/audio'
+import type { AttemptHighlight, FailedInboxItem, InboxItem } from '../types'
 
 export function recommendationStatusLabel(item: InboxItem) {
   if (item.recommendationBatchStatus === 'pending') return '待开始'
@@ -50,6 +52,7 @@ export function InboxView({
   const [loading, setLoading] = useState(true)
   const [failedItems, setFailedItems] = useState<FailedInboxItem[]>([])
   const [copiedTask, setCopiedTask] = useState<string | null>(null)
+  const [highlight, setHighlight] = useState<AttemptHighlight | null>(null)
 
   const load = useCallback(() => {
     setLoading(true)
@@ -77,15 +80,22 @@ export function InboxView({
 
   const decide = async (item: InboxItem, apply: boolean) => {
     try {
-      await confirmInbox(item.id, apply)
+      const result = await confirmInbox(item.id, apply)
+      // 整组确认的高光时刻（阶段四补全）：确认即结算，情绪最高点不再哑火
+      if (apply && result.highlight) {
+        setHighlight(result.highlight)
+        playHighlightSound(result.highlight.kind)
+      }
       notify(
         apply
-          ? item.kind === 'paper'
-            ? '整卷结果已写入训练记录'
-            : item.kind === 'batch'
-            ? '整组批改结果已写入训练记录，正在加载学习报告'
-            : '诊断已进入推荐画像，并会影响后续荐题'
-          : '已忽略本次诊断'
+          ? result.appliedAttempts > 0
+          ? `已入账 ${result.appliedAttempts} 题 · 做对 ${result.appliedCorrect}${result.highlight ? ' · 高光时刻！' : ''}`
+          : item.kind === 'paper'
+          ? '整卷结果已写入训练记录'
+          : item.kind === 'batch'
+          ? '整组批改结果已写入训练记录，正在加载学习报告'
+          : '诊断已进入推荐画像，并会影响后续荐题'
+        : '已忽略本次诊断'
       )
       if (refresh) void refresh()
       if (apply && item.kind === 'batch') await onOpenPressureReport(item.taskId)
@@ -379,6 +389,9 @@ export function InboxView({
             )
           })}
         </div>
+      )}
+      {highlight && (
+        <HighlightMoment highlight={highlight} onDone={() => setHighlight(null)} />
       )}
     </div>
   )

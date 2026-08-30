@@ -2,7 +2,7 @@ import { invoke } from '@tauri-apps/api/core'
 import { check, type Update } from '@tauri-apps/plugin-updater'
 import { relaunch } from '@tauri-apps/plugin-process'
 import { mockBootstrap, mockCategories, mockInbox, mockMastery, mockQuestions, mockRecommendations } from './mock'
-import type { BootstrapData, CategoryNode, CodexTask, DailyLog, DailyTrendPoint, EloStatus, TagClosure, ExportResult, FailedInboxItem, InboxItem, InboxSummary, InsightPoint, MasteryChapter, MasteryNode, MistakeDayGroup, PracticeSessionState, Question, QuestionPage, RatingDistribution, RecommendationBatch, RecommendedQuestion, ReviewHistory, ReviewPlan, SeasonStatus, SessionScoreboard, UserStreak, WeaknessRadar, PressureSession, GradingReport, TacticalDashboardData, UserProfileSettings, AttemptHighlight, HighlightMoment, PeriodOverview, FriendSyncConfig, FriendSyncRemoteSnapshot, LearningCenterSnapshot } from './types'
+import type { BootstrapData, CategoryNode, CodexTask, DailyLog, DailyTrendPoint, EloStatus, TagClosure, ExportResult, FailedInboxItem, InboxItem, InboxSummary, InsightPoint, MasteryChapter, MasteryNode, MistakeDayGroup, PracticeSessionState, Question, QuestionPage, RatingDistribution, RecommendationBatch, RecommendedQuestion, ReviewHistory, ReviewPlan, SeasonStatus, SessionScoreboard, UserStreak, WeaknessRadar, PressureSession, GradingReport, TacticalDashboardData, UserProfileSettings, AttemptHighlight, ConfirmInboxResult, HighlightMoment, PeriodOverview, UndoLastAttemptResult, FriendSyncConfig, FriendSyncRemoteSnapshot, LearningCenterSnapshot } from './types'
 import { createPracticeSessionPayload } from './domain/evidence'
 
 const isTauri = () => '__TAURI_INTERNALS__' in window
@@ -315,9 +315,9 @@ export async function saveReviewIntervals(intervals: number[]): Promise<void> {
   if (isTauri()) await invoke('save_review_intervals', { intervals })
 }
 
-export async function undoLastAttempt(questionId: number): Promise<Question> {
+export async function undoLastAttempt(questionId: number): Promise<UndoLastAttemptResult> {
   if (isTauri()) return invoke('undo_last_attempt', { questionId })
-  return getQuestion(questionId)
+  return { question: await getQuestion(questionId), removedEloDelta: null }
 }
 
 export async function exportRecords(): Promise<ExportResult> {
@@ -348,8 +348,9 @@ export async function getInbox(): Promise<InboxItem[]> {
   return isTauri() ? invoke('get_inbox') : mockInbox
 }
 
-export async function confirmInbox(id: number, applyToProfile: boolean): Promise<void> {
-  if (isTauri()) await invoke('confirm_inbox', { id, applyToProfile })
+export async function confirmInbox(id: number, applyToProfile: boolean): Promise<ConfirmInboxResult> {
+  if (isTauri()) return invoke('confirm_inbox', { id, applyToProfile })
+  return { appliedAttempts: 0, appliedCorrect: 0, highlight: null }
 }
 
 export async function startRecommendationBatch(taskId: string): Promise<RecommendationBatch | null> {

@@ -173,13 +173,23 @@ export function InsightsView({
     void getRatingDistribution().then(setDistribution).catch(() => undefined)
     void getEloStatus().then(setElo).catch(() => undefined)
     void getTagClosure().then(setTagClosure).catch(() => undefined)
-    // 名人堂（阶段四）：历史做对作答按 rating Top-20
-    void getHighlightMoments(20).then(setHighlights).catch(() => undefined)
+    // 名人堂与趋势战报由下方 tab effect 首挂加载（避免双拉）
   }, [])
 
   useEffect(() => {
     if (tab === 'mistakes' && !weakness) void getWeaknessRadar().then(setWeakness).catch(() => undefined)
   }, [tab, weakness])
+
+  // 阶段六自检修复：趋势战报/名人堂不再是一次性进场快照——
+  // 每次切回个人战绩 tab 都重拉，做完题过来看的就是新数据
+  useEffect(() => {
+    if (tab === 'overview') {
+      void getPeriodOverview(periodDays).then(setPeriodOverview).catch(() => undefined)
+      void getHighlightMoments(20).then(setHighlights).catch(() => undefined)
+    }
+    // periodDays 变化由其专属 effect 负责，此处只在切 tab 时触发
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [tab])
 
   const [trend, setTrend] = useState<DailyTrendPoint[]>([])
   const [sessions, setSessions] = useState<PressureSession[]>([])

@@ -5353,14 +5353,26 @@ fn record_attempt(
     })
 }
 
-#[tauri::command]
-fn undo_last_attempt(question_id: i64, state: State<AppState>) -> Result<Question, String> {
-    let conn = state.db.lock().map_err(|e| e.to_string())?;
-    undo_last_attempt_row(&conn, question_id)?;
-    question_by_id(&conn, question_id)
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct UndoLastAttemptResult {
+    question: Question,
+    /// 被撤销作答带走的 ELO 变动（回滚量；None = 该作答无结算）
+    removed_elo_delta: Option<f64>,
 }
 
-fn undo_last_attempt_row(conn: &Connection, question_id: i64) -> Result<(), String> {
+#[tauri::command]
+fn undo_last_attempt(question_id: i64, state: State<AppState>) -> Result<UndoLastAttemptResult, String> {
+    let conn = state.db.lock().map_err(|e| e.to_string())?;
+    let removed_elo_delta = undo_last_attempt_row(&conn, question_id)?;
+    let question = question_by_id(&conn, question_id)?;
+    Ok(UndoLastAttemptResult {
+        question,
+        removed_elo_delta,
+    })
+}
+
+fn undo_last_attempt_row(conn: &Connection, question_id: i64) -> Result<Option<f64>, String> {
     let now = Local::now().to_rfc3339();
     let today = Local::now().date_naive().to_string();
     // 先定位今天该题最新一条作答。ELO 结算行与作答同生共死：
@@ -5378,6 +5390,15 @@ fn undo_last_attempt_row(conn: &Connection, question_id: i64) -> Result<(), Stri
     let Some(attempt_id) = attempt_id else {
         return Err("今天还没有为这道题提交过记录，无法撤销".into());
     };
+    // 捕获该结算的 delta，供 UI 提示「ELO 回滚 ±N」
+    let removed_elo_delta: Option<f64> = conn
+        .query_row(
+            "SELECT delta FROM elo_events WHERE attempt_id=?1",
+            [attempt_id],
+            |r| r.get(0),
+        )
+        .optional()
+        .map_err(|e| e.to_string())?;
     conn.execute("DELETE FROM elo_events WHERE attempt_id=?1", [attempt_id])
         .map_err(|e| e.to_string())?;
     let deleted = conn
@@ -5412,7 +5433,7 @@ fn undo_last_attempt_row(conn: &Connection, question_id: i64) -> Result<(), Stri
         )
         .map_err(|e| e.to_string())?;
     }
-    Ok(())
+    Ok(removed_elo_delta)
 }
 
 fn recompute_progress_after_removal(
@@ -8791,8 +8812,140 @@ fn update_recommendation_batch_items(
     Ok(())
 }
 
+#[derive(Debug, Serialize, Default)]
+#[serde(rename_all = "camelCase")]
+struct ConfirmInboxResult {
+    /// 本次确认后，该任务名下入账的作答总数 / 做对数（recommendation 类为 0）
+    applied_attempts: i64,
+    applied_correct: i64,
+    /// 整组批改确认的高光（阶段四补全）：按稀有度取本任务最佳的一种
+    highlight: Option<AttemptHighlight>,
+}
+
+/// 整组批改确认后的高光检测：与单题路径同一套 detect_highlight 量规，
+/// 按作答时序维护当日连对，逐题判定后取稀有度最高的一种。
+fn detect_task_highlight(
+    conn: &Connection,
+    task_id: &str,
+) -> Result<Option<AttemptHighlight>, String> {
+    let mut stmt = conn
+        .prepare(
+            "SELECT a.id, a.question_id, COALESCE(a.outcome,a.result),
+                    COALESCE(a.duration_seconds,600), a.difficulty_multiplier, q.question_type,
+                    e.performance
+             FROM attempts a
+             JOIN questions q ON q.id=a.question_id
+             LEFT JOIN elo_events e ON e.attempt_id=a.id
+             WHERE a.session_id=?1 AND COALESCE(a.outcome,a.result) <> 'uncertain'
+             ORDER BY a.id",
+        )
+        .map_err(|e| e.to_string())?;
+    let rows = stmt
+        .query_map([task_id], |r| {
+            Ok((
+                r.get::<_, i64>(0)?,
+                r.get::<_, i64>(1)?,
+                r.get::<_, String>(2)?,
+                r.get::<_, i64>(3)?,
+                r.get::<_, Option<f64>>(4)?,
+                r.get::<_, String>(5)?,
+                r.get::<_, Option<f64>>(6)?,
+            ))
+        })
+        .map_err(|e| e.to_string())?
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|e| e.to_string())?;
+    drop(stmt);
+
+    const RARITY: [(&str, u8); 6] = [
+        ("donk", 0),
+        ("ace", 1),
+        ("s1mple", 2),
+        ("clutch", 3),
+        ("redeem", 4),
+        ("zywoo", 5),
+    ];
+    let mut streak = 0u32;
+    let mut best: Option<(u8, AttemptHighlight)> = None;
+    for (attempt_id, question_id, outcome, duration, difficulty_multiplier, question_type, performance) in
+        rows
+    {
+        if outcome == "correct" {
+            streak += 1;
+        } else {
+            streak = 0;
+        }
+        let Some(performance) = performance else {
+            continue;
+        };
+        let repaired: bool = conn
+            .query_row(
+                "SELECT EXISTS(SELECT 1 FROM attempts WHERE question_id=?1 AND id<?2
+                 AND COALESCE(outcome,result) IN ('wrong','incorrect'))",
+                [question_id, attempt_id],
+                |r| r.get(0),
+            )
+            .map_err(|e| e.to_string())?;
+        let Some(kind) = detect_highlight(
+            &outcome,
+            performance,
+            difficulty_multiplier.unwrap_or(1.0),
+            duration,
+            services::rating::benchmark_seconds(&question_type),
+            repaired,
+            streak,
+        ) else {
+            continue;
+        };
+        let rarity = RARITY
+            .iter()
+            .find(|(k, _)| *k == kind)
+            .map(|(_, r)| *r)
+            .unwrap_or(5);
+        let candidate = (
+            rarity,
+            AttemptHighlight {
+                kind: kind.into(),
+                rating: performance,
+            },
+        );
+        if best.as_ref().map(|(r, _)| candidate.0 < *r).unwrap_or(true) {
+            best = Some(candidate);
+        }
+    }
+    Ok(best.map(|(_, highlight)| highlight))
+}
+
+/// 确认后的入账摘要：该任务名下的作答计数 + 最佳高光
+fn inbox_confirm_summary(conn: &Connection, task_id: &str) -> Result<ConfirmInboxResult, String> {
+    let applied_attempts: i64 = conn
+        .query_row(
+            "SELECT COUNT(*) FROM attempts WHERE session_id=?1",
+            [task_id],
+            |r| r.get(0),
+        )
+        .map_err(|e| e.to_string())?;
+    let applied_correct: i64 = conn
+        .query_row(
+            "SELECT COUNT(*) FROM attempts WHERE session_id=?1 AND COALESCE(outcome,result)='correct'",
+            [task_id],
+            |r| r.get(0),
+        )
+        .map_err(|e| e.to_string())?;
+    let highlight = detect_task_highlight(conn, task_id)?;
+    Ok(ConfirmInboxResult {
+        applied_attempts,
+        applied_correct,
+        highlight,
+    })
+}
+
 #[tauri::command]
-fn confirm_inbox(id: i64, apply_to_profile: bool, state: State<AppState>) -> Result<(), String> {
+fn confirm_inbox(
+    id: i64,
+    apply_to_profile: bool,
+    state: State<AppState>,
+) -> Result<ConfirmInboxResult, String> {
     let conn = state.db.lock().map_err(|e| e.to_string())?;
     let raw: String = conn
         .query_row(
@@ -8808,7 +8961,7 @@ fn confirm_inbox(id: i64, apply_to_profile: bool, state: State<AppState>) -> Res
         } else {
             dismiss_recommendation_batch_row(&conn, &payload.task_id)?;
         }
-        return Ok(());
+        return Ok(ConfirmInboxResult::default());
     }
     if apply_to_profile {
         if payload.kind == "paper" {
@@ -8848,7 +9001,7 @@ fn confirm_inbox(id: i64, apply_to_profile: bool, state: State<AppState>) -> Res
             match pressure_task_match_with_link_requirement(&supplemental_conn, &payload.task_id, requires_link)? {
                 PressureTaskMatch::Current(context) => {
                     confirm_pressure_batch_saga(&conn, &supplemental_conn, id, &context, &payload)?;
-                    return Ok(());
+                    return inbox_confirm_summary(&conn, &payload.task_id);
                 }
                 PressureTaskMatch::Stale { session_id, current_task_id } => {
                     // Never dismiss a stale pressure inbox automatically.  In
@@ -8890,7 +9043,11 @@ fn confirm_inbox(id: i64, apply_to_profile: bool, state: State<AppState>) -> Res
     if updated != 1 {
         return Err("回传已被其他操作处理，未重复应用".into());
     }
-    Ok(())
+    if apply_to_profile {
+        inbox_confirm_summary(&conn, &payload.task_id)
+    } else {
+        Ok(ConfirmInboxResult::default())
+    }
 }
 
 #[tauri::command]

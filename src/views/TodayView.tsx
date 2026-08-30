@@ -174,7 +174,7 @@ export function TodayView({
   const [selected, setSelected] = useState<string[]>([])
   const [revealed, setRevealed] = useState(false)
   const [outcome, setOutcome] = useState<AttemptOutcome | null>(null)
-  const [rating, setRating] = useState<number | null>(null)
+  const [rating, setRating] = useState<number>(2)
   const [breakpointTag, setBreakpointTag] = useState<string | null>(null)
   const [repairNote, setRepairNote] = useState<string>('')
   const [repairNoteSaved, setRepairNoteSaved] = useState<boolean>(false)
@@ -236,6 +236,7 @@ export function TodayView({
     totalCount: number
     yesterdayDone?: number
     milestone?: number
+    goalReached?: boolean
   } | null>(null)
   const [yesterdayCount, setYesterdayCount] = useState<number | null>(null)
 
@@ -634,7 +635,7 @@ export function TodayView({
     setSelected([])
     setRevealed(false)
     setOutcome(null)
-    setRating(null)
+    setRating(2)
     setBreakpointTag(null)
     setRepairNote('')
     setRepairNoteSaved(false)
@@ -691,10 +692,10 @@ export function TodayView({
       : data.currentChapterName
       ? '本章队列'
       : '智能队列'
-  const contextStep = !revealed ? 1 : rating === null ? 3 : 4
+  const contextStep = !revealed ? 1 : 4
 
   const submit = async () => {
-    if (!current || rating === null || submittingRef.current) return
+    if (!current || submittingRef.current) return
     submittingRef.current = true
     try {
       const answer = selected.join('')
@@ -828,6 +829,12 @@ export function TodayView({
           }
         }
 
+        const goalJustReached =
+          data.dailyProblemTarget > 0 &&
+          data.todayDone < data.dailyProblemTarget &&
+          newTodayDone >= data.dailyProblemTarget
+        if (goalJustReached) playHighlightSound('goal')
+
         const achievementPayload = {
           correct,
           duration: durationSeconds,
@@ -836,6 +843,7 @@ export function TodayView({
           totalCount: nextSessionTotal,
           yesterdayDone: yesterdayCount ?? undefined,
           milestone,
+          goalReached: goalJustReached,
         }
         setAchievementData(achievementPayload)
         setShowAchievementCard(true)
@@ -894,6 +902,10 @@ export function TodayView({
     const undoRoundKey = nonPressureRoundKey
     try {
       const restored = await undoLastAttempt(lastSubmitted.questionId)
+      const rollbackText =
+        typeof restored.removedEloDelta === 'number'
+          ? `ELO 回滚 ${restored.removedEloDelta >= 0 ? '+' : ''}${Math.round(restored.removedEloDelta)}，`
+          : ''
       const context = nonPressureBatchContextRef.current
       if (
         !context.pressureBatchFlowActive &&
@@ -907,7 +919,7 @@ export function TodayView({
         )
       }
       const reitem: RecommendedQuestion = {
-        question: restored,
+        question: restored.question,
         score: queue[index]?.score ?? 100,
         reason: `${reasonLabels[lastSubmitted.reasonCode] ?? '智能推荐'} · 刚才撤销，重新评定`,
         reasonCode: lastSubmitted.reasonCode as any,
@@ -924,11 +936,11 @@ export function TodayView({
       resetActiveTimer()
       setIndex(position)
       setRevealed(true)
-      setRating(null)
+      setRating(2)
       setOutcome(null)
       setSelected([])
       setLastSubmitted(null)
-      notify('已撤销刚才的提交，可以重新评定')
+      notify(`已撤销刚才的提交，${rollbackText}可以重新评定`)
       void refresh()
     } catch (error) {
       notify(`撤销失败：${String(error)}`)
@@ -946,7 +958,7 @@ export function TodayView({
     setIsQuestionTimerPaused(false)
     setSettledDuration(null)
     setSelected([])
-    setRating(null)
+    setRating(2)
     setOutcome(null)
     setRevealed(false)
     setTask(null)
@@ -1736,11 +1748,7 @@ export function TodayView({
             <span>/ {queue.length} 题</span>
             <i>·</i>
             <span>
-              {contextStep === 1
-                ? '先在纸上完成'
-                : contextStep === 3
-                ? '已看答案，待自评'
-                : '已自评，记录后进入下一题'}
+              {contextStep === 1 ? '先在纸上完成' : '已看答案，自评默认「不熟练」，可改后记录'}
             </span>
           </div>
         </div>
@@ -2380,7 +2388,6 @@ export function TodayView({
               <div className="review-actions">
                 <button
                   className="primary-button continue-button"
-                  disabled={rating === null}
                   onClick={submit}
                   onKeyDown={(event) =>
                     activateWithKeyboard(event, () => {
@@ -2575,6 +2582,12 @@ export function TodayView({
               {achievementData.milestone && (
                 <div className="milestone-banner">
                   🎉 达成里程碑：完成 {achievementData.milestone} 题！
+                </div>
+              )}
+
+              {achievementData.goalReached && (
+                <div className="milestone-banner">
+                  🎯 今日目标达成，可以收工——明天的修复动作已在队列里等你
                 </div>
               )}
 

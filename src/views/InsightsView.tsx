@@ -28,7 +28,9 @@ import {
   addToCustomQueue,
   getDailyTrend,
   getEloStatus,
+  getHighlightMoments,
   getPressureGradingReport,
+  getQuestion,
   getRatingDistribution,
   getTacticalDashboardStats,
   getTagClosure,
@@ -54,12 +56,14 @@ import { Gauge } from '../components/ui/Gauge'
 import { GradeBadge } from '../components/ui/GradeBadge'
 import { MetricBar } from '../components/ui/MetricBar'
 import { Radar } from '../components/ui/Radar'
+import { RatingBadge } from '../components/ui/RatingBadge'
 import { InboxView } from './InboxView'
 import type {
   BootstrapData,
   DailyTrendPoint,
   EloStatus,
   GradingReport,
+  HighlightMoment,
   PressureSession,
   Question,
   RatingDistribution,
@@ -152,6 +156,8 @@ export function InsightsView({
     void getRatingDistribution().then(setDistribution).catch(() => undefined)
     void getEloStatus().then(setElo).catch(() => undefined)
     void getTagClosure().then(setTagClosure).catch(() => undefined)
+    // 名人堂（阶段四）：历史做对作答按 rating Top-20
+    void getHighlightMoments(20).then(setHighlights).catch(() => undefined)
   }, [])
 
   useEffect(() => {
@@ -168,6 +174,18 @@ export function InsightsView({
   const [todayFilter, setTodayFilter] = useState<'all' | 'wrong' | 'favorite'>('all')
   const [detailQuestion, setDetailQuestion] = useState<Question | null>(null)
   const [toastMsg, setToastMsg] = useState<string | null>(null)
+  const [highlights, setHighlights] = useState<HighlightMoment[]>([])
+  const [expandedHighlightId, setExpandedHighlightId] = useState<number | null>(null)
+
+  const handleOpenHighlightDetail = async (questionId: number) => {
+    try {
+      const fetched = await getQuestion(questionId)
+      setDetailQuestion(fetched)
+    } catch {
+      setToastMsg(`无法加载题目 #${questionId} 详情`)
+      setTimeout(() => setToastMsg(null), 2000)
+    }
+  }
 
   const loadTodayAttempts = async () => {
     try {
@@ -920,6 +938,154 @@ export function InsightsView({
                   </div>
                 </div>
               </div>
+            </section>
+
+            {/* 5. 高光时刻 · 名人堂（阶段四） */}
+            <section className="tactical-card highlight-hall-card" style={{ gridColumn: '1 / -1' }}>
+              <header className="tactical-card-header">
+                <h3>高光时刻 · 名人堂</h3>
+                <span style={{ fontSize: 12, color: 'var(--muted)' }}>
+                  历史作答按 Rating 取 Top 20，点击展开回看六维证据
+                </span>
+              </header>
+              {highlights.length === 0 ? (
+                <p style={{ fontSize: 13, color: 'var(--muted)', margin: 0 }}>
+                  还没有高光时刻——打出 Rating 1.8+ 的作答（⚡ACE / 👑DONK）会自动入堂。
+                </p>
+              ) : (
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+                  {highlights.map((item, index) => {
+                    const expanded = expandedHighlightId === item.attemptId
+                    const dims = [
+                      { key: 'rigor', label: '严谨', value: item.rigor },
+                      { key: 'comp', label: '计算', value: item.computation },
+                      { key: 'speed', label: '速度', value: item.speed },
+                      { key: 'model', label: '建模', value: item.modeling },
+                      { key: 'method', label: '方法', value: item.methodUse },
+                      { key: 'insight', label: '洞察', value: item.strategyInsight },
+                    ].filter((d): d is { key: string; label: string; value: number } => typeof d.value === 'number')
+                    return (
+                      <div
+                        key={item.attemptId}
+                        style={{ border: '1px solid var(--line)', borderRadius: 10, overflow: 'hidden' }}
+                      >
+                        <button
+                          type="button"
+                          onClick={() => setExpandedHighlightId(expanded ? null : item.attemptId)}
+                          style={{
+                            display: 'flex',
+                            alignItems: 'center',
+                            gap: 10,
+                            width: '100%',
+                            padding: '10px 14px',
+                            background: 'transparent',
+                            border: 'none',
+                            cursor: 'pointer',
+                            textAlign: 'left',
+                            color: 'var(--ink)',
+                          }}
+                        >
+                          <span style={{ fontSize: 12, color: 'var(--muted)', fontWeight: 700, minWidth: 26 }}>
+                            #{index + 1}
+                          </span>
+                          <RatingBadge value={item.rating} />
+                          <span
+                            style={{
+                              flex: 1,
+                              fontSize: 13,
+                              overflow: 'hidden',
+                              display: '-webkit-box',
+                              WebkitLineClamp: 1,
+                              WebkitBoxOrient: 'vertical',
+                            }}
+                          >
+                            <MathText value={item.stem} />
+                          </span>
+                          <span style={{ fontSize: 12, color: 'var(--muted)', whiteSpace: 'nowrap' }}>
+                            {formatElapsed(item.durationSeconds * 1000)} · {item.attemptedAt}
+                          </span>
+                        </button>
+                        {expanded && (
+                          <div
+                            style={{
+                              display: 'flex',
+                              gap: 16,
+                              padding: '10px 14px 12px',
+                              alignItems: 'center',
+                              flexWrap: 'wrap',
+                              borderTop: '1px solid var(--line)',
+                            }}
+                          >
+                            {dims.length >= 3 ? (
+                              <Radar
+                                width={200}
+                                height={175}
+                                cx={100}
+                                cy={88}
+                                radius={52}
+                                labelRadius={66}
+                                dimensions={dims.map((d) => ({ key: d.key, label: d.label, value: d.value }))}
+                                gridStroke="var(--line)"
+                                gridInnerDash="3 3"
+                                axisStroke="var(--line)"
+                                axisOpacity={0.65}
+                                shapeFill="var(--success)"
+                                shapeFillOpacity={0.22}
+                                shapeStroke="var(--success)"
+                                shapeStrokeWidth={2}
+                                dotVariant="simple"
+                                dotRadius={3}
+                                dotFill="var(--success)"
+                                labelAnchorMode="smart"
+                                labelFill="var(--ink)"
+                                labelFontSize={10}
+                                labelFontWeight={700}
+                                role="img"
+                                ariaLabel={`#${item.questionId} 六维证据`}
+                              />
+                            ) : (
+                              <span style={{ fontSize: 12, color: 'var(--muted)' }}>
+                                该作答无六维证据（六维独立性量规上线后的批改会带完整证据）
+                              </span>
+                            )}
+                            <div style={{ flex: 1, minWidth: 180, display: 'flex', flexDirection: 'column', gap: 6 }}>
+                              <span style={{ fontSize: 12, color: 'var(--muted)' }}>{item.categoryPath}</span>
+                              <span style={{ fontSize: 12, color: 'var(--muted)' }}>
+                                用时 {formatElapsed(item.durationSeconds * 1000)} / 基准{' '}
+                                {formatElapsed(item.benchmarkSeconds * 1000)}
+                                {item.difficultyMultiplier != null
+                                  ? ` · 难度系数 ${item.difficultyMultiplier.toFixed(2)}`
+                                  : ''}
+                                {item.techniqueLevel != null ? ` · 技巧等级 ${item.techniqueLevel}` : ''}
+                              </span>
+                              <div style={{ display: 'flex', gap: 8 }}>
+                                <button
+                                  type="button"
+                                  className="tactical-preview-btn compact"
+                                  onClick={() => void handleOpenHighlightDetail(item.questionId)}
+                                >
+                                  <BookOpen size={12} />
+                                  <span>原题解析</span>
+                                </button>
+                                {onStartVariant && (
+                                  <button
+                                    type="button"
+                                    className="tactical-variant-btn compact"
+                                    onClick={() => onStartVariant(item.questionId)}
+                                  >
+                                    <Sparkles size={11} />
+                                    <span>练变式</span>
+                                  </button>
+                                )}
+                              </div>
+                            </div>
+                          </div>
+                        )}
+                      </div>
+                    )
+                  })}
+                </div>
+              )}
             </section>
           </motion.div>
         ) : tab === 'mistakes' ? (

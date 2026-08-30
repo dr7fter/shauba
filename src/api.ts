@@ -2,7 +2,7 @@ import { invoke } from '@tauri-apps/api/core'
 import { check, type Update } from '@tauri-apps/plugin-updater'
 import { relaunch } from '@tauri-apps/plugin-process'
 import { mockBootstrap, mockCategories, mockInbox, mockMastery, mockQuestions, mockRecommendations } from './mock'
-import type { BootstrapData, CategoryNode, CodexTask, DailyLog, DailyTrendPoint, EloStatus, TagClosure, ExportResult, FailedInboxItem, InboxItem, InboxSummary, InsightPoint, MasteryChapter, MasteryNode, MistakeDayGroup, PracticeSessionState, Question, QuestionPage, RatingDistribution, RecommendationBatch, RecommendedQuestion, ReviewHistory, ReviewPlan, SeasonStatus, SessionScoreboard, UserStreak, WeaknessRadar, PressureSession, GradingReport, TacticalDashboardData, UserProfileSettings, FriendSyncConfig, FriendSyncRemoteSnapshot, LearningCenterSnapshot } from './types'
+import type { BootstrapData, CategoryNode, CodexTask, DailyLog, DailyTrendPoint, EloStatus, TagClosure, ExportResult, FailedInboxItem, InboxItem, InboxSummary, InsightPoint, MasteryChapter, MasteryNode, MistakeDayGroup, PracticeSessionState, Question, QuestionPage, RatingDistribution, RecommendationBatch, RecommendedQuestion, ReviewHistory, ReviewPlan, SeasonStatus, SessionScoreboard, UserStreak, WeaknessRadar, PressureSession, GradingReport, TacticalDashboardData, UserProfileSettings, AttemptHighlight, HighlightMoment, FriendSyncConfig, FriendSyncRemoteSnapshot, LearningCenterSnapshot } from './types'
 import { createPracticeSessionPayload } from './domain/evidence'
 
 const isTauri = () => '__TAURI_INTERNALS__' in window
@@ -206,6 +206,17 @@ export async function setCurrentChapter(categoryId: number | null): Promise<void
 export type RecordAttemptResult = {
   question: Question
   attemptId: number
+  /** 本次作答的结算 rating（elo_events.performance） */
+  rating?: number | null
+  /** 当日连续做对次数（含本次） */
+  streakToday?: number
+  /** 高光时刻（donk/ace/s1mple/clutch/redeem/zywoo） */
+  highlight?: AttemptHighlight | null
+}
+
+export async function getHighlightMoments(limit = 20): Promise<HighlightMoment[]> {
+  if (isTauri()) return invoke('get_highlight_moments', { limit })
+  return []
 }
 
 export async function recordAttempt(input: {

@@ -152,6 +152,20 @@ impl AttemptDimensions {
 struct RecordAttemptResult {
     question: Question,
     attempt_id: i64,
+    /// 本次作答的结算 rating（来自 elo_events.performance，未含情境乘子）。
+    rating: Option<f64>,
+    /// 当日连续做对次数（含本次；uncertain/partial/做错清零）。
+    streak_today: u32,
+    /// 高光时刻（v1.7.0 阶段四）：按稀有度优先级取一种。
+    highlight: Option<AttemptHighlight>,
+}
+
+#[derive(Debug, Serialize, Clone)]
+#[serde(rename_all = "camelCase")]
+struct AttemptHighlight {
+    /// donk | ace | s1mple | clutch | redeem | zywoo
+    kind: String,
+    rating: f64,
 }
 
 #[derive(Debug, Deserialize, Clone, Default)]
@@ -4796,6 +4810,185 @@ fn get_recommendations(
     recommendations(&conn, limit.min(50))
 }
 
+/// 高光时刻检测（v1.7.0 阶段四）：只对做对的作答触发，按稀有度优先级取一种。
+/// donk：rating ≥ 2.00 超神秒杀；ace：rating ≥ 1.80 高光作答；
+/// s1mple：难度系数 ≥ 1.20 的压轴攻坚（大场面先生，不论快慢）；
+/// clutch：难度 ≥ 1.15 且用时 < 50% 基准（残局翻盘）；
+/// redeem：旧错修复（旧伤愈合）；zywoo：当日连对达 12（稳定之神，HEATING 火焰 12 档联动）。
+fn detect_highlight(
+    outcome: &str,
+    rating: f64,
+    difficulty: f64,
+    duration_seconds: i64,
+    benchmark_seconds: i64,
+    repaired: bool,
+    streak_today: u32,
+) -> Option<&'static str> {
+    if outcome != "correct" {
+        return None;
+    }
+    if rating >= 2.0 {
+        Some("donk")
+    } else if rating >= 1.8 {
+        Some("ace")
+    } else if difficulty >= 1.20 {
+        Some("s1mple")
+    } else if difficulty >= 1.15 && duration_seconds < benchmark_seconds / 2 {
+        Some("clutch")
+    } else if repaired {
+        Some("redeem")
+    } else if streak_today >= 12 {
+        Some("zywoo")
+    } else {
+        None
+    }
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct HighlightMoment {
+    attempt_id: i64,
+    question_id: i64,
+    stem: String,
+    category_path: String,
+    question_type: String,
+    duration_seconds: i64,
+    benchmark_seconds: i64,
+    rating: f64,
+    attempted_at: String,
+    technique_level: Option<i32>,
+    difficulty_multiplier: Option<f64>,
+    rigor: Option<f64>,
+    computation: Option<f64>,
+    modeling: Option<f64>,
+    method_use: Option<f64>,
+    speed: Option<f64>,
+    strategy_insight: Option<f64>,
+}
+
+/// 名人堂（v1.7.0 阶段四）：历史做对作答按 rating 取 Top-N，供数据板「高光时刻」回看。
+#[tauri::command]
+fn get_highlight_moments(
+    limit: Option<usize>,
+    state: State<AppState>,
+) -> Result<Vec<HighlightMoment>, String> {
+    let conn = state.db.lock().map_err(|e| e.to_string())?;
+    let max = limit.unwrap_or(20).clamp(1, 50);
+    let mut stmt = conn
+        .prepare(
+            "SELECT a.id, a.question_id, q.stem, q.category_path, q.question_type,
+                    COALESCE(a.duration_seconds, 600), substr(a.attempted_at, 1, 10),
+                    a.technique_level, a.difficulty_multiplier,
+                    a.dim_rigor, a.dim_computation, a.dim_modeling, a.dim_method_use,
+                    a.dim_speed, a.dim_strategy_insight,
+                    a.ai_rating, COALESCE(a.fluency_rating, a.self_rating)
+             FROM attempts a JOIN questions q ON q.id = a.question_id
+             WHERE COALESCE(a.outcome, a.result) = 'correct'
+             ORDER BY a.id DESC
+             LIMIT 500",
+        )
+        .map_err(|e| e.to_string())?;
+    let rows = stmt
+        .query_map([], |r| {
+            Ok((
+                r.get::<_, i64>(0)?,
+                r.get::<_, i64>(1)?,
+                r.get::<_, String>(2)?,
+                r.get::<_, String>(3)?,
+                r.get::<_, String>(4)?,
+                r.get::<_, i64>(5)?,
+                r.get::<_, String>(6)?,
+                r.get::<_, Option<i32>>(7)?,
+                r.get::<_, Option<f64>>(8)?,
+                r.get::<_, Option<f64>>(9)?,
+                r.get::<_, Option<f64>>(10)?,
+                r.get::<_, Option<f64>>(11)?,
+                r.get::<_, Option<f64>>(12)?,
+                r.get::<_, Option<f64>>(13)?,
+                r.get::<_, Option<f64>>(14)?,
+                r.get::<_, Option<f64>>(15)?,
+                r.get::<_, i32>(16)?,
+            ))
+        })
+        .map_err(|e| e.to_string())?
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|e| e.to_string())?;
+    drop(stmt);
+
+    let mut moments: Vec<HighlightMoment> = rows
+        .into_iter()
+        .map(
+            |(
+                attempt_id,
+                question_id,
+                stem,
+                category_path,
+                question_type,
+                duration,
+                attempted_at,
+                technique_level,
+                difficulty_multiplier,
+                rigor,
+                computation,
+                modeling,
+                method_use,
+                speed,
+                strategy_insight,
+                ai_rating,
+                fluency,
+            )| {
+                let dims = services::rating::DimensionEvidence {
+                    rigor,
+                    computation,
+                    modeling,
+                    method_use,
+                    speed,
+                    strategy_insight,
+                    technique_level,
+                };
+                let bench = services::rating::benchmark_seconds(&question_type);
+                // 与评分回退链一致：六维 HLTV 合成 > Codex rating > 特征曲线
+                let rating = if !dims.is_empty() {
+                    services::rating::hltv_rating("correct", &dims, duration, bench, difficulty_multiplier)
+                } else if let Some(value) =
+                    ai_rating.filter(|v| (services::rating::RATING_MIN..=services::rating::RATING_MAX).contains(v))
+                {
+                    value
+                } else {
+                    services::rating::attempt_rating("correct", fluency, duration, bench)
+                };
+                HighlightMoment {
+                    attempt_id,
+                    question_id,
+                    stem,
+                    category_path,
+                    question_type,
+                    duration_seconds: duration,
+                    benchmark_seconds: bench,
+                    rating,
+                    attempted_at,
+                    technique_level,
+                    difficulty_multiplier,
+                    rigor,
+                    computation,
+                    modeling,
+                    method_use,
+                    speed,
+                    strategy_insight,
+                }
+            },
+        )
+        .collect();
+    moments.sort_by(|a, b| {
+        b.rating
+            .partial_cmp(&a.rating)
+            .unwrap_or(std::cmp::Ordering::Equal)
+            .then(a.duration_seconds.cmp(&b.duration_seconds))
+    });
+    moments.truncate(max);
+    Ok(moments)
+}
+
 #[tauri::command]
 fn record_attempt(
     input: AttemptInput,
@@ -4809,9 +5002,68 @@ fn record_attempt(
         eprintln!("recommendation result context export skipped: {error}");
     }
     let question = question_by_id(&conn, input.question_id)?;
+
+    // 高光上下文：结算 rating、当日连对、旧错修复标记
+    let rating = conn
+        .query_row(
+            "SELECT performance FROM elo_events WHERE attempt_id = ?1",
+            [attempt_id],
+            |r| r.get::<_, f64>(0),
+        )
+        .optional()
+        .map_err(|e| e.to_string())?;
+    let today = Local::now().date_naive().to_string();
+    let today_outcomes: Vec<String> = {
+        let mut stmt = conn
+            .prepare(
+                "SELECT COALESCE(outcome,result) FROM attempts
+                 WHERE substr(attempted_at,1,10) = ?1 AND COALESCE(outcome,result) <> 'uncertain'
+                 ORDER BY id",
+            )
+            .map_err(|e| e.to_string())?;
+        let rows = stmt
+            .query_map([&today], |r| r.get::<_, String>(0))
+            .map_err(|e| e.to_string())?
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(|e| e.to_string())?;
+        rows
+    };
+    let streak_today = today_outcomes
+        .iter()
+        .rev()
+        .take_while(|o| o.as_str() == "correct")
+        .count() as u32;
+    let repaired = conn
+        .query_row(
+            "SELECT EXISTS(SELECT 1 FROM attempts WHERE question_id = ?1 AND id < ?2
+             AND COALESCE(outcome,result) IN ('wrong','incorrect'))",
+            [input.question_id, attempt_id],
+            |r| r.get::<_, bool>(0),
+        )
+        .map_err(|e| e.to_string())?;
+    let outcome = input.outcome.as_deref().unwrap_or(&input.result);
+    let highlight = rating.and_then(|value| {
+        let kind = detect_highlight(
+            outcome,
+            value,
+            input.difficulty_multiplier.unwrap_or(1.0),
+            input.duration_seconds,
+            services::rating::benchmark_seconds(&question.question_type),
+            repaired,
+            streak_today,
+        )?;
+        Some(AttemptHighlight {
+            kind: kind.into(),
+            rating: value,
+        })
+    });
+
     Ok(RecordAttemptResult {
         question,
         attempt_id,
+        rating,
+        streak_today,
+        highlight,
     })
 }
 
@@ -10820,6 +11072,7 @@ pub fn run() {
             clear_custom_queue,
             add_supplemental_question,
             record_attempt,
+            get_highlight_moments,
             undo_last_attempt,
             toggle_favorite,
             save_note,

@@ -27,6 +27,7 @@ type RadarProps = {
   axisOpacity?: number
   axisClassName?: string
   shapeFill?: string
+  shapeFillOpacity?: number
   shapeStroke?: string
   shapeStrokeWidth?: number
   shapeClassName?: string
@@ -34,6 +35,7 @@ type RadarProps = {
   dotRadius?: number
   dotColor?: string
   dotSurfaceColor?: string
+  dotFill?: string
   dotClassName?: string
   labelAnchorMode?: 'center' | 'smart'
   labelFill?: string
@@ -72,6 +74,7 @@ export function Radar({
   axisOpacity,
   axisClassName,
   shapeFill,
+  shapeFillOpacity,
   shapeStroke,
   shapeStrokeWidth,
   shapeClassName,
@@ -79,6 +82,7 @@ export function Radar({
   dotRadius = 3.5,
   dotColor,
   dotSurfaceColor,
+  dotFill,
   dotClassName,
   labelAnchorMode = 'center',
   labelFill,
@@ -184,6 +188,7 @@ export function Radar({
           return `${pt.x},${pt.y}`
         }).join(' ')}
         fill={shapeFill}
+        fillOpacity={shapeFillOpacity}
         stroke={shapeStroke}
         strokeWidth={shapeStrokeWidth}
         strokeLinejoin="round"
@@ -213,6 +218,7 @@ export function Radar({
             cx={pt.x}
             cy={pt.y}
             r={dotRadius}
+            fill={dotFill}
             className={dotClassName}
           />
         )

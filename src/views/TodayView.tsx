@@ -49,7 +49,7 @@ import {
   toggleFavorite,
   undoLastAttempt,
 } from '../api'
-import { playCorrectSound } from '../data/audio'
+import { playCorrectSound, playHighlightSound, playWrongSound } from '../data/audio'
 import { isFeatureEnabled } from '../data/featureFlags'
 import { triggerBackgroundSync } from '../data/friendsService'
 import {
@@ -58,6 +58,7 @@ import {
 } from '../domain/evidence'
 import {
   csRankForElo,
+  csRatingAccent,
   formatElapsed,
   formatTimer,
   getPaceEvaluation,
@@ -65,6 +66,7 @@ import {
   normalizeAnswer,
 } from '../utils'
 import { questionRoleMeta } from '../utils/questionRole'
+import { HighlightMoment } from '../components/HighlightMoment'
 import {
   areSameCodexBatchQuestionIds,
   buildCodexBatchQueueSnapshot,
@@ -84,6 +86,7 @@ import { useKeyboardShortcuts } from '../hooks/useKeyboardShortcuts'
 import { usePressureMode } from '../hooks/usePressureMode'
 import type { BlitzExamResult } from '../data/motivation'
 import type {
+  AttemptHighlight,
   AttemptMode,
   AttemptOutcome,
   BootstrapData,
@@ -220,7 +223,10 @@ export function TodayView({
     protectionLeft: number
     calibrated: boolean
     settlements: number
+    rating?: number | null
+    streakToday?: number
   } | null>(null)
+  const [highlight, setHighlight] = useState<AttemptHighlight | null>(null)
   const [scoreboard, setScoreboard] = useState<SessionScoreboard | null>(null)
   const [achievementData, setAchievementData] = useState<{
     correct: boolean
@@ -770,7 +776,16 @@ export function TodayView({
       }
       void triggerBackgroundSync('attempt_recorded')
 
-      if (correct) playCorrectSound()
+      if (correct) {
+        playCorrectSound()
+      } else if (finalOutcome === 'wrong') {
+        playWrongSound()
+      }
+      // 高光时刻（阶段四）：后端按稀有度判定 donk/ace/s1mple/clutch/redeem/zywoo
+      if (recorded.highlight) {
+        setHighlight(recorded.highlight)
+        playHighlightSound(recorded.highlight.kind)
+      }
 
       // CS-Premier 风格结算反馈：每题都是一场比赛
       if (finalOutcome !== 'uncertain') {
@@ -787,6 +802,8 @@ export function TodayView({
               protectionLeft: status.protectionLeft,
               calibrated: status.calibrated,
               settlements: status.settlements,
+              rating: recorded.rating ?? null,
+              streakToday: recorded.streakToday ?? 0,
             })
             window.setTimeout(() => setEloFlash(null), 4000)
           })
@@ -2458,11 +2475,53 @@ export function TodayView({
               >
                 {eloFlash.delta >= 0 ? `+${Math.round(eloFlash.delta)}` : Math.round(eloFlash.delta)}
               </span>
-              {eloFlash.streak >= 3 && (
-                <span style={{ display: 'inline-flex', alignItems: 'center', gap: 2, fontSize: 12, color: '#E87722', fontWeight: 700 }} title={`连胜 ${eloFlash.streak} 场`}>
-                  <Flame size={13} />{eloFlash.streak}
-                </span>
+              {eloFlash.rating != null && (
+                <>
+                  <span style={{ width: 1, height: 16, background: 'rgba(245, 243, 238, 0.25)' }} />
+                  <span style={{ fontSize: 12, color: '#9BA3AF' }}>Rating</span>
+                  <span
+                    style={{
+                      fontSize: 15,
+                      fontWeight: 800,
+                      fontVariantNumeric: 'tabular-nums',
+                      color: '#F5F3EE',
+                    }}
+                  >
+                    {eloFlash.rating.toFixed(2)}
+                  </span>
+                  {(() => {
+                    const accent = csRatingAccent(eloFlash.rating)
+                    if (accent === 'donk') return <span title="DONK 级超神秒杀">👑</span>
+                    if (accent === 'clutch') return <span title="Clutch 级高光">⚡</span>
+                    return null
+                  })()}
+                </>
               )}
+              {(() => {
+                // HEATING 火焰四档（当日连对 3/5/8/12），12 档即 ZYWOO PLAY 稳定之神
+                const heat = eloFlash.streakToday ?? 0
+                if (heat < 3) return null
+                const tier = heat >= 12 ? 4 : heat >= 8 ? 3 : heat >= 5 ? 2 : 1
+                const flameColor = heat >= 12 ? '#C297FF' : heat >= 8 ? '#E5534B' : '#E87722'
+                const heatTitle = heat >= 12
+                  ? `当日连对 ${heat} 题 · ZywOo 级稳定输出`
+                  : `当日连对 ${heat} 题`
+                return (
+                  <span
+                    style={{
+                      display: 'inline-flex',
+                      alignItems: 'center',
+                      gap: 2,
+                      fontSize: 12 + tier,
+                      color: flameColor,
+                      fontWeight: 700,
+                    }}
+                    title={heatTitle}
+                  >
+                    <Flame size={13 + tier} />{heat}
+                  </span>
+                )
+              })()}
               {eloFlash.streak <= -3 && (
                 <span style={{ display: 'inline-flex', alignItems: 'center', gap: 2, fontSize: 12, color: '#6B7280', fontWeight: 700 }} title={`连败 ${-eloFlash.streak} 场`}>
                   ❄{-eloFlash.streak}
@@ -2480,6 +2539,9 @@ export function TodayView({
           )}
         </AnimatePresence>
         {scoreboard && <SessionScoreboardModal scoreboard={scoreboard} onClose={() => setScoreboard(null)} />}
+        {highlight && (
+          <HighlightMoment highlight={highlight} onDone={() => setHighlight(null)} />
+        )}
         {showAchievementCard && achievementData && (
           <motion.div
             className="achievement-card-overlay"

@@ -291,6 +291,31 @@ export type TacticalProfile = {
   kastRate: number
 }
 
+export type AttemptHighlight = {
+  kind: 'donk' | 'ace' | 's1mple' | 'clutch' | 'redeem' | 'zywoo'
+  rating: number
+}
+
+export type HighlightMoment = {
+  attemptId: number
+  questionId: number
+  stem: string
+  categoryPath: string
+  questionType: string
+  durationSeconds: number
+  benchmarkSeconds: number
+  rating: number
+  attemptedAt: string
+  techniqueLevel: number | null
+  difficultyMultiplier: number | null
+  rigor: number | null
+  computation: number | null
+  modeling: number | null
+  methodUse: number | null
+  speed: number | null
+  strategyInsight: number | null
+}
+
 export type TacticalMapSubject = {
   id: string
   name: string

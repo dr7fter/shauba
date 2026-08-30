@@ -1,0 +1,581 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>刷吧 v1.7.0 · 体验与游戏性升级执行书</title>
+<style>
+:root{
+  --bg:#faf9f7; --card:#ffffff; --ink:#1f2328; --ink2:#57606a; --ink3:#8b949e;
+  --line:#e6e3dd; --line2:#d0ccc4;
+  --blue:#1f6feb; --blue-bg:#ddf0ff;
+  --red:#c1121f; --red-bg:#ffe3e3;
+  --green:#1a7f37; --green-bg:#daf5e3;
+  --amber:#9a6700; --amber-bg:#fff4d6;
+  --purple:#6639ba; --purple-bg:#eee6ff;
+}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--ink);
+  font-family:-apple-system,BlinkMacSystemFont,"Segoe UI","PingFang SC","Microsoft YaHei",sans-serif;
+  font-size:15px;line-height:1.75;-webkit-font-smoothing:antialiased}
+.wrap{max-width:1000px;margin:0 auto;padding:56px 32px 100px}
+h1{font-size:31px;font-weight:600;margin:0 0 8px;letter-spacing:-.4px}
+.sub{color:var(--ink2);font-size:15px;margin:0 0 6px}
+.meta{color:var(--ink3);font-size:13px;margin:0 0 40px;padding-bottom:20px;border-bottom:2px solid var(--line2)}
+h2{font-size:21px;font-weight:600;margin:52px 0 6px;padding-top:26px;border-top:1px solid var(--line);letter-spacing:-.2px}
+h2 .num{color:var(--blue);font-variant-numeric:tabular-nums;margin-right:10px}
+h3{font-size:16px;font-weight:600;margin:30px 0 10px}
+h4{font-size:14px;font-weight:600;margin:20px 0 8px;color:var(--ink2)}
+p{margin:0 0 14px}
+ul,ol{margin:0 0 14px;padding-left:22px}
+li{margin-bottom:7px}
+code{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:12.5px;
+  background:#f0eee9;padding:2px 6px;border-radius:4px;border:1px solid var(--line)}
+table{width:100%;border-collapse:collapse;margin:16px 0 20px;font-size:13.5px;
+  background:var(--card);border:1px solid var(--line);border-radius:10px;overflow:hidden}
+th{background:#f5f3ef;text-align:left;padding:11px 14px;font-weight:600;
+  border-bottom:1px solid var(--line2);font-size:13px;color:var(--ink2);white-space:nowrap}
+td{padding:11px 14px;border-bottom:1px solid var(--line);vertical-align:top}
+tr:last-child td{border-bottom:none}
+td.num,th.num{text-align:right;font-variant-numeric:tabular-nums;white-space:nowrap}
+.callout{border-left:3px solid var(--blue);background:var(--blue-bg);
+  padding:14px 18px;margin:18px 0;border-radius:0 8px 8px 0}
+.callout.warn{border-color:var(--red);background:var(--red-bg)}
+.callout.ok{border-color:var(--green);background:var(--green-bg)}
+.callout.note{border-color:var(--amber);background:var(--amber-bg)}
+.callout p:last-child{margin-bottom:0}
+.callout .t{font-weight:600;display:block;margin-bottom:5px;font-size:14px}
+.grid2{display:grid;grid-template-columns:1fr 1fr;gap:16px;margin:18px 0}
+@media(max-width:760px){.grid2{grid-template-columns:1fr}.wrap{padding:32px 18px 60px}}
+.card{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:18px 20px}
+.card .hd{font-weight:600;font-size:14px;margin-bottom:10px;display:flex;align-items:center;gap:8px}
+.card.user{border-top:3px solid var(--blue)}
+.card.dev{border-top:3px solid var(--purple)}
+.tag{display:inline-block;font-size:11px;padding:2px 8px;border-radius:20px;
+  font-weight:600;letter-spacing:.3px;vertical-align:middle}
+.tag.p0{background:var(--red-bg);color:var(--red)}
+.tag.p1{background:var(--amber-bg);color:var(--amber)}
+.tag.p2{background:var(--blue-bg);color:var(--blue)}
+.tag.p3{background:#f0eee9;color:var(--ink2)}
+.tag.fix{background:var(--green-bg);color:var(--green)}
+.bar{height:7px;background:#efedE8;border-radius:4px;overflow:hidden;margin-top:5px}
+.bar i{display:block;height:100%;border-radius:4px}
+.kpi{display:grid;grid-template-columns:repeat(4,1fr);gap:14px;margin:22px 0}
+@media(max-width:760px){.kpi{grid-template-columns:repeat(2,1fr)}}
+.kpi div{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:14px 16px}
+.kpi b{display:block;font-size:25px;font-weight:600;line-height:1.15;
+  font-variant-numeric:tabular-nums;letter-spacing:-.5px}
+.kpi span{font-size:12px;color:var(--ink2);display:block;margin-top:3px}
+.up{color:var(--green)}.down{color:var(--red)}
+.steps{counter-reset:s;list-style:none;padding:0;margin:18px 0}
+.steps li{counter-increment:s;position:relative;padding-left:38px;margin-bottom:14px}
+.steps li::before{content:counter(s);position:absolute;left:0;top:1px;width:24px;height:24px;
+  background:var(--ink);color:#fff;border-radius:50%;display:flex;align-items:center;
+  justify-content:center;font-size:12px;font-weight:600}
+.legend{font-size:12.5px;color:var(--ink2);margin:8px 0 0}
+hr{border:none;border-top:1px solid var(--line);margin:34px 0}
+.small{font-size:12.5px;color:var(--ink2)}
+.mono{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:12px}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+<h1>刷吧 v1.7.0 · 体验与游戏性升级执行书</h1>
+<p class="sub">从「能用」到「想用」：修掉 rating 的死板，让六维证据看得出重心，重做数据板与批改报告的阅读体验</p>
+<p class="meta">当前版本 v1.6.12 · 编制日期 2026-08-30（同日修订：新增根因六与改造二「六维证据的区分度」） · 数据基线：336 条真实作答（2026-08-14 ~ 08-30）+ 114 条六维证据专项诊断 · 全部结论经离线回放验证，脚本已固化到 <code>scripts/</code></p>
+
+<div class="callout">
+<span class="t">这份文档与已有方案的关系</span>
+<p><code>docs/刷吧升级优化方案.html</code>（8/29）查的是「哪里坏了」——ELO 脱钩、复习闭环、代码质量，属于<b>正确性</b>维度的 P0 修复。这份文档查的是「怎么变好玩」——rating 的惊喜感、数据板的叙事、报告的阅读体验，属于<b>体验</b>维度的升级。两者不重叠，但执行顺序有依赖：<b>应先完成那份的 P0 算法修复，再动这份</b>——否则评分基线本身是歪的，体验做得再好也是在歪地基上装修。</p>
+</div>
+
+<h2><span class="num">01</span>诊断：rating 为什么"死板"</h2>
+
+<p>你的直觉是对的，而且比你想的更严重。我把 336 条真实作答喂回 <code>rating.rs</code> 的公式离线复现了一遍，问题不是「调参没调好」，是<b>结构上不可能产生惊喜</b>。</p>
+
+<div class="kpi">
+  <div><b class="down">52.1%</b><span>作答挤在 1.30–1.60<br>这 0.30 宽的区间里</span></div>
+  <div><b class="down">0.44</b><span>183 道做对的题<br>rating 全段落差</span></div>
+  <div><b class="down">0 / 336</b><span>Donk 档（≥2.00）<br>历史触发次数</span></div>
+  <div><b class="down">1.70</b><span>理论天花板<br>宣传口径却是 2.45</span></div>
+</div>
+
+<h3>根因一：天花板是塌的，2.00 从未存在过</h3>
+<p><code>rating.rs:428-437</code> 定义了 Donk 爆发条款，要求 <code>pacing ≥ 125</code>。但 pacing 只有两个来源：AI 给的六维 <code>speed</code>（<code>lib.rs:2388</code> 硬校验 <code>0..=100</code>），或耗时折算的 fallback（<code>rating.rs:402</code> clamp 到 <code>[45, 115]</code>）。<b>两条路的上限都够不到 125。</b></p>
+<p>实测 pacing 最大值 = <b>115.0</b>，门槛 125。这条通道在真实数据里 100% 是死代码。</p>
+
+<h3>根因二：快慢一个价——这是"没有惊喜感"的精确来源</h3>
+<p>最刺眼的一个案例。题 <code>q=4618</code>：六维近乎满分（95/95/98/98/100/98）、技巧 4 级、难度 1.2，<b>31 秒秒杀</b>。</p>
+<table>
+<thead><tr><th>场景</th><th class="num">现行 rating</th><th class="num">pacing</th><th>评价</th></tr></thead>
+<tbody>
+<tr><td>31 秒秒杀（真实发生）</td><td class="num">1.65</td><td class="num">100</td><td rowspan="3" style="vertical-align:middle;color:var(--red)"><b>三个场景<br>分数完全相同</b></td></tr>
+<tr><td>600 秒磨出来</td><td class="num">1.65</td><td class="num">100</td></tr>
+<tr><td>1200 秒苦战</td><td class="num">1.65</td><td class="num">100</td></tr>
+</tbody>
+</table>
+<p>原因：AI 给的 <code>speed=100</code> 是六维满分，而「按基准耗用完」的 fallback 中性值也恰好是 100。<b>两个语义完全不同的数值撞在了一起。</b>你花了 20 倍的时间成本，系统给你打了一模一样的分——这不就是你说的「打 CS 打出高 rating 的惊喜感」完全消失吗。</p>
+
+<h3>根因三：没有六维证据时，rating 退化成二值开关</h3>
+<p>336 条里只有 114 条（33.9%）有六维证据。剩下 66% 走默认常量：做对 → strategy 65 / rigor 75，做错 → 18 / 25。<b>同结果同分，零方差。</b>这就是为什么中位数死死钉在 1.35。</p>
+
+<h3>根因四：难度杠杆被削平</h3>
+<p><code>rating.rs:41</code> 把难度系数硬 clamp 到 <code>[0.94, 1.10]</code>，但 <code>lib.rs:2379</code> 允许 AI 提交 0.5–1.5。实测有 9 条（8%）AI 给了 1.2 / 1.3 / 1.4 / 1.5，<b>全部被削到 1.10</b>。你攻克的最难的题，和最难的题只差一点点奖励。</p>
+
+<h3>根因五：线性加权和天然压缩方差</h3>
+<p><code>composite = 0.38·Cast + 0.22·Impact + 0.20·KAST + 0.20·Pacing</code> 是一条直线，再乘难度。做对时 Cast 恒等于 100（占 38% 权重），剩下三项还在被默认值拉向中心。<b>线性模型 + 常量兜底 = 分布必然挤成一根针。</b>CS 的 rating 之所以有惊喜，靠的是三件事：超线性奖励、稀有度、对比基线——现在一件都没有。</p>
+
+<h3>根因六：六维证据「做对全是 90+，看不出重心」——你的第三个直觉，数据完全坐实</h3>
+<p>对 336 条作答里带六维证据的 114 条做区分度诊断（<code>scripts/probe_six_dims.py</code>），结果两头都出了问题：</p>
+<table>
+<thead><tr><th>结果分组</th><th class="num">样本</th><th>六维均值区间</th><th class="num">组内标准差</th><th class="num">单题六维极差中位数</th></tr></thead>
+<tbody>
+<tr><td><b>做对</b></td><td class="num">61</td><td>六维全部挤在 91–94</td><td class="num">2.7 – 3.9</td><td class="num"><b>5 分</b>（P25=2，97% 的题 &lt; 15 分）</td></tr>
+<tr><td>partial</td><td class="num">29</td><td>78 – 85</td><td class="num">7.4 – 9.6</td><td class="num">15 分</td></tr>
+<tr><td><b>错题（incorrect）</b></td><td class="num">24</td><td>38 – 75</td><td class="num">15.8 – 23.8</td><td class="num"><b>40 分</b></td></tr>
+</tbody>
+</table>
+<p>两个结论：</p>
+<ul>
+<li><b>做对的题，六维雷达是一个「满分六边形」。</b>典型画像 <code>q=2153</code>：88/88/88/88/88/88，六个数字几乎相同。无论你是 31 秒巧解秒杀，还是 10 分钟硬算磨出来的，AI 给的六维都是同一个 90 上下的均衡像——<b>证据在源头就没有信息量</b>。根因在提示词锚点（<code>lib.rs:8409-8411 / 8513-8516</code>）：量规只要求「每维必须引用草稿证据」，<b>没有任何一条告诉 AI 六维要独立于对错结果给分</b>，于是 AI 把六维全部锚死在 verdict 上。</li>
+<li><b>错题的六维证据其实有区分度，但 UI 把它埋了。</b>错题极差中位数 40 分，能清楚看出重心差异：<code>q=2171</code> 计算力 90 / 策略洞察 40（「算得动但路走错了」）；<code>q=4524</code> 严谨性 0 / 速度 90（「手快但全盘错」）。这 24 条现成的重心证据，报告里<b>没有任何逐题出口</b>——报告只画全组平均雷达（<code>GradingReportModal:147-154</code>），错题的 40 分被正确题的 93 分平均掉，最后你看到的就是「做对全高、做错全低，看不出重心」。</li>
+</ul>
+
+<div class="callout warn">
+<span class="t">一句话总结诊断</span>
+<p>不是「分数低」，是<b>分数没有方差</b>。rating 层面：做对 183 道题，系统只能用 0.44 的宽度去区分它们，最好的一次表现（31 秒秒杀满分六维）和随手磨出来的一模一样。六维层面：<b>做对的题六维是一个没有信息量的满分六边形（极差中位数 5 分），而错题里现成的 24 条「重心证据」在 UI 里没有任何出口</b>。没有区分度，就不可能有惊喜，也看不出该练什么。</p>
+</div>
+
+<h2><span class="num">02</span>改造一：Rating 3.0 算法</h2>
+
+<p class="small">优先级 <span class="tag p0">P0</span> · 预估 2 人天 · 涉及 <code>rating.rs</code> / <code>lib.rs</code> / 回放脚本 / 单元测试</p>
+
+<p>保留你已经熟悉的 HLTV 五维骨架，只做四处手术。全部参数都用 336 条真实数据回放验证过，不是拍脑袋。</p>
+
+<h3>改动清单</h3>
+<table>
+<thead><tr><th style="width:15%">项</th><th style="width:34%">现在</th><th style="width:34%">改成</th><th class="num">解决</th></tr></thead>
+<tbody>
+<tr>
+<td><b>① Pacing 重标定</b></td>
+<td>中性值 100，区间 [45, 115]</td>
+<td>中性值 <b>85</b>，上限 <b>135</b>。让「按基准完成」回归真正的中性，把上方空间全部让给「快」</td>
+<td class="num">根因二</td>
+</tr>
+<tr>
+<td><b>② 主客观融合</b></td>
+<td>有 speed 维就<b>完全忽略</b>实际耗时</td>
+<td><code>pacing = 0.45·p_ai + 0.55·p_time</code>。客观耗时略占优，杜绝「AI 说快就是快、实际磨 20 分钟」</td>
+<td class="num">根因二</td>
+</tr>
+<tr>
+<td><b>③ 难度软压缩</b></td>
+<td>硬 clamp 到 [0.94, 1.10]</td>
+<td>区间内原样；超出部分按 <b>45%</b> 折算，封顶 1.24。保留难题的额外回报，但不让它失控</td>
+<td class="num">根因四</td>
+</tr>
+<tr>
+<td><b>④ Donk 门槛下调</b></td>
+<td><code>pacing ≥ 125</code>（不可达）</td>
+<td><code>pacing ≥ 118</code>（约 0.7 倍基准耗时），并去掉 <code>technique_level ≥ 4</code> 的额外限制</td>
+<td class="num">根因一</td>
+</tr>
+<tr>
+<td><b>⑤ 草率护栏</b></td>
+<td>无</td>
+<td>做错时 pacing 封顶 <b>85</b>。「很快地做错」是草率不是效率，不该拿节奏分</td>
+<td class="num">副作用</td>
+</tr>
+<tr>
+<td><b>⑥ 情境乘子</b></td>
+<td>无</td>
+<td>修复旧错 <b>×1.04</b>；当日连对每多一连 <b>+1.5%</b>（封顶 +6%）。给「连手感」一个正反馈</td>
+<td class="num">游戏性</td>
+</tr>
+</tbody>
+</table>
+
+<h3>回放验证结果（336 条真实作答）</h3>
+<table>
+<thead><tr><th>指标</th><th class="num">现行 v2.0</th><th class="num">候选 v3.0</th><th class="num">变化</th><th>含义</th></tr></thead>
+<tbody>
+<tr><td>标准差（区分度）</td><td class="num">0.378</td><td class="num">0.467</td><td class="num up">+23%</td><td>核心目标：分数能拉开差距了</td></tr>
+<tr><td>最高分</td><td class="num">1.65</td><td class="num">2.05</td><td class="num up">+0.40</td><td>天花板从"塌的"变成"够得着"</td></tr>
+<tr><td>挤在 1.30–1.60 的占比</td><td class="num">52.1%</td><td class="num">39.6%</td><td class="num up">−12.5pp</td><td>那根针被压扁了</td></tr>
+<tr><td>1.60+ 占比</td><td class="num">1.8%</td><td class="num">15.2%</td><td class="num up">8.4×</td><td>高光时刻从"传说"变成"偶尔发生"</td></tr>
+<tr><td>2.00+ 次数</td><td class="num">0</td><td class="num">1</td><td class="num up">解锁</td><td>0.3%——稀有，但真实存在</td></tr>
+<tr><td>做错题的中位分</td><td class="num">0.57</td><td class="num">0.53</td><td class="num">−0.04</td><td>草率护栏生效，错得更快不再"奖励"</td></tr>
+</tbody>
+</table>
+
+<h4>高光案例复测：同一个 <code>q=4618</code></h4>
+<table>
+<thead><tr><th>场景</th><th class="num">v2.0</th><th class="num">v3.0</th><th class="num">pacing</th><th>感受</th></tr></thead>
+<tbody>
+<tr><td>31 秒秒杀（真实）</td><td class="num">1.65</td><td class="num up"><b>2.05</b></td><td class="num">135</td><td>Donk 档解锁，这才是高光</td></tr>
+<tr><td>600 秒磨出</td><td class="num">1.65</td><td class="num">1.74</td><td class="num">108</td><td>做对了，但不特别</td></tr>
+<tr><td>1200 秒苦战</td><td class="num">1.65</td><td class="num">1.67</td><td class="num">86</td><td>做对了，但很勉强</td></tr>
+</tbody>
+</table>
+<p class="small">差距从 <b>0</b> 变成 <b>0.38</b>。同一个结果，因为"怎么赢的"不同而拉开——这就是 CS 里「同样赢一局，但我打了 1.8」的爽感来源。</p>
+
+<div class="grid2">
+<div class="card user">
+<div class="hd">🎮 你会感受到什么</div>
+<ul>
+<li>秒杀难题终于<b>真的</b>比磨出来值钱，31 秒的完美作答能摸到 2.0+</li>
+<li>攻克高难度题有实感——难度 1.4 不再被削平</li>
+<li>连对手感有正反馈，连对越多单题加成越高</li>
+<li>复习时把旧错题修好，有额外奖励（×1.04）</li>
+<li>反过来「秒错」不再假装高效，分数沉得更低</li>
+</ul>
+</div>
+<div class="card dev">
+<div class="hd">⚙️ 要改什么</div>
+<ul>
+<li class="mono">rating.rs:400-406 — pacing 重标定 + 主客观融合</li>
+<li class="mono">rating.rs:41 — 难度 clamp → soft_diff()</li>
+<li class="mono">rating.rs:428-437 — Donk 门槛 125 → 118</li>
+<li class="mono">rating.rs:409-418 — 新增草率护栏</li>
+<li>新增 <code>scripts/replay_rating_v3.py</code>（沿用现有 ELO 回放脚本的套路）</li>
+</ul>
+</div>
+</div>
+
+<div class="callout warn">
+<span class="t">工程提醒：三件必须同步的事</span>
+<p><b>① 单元测试会挂。</b><code>rating.rs</code> 的 <code>hltv_composite_anchors_the_distribution</code>（:507-547）断言 partial 落在 0.88–0.98、correct 落在 1.30–1.42。改了 pacing 中性值后这些区间会整体位移，<b>必须同步重写断言</b>，否则 <code>cargo test --locked</code> 过不了门禁。</p>
+<p><b>② rating 阈值有两处。</b>报告弹窗 <code>GradingReportModal.tsx:316-317</code> 额外定义了 <code>≥2.0 → 👑DONK</code>、<code>≥1.35 → ⚡Clutch</code>，而 <code>utils.ts:108-115</code> 的 <code>csRatingTier</code>（S≥1.6/A≥1.3/B≥0.9/C≥0.6/D）没有这两档。改算法时两边要一起对齐。</p>
+<p><b>③ 历史分要不要重算，需要你拍板。</b>rating 与 ELO 不同——它是「最近 8 次作答的衰减加权」，本身就会随每次新作答重算，所以改算法会<b>自动</b>改写历史题目的当前分，产生一次性跳变。我建议<b>允许跳变</b>（rating 是"当前水平"而非"历史账本"，本来就该反映最新规则），但要在更新说明里预告。若你想保守，可加一个数据版本字段只对新作答生效——代价是新旧分不可比，我不推荐。</p>
+</div>
+
+<h2><span class="num">03</span>改造二：六维证据的区分度——让「重心」看得见</h2>
+
+<p class="small">优先级 <span class="tag p0">P0</span> · 预估 1 人天（提示词层）+ 呈现层随改造五落地 · 涉及 <code>lib.rs</code> 两处锚点 / <code>GradingReportModal.tsx</code></p>
+
+<p>rating 算法拉开了分数，但如果六维还是那个满分六边形，你依然回答不了「我到底是强在哪、弱在哪」。这一改造分两层，提示词层是根治，呈现层是把已经埋掉的错题证据挖出来。</p>
+
+<h3>3.1 提示词层：给六维加「独立性量规」（根治做对全 90+）</h3>
+<p>在 <code>lib.rs</code> 两处六维打分准则（单题 <code>:8409-8411</code>、整组 <code>:8513-8516</code>）追加以下量规——每条都对应一维「什么情况必须给低分」，把六维从 verdict 上解绑：</p>
+<div class="card">
+<ul>
+<li><b>严谨性 / 计算力只看执行</b>：草稿中每处计算笔误、符号写反、量纲错漏，该维从 90 起每处 −10 起步；与思路是否正确无关。做对但涂改三处 → 计算力 ≤ 65。</li>
+<li><b>方法使用 / 审题建模只看路径</b>：使用了该考点标准入口动作（如「识别即秒杀」动作）才 ≥ 75；绕路硬算、蛮力展开 → ≤ 55，<b>即使最终做对</b>。</li>
+<li><b>策略洞察只看结构识别与优化空间</b>：常规套路题 → ≤ 70；巧解、对称性、King 变换类 → ≥ 85。</li>
+<li><b>速度由实际耗时决定</b>（题面已附基准耗时与用时），与对错无关；超基准 1.5 倍 → ≤ 55。</li>
+<li><b>反「参与奖」硬约束</b>：六维全部 ≥ 90 仅在「快且准且巧」同时成立时才允许；常规做对的题，至少应有一维 ≤ 75。</li>
+<li><b>反「陪葬」硬约束</b>：做错时思路正确、执行出错的部分（瞄准失误），对应维仍按实际水平给分——modeling/methodUse 不因结果错误而强制拖到 40 以下。</li>
+<li><b>极差自检</b>：输出前检查单题六维极差；极差 &lt; 10 分仅当六维确实均衡时允许，否则视为锚定失效，必须重新对照证据打分。</li>
+</ul>
+</div>
+<p class="small">验证方式：改完后用下一组真实草稿批改做 A/B——做对题的单题六维极差应从当前中位数 5 分升到 ≥ 20 分；错题六维覆盖率从 24/67（incorrect 口径）进一步提升；<code>probe_six_dims.py</code> 重跑做对照。</p>
+
+<h3>3.2 呈现层：把错题已有的 24 条重心证据挖出来（随改造五落地）</h3>
+<p>即使提示词不动，仅呈现层就有立竿见影的一招——错题证据已经在库里，只是没有出口：</p>
+<table>
+<thead><tr><th style="width:24%">改什么</th><th>怎么做</th></tr></thead>
+<tbody>
+<tr><td><b>错题六维画像雷达</b></td><td>报告的全组雷达旁增加一个「错题重心」雷达，<b>只聚合 wrong/partial 作答的真实六维证据</b>。这才是「这组题我错在哪个能力上」的直接答案，不再被做对题的 93 分稀释。</td></tr>
+<tr><td><b>逐题重心标签</b></td><td>每题标题行加一句模板化重心句，由该题六维自动生成：最高维与最低维差 ≥ 20 分时输出，如「计算力 90 / 策略 40 → <b>算得动，但没找到路</b>」「严谨 0 / 速度 90 → <b>手比脑子快</b>」。纯前端模板拼装，不增加 AI 调用。</td></tr>
+<tr><td><b>最强维 / 最拖后腿维</b></td><td>报告结论条（改造五第 ① 步）追加：基于错题六维证据聚合，自动点名「本卷最强维：审题建模 84；最拖后腿维：严谨性 38」。</td></tr>
+<tr><td><b>证据覆盖率口径修正</b></td><td><code>GradingReportModal:139-154</code> 的 <code>dimensionAverage</code> 现在把 AI 未给分的维度用 outcome 兜底常量（correct→75 等）混进平均值，虚构数据污染雷达。改为只统计真实证据，雷达旁标注覆盖率「六维证据 5/8 题」。</td></tr>
+<tr><td class="small">可选 P2：个人基线对比</td><td class="small">六维数值旁显示相对个人基线（近 60 条带证据作答的滚动均值）的 ± 偏差。基线聚合是纯确定性 SQL，符合「内核当裁判」原则。</td></tr>
+</tbody>
+</table>
+
+<h3>3.3 防漂移（P2 可选）：确定性扁平度哨兵</h3>
+<p>提示词约束会随模型版本漂移。可在收件箱解析时加一个确定性检查：某组批改「做对题的六维极差全部 &lt; 10 分」时在收件箱列表打 ⚠ 标记（不拦截、不回滚），提示这组批改的六维证据可能锚定失效。10 行代码，放在 <code>codex_inbox</code> 载入路径上。</p>
+
+<div class="grid2">
+<div class="card user">
+<div class="hd">🎮 你会感受到什么</div>
+<ul>
+<li>打开报告直接看到「这次错在<b>哪个能力</b>上」，而不是一个全高的六边形</li>
+<li>每道错题一句话点破重心：是「路走错了」还是「算错了」还是「手快了」</li>
+<li>做对也不再全是参与奖——硬算磨出来的和巧解秒杀的，六维画像开始不同</li>
+<li>数据能回答「明天刻意练什么」，这比任何数值都更接近「数据板的终极目的」</li>
+</ul>
+</div>
+<div class="card dev">
+<div class="hd">⚙️ 要改什么</div>
+<ul>
+<li class="mono">lib.rs:8409-8411 / :8513-8516 — 追加六维独立性量规</li>
+<li class="mono">GradingReportModal.tsx:139-154 — 覆盖率口径，去掉兜底常量</li>
+<li class="mono">GradingReportModal.tsx — 错题雷达 + 逐题重心标签 + 最强/最拖维度</li>
+<li class="mono">scripts/probe_six_dims.py — 改造前后各跑一次做对照</li>
+</ul>
+</div>
+</div>
+
+<h2><span class="num">04</span>改造三：惊喜感的呈现</h2>
+
+<p class="small">优先级 <span class="tag p0">P0</span> · 预估 2.5 人天 · 前置依赖：改造四的通用组件</p>
+
+<p>算法给了方差，但<b>方差本身不等于惊喜</b>。惊喜 = 稀有度 × 仪式感 × 可回味。现在 <code>TodayView</code> 做完题只有：答对音效（<code>:773</code>，答错静音）、4 秒 ELO toast（<code>:776-794</code>）、成就卡（<code>:814-831</code>）。<b>CS rating 在这套界面里根本没出现过</b>——训练页显示的是 ELO 整数和 1–4 的自评流畅度。</p>
+
+<h3>3.1 高光时刻（Highlight Moment）</h3>
+<p>当单题 rating 突破阈值时，不要只弹个数字，要给一个<b>事件</b>。</p>
+<table>
+<thead><tr><th style="width:14%">称号</th><th style="width:16%">触发条件</th><th>呈现</th></tr></thead>
+<tbody>
+<tr><td><b>⚡ ACE</b></td><td>单题 ≥ 1.80</td><td>全屏金边脉冲 + 专属音效（区别于普通答对音）+ 停留 3 秒可跳过</td></tr>
+<tr><td><b>👑 DONK</b></td><td>单题 ≥ 2.00</td><td>在上述基础上追加：粒子迸射、题号入「名人堂」永久留档、当日分享卡自动标记</td></tr>
+<tr><td><b>🔫 S1MPLE PLAY</b></td><td>难度系数 ≥ 1.20 且做对（2026-08-30 增补）</td><td>「压轴攻坚 · 大场面先生」——不论快慢，硬啃下压轴即触发；填补「慢速苦战拿下难题」无高光的空档</td></tr>
+<tr><td><b>🦢 ZYWOO PLAY</b></td><td>当日连对达 12（2026-08-30 增补）</td><td>「稳定之神」——与 HEATING 火焰四档联动，12 档触发全屏时刻；粒子同 DONK</td></tr>
+<tr><td><b>🎯 CLUTCH</b></td><td>难题（难度 ≥1.15）做对且用时 &lt; 50% 基准</td><td>「残局翻盘」字样 + 倒计时式的紧张感动画</td></tr>
+<tr><td><b>🔧 REDEEM</b></td><td>复习时把此前做错的题做对</td><td>「旧伤愈合」——呼应你数据里 61 道可做的高光候选</td></tr>
+<tr><td><b>🔥 HEATING</b></td><td>当日连对 ≥ 5</td><td>火焰逐级变旺（3/5/8/12 四档），与现有 <code>:2461-2465</code> 连胜火焰统一</td></tr>
+</tbody>
+</table>
+
+<h3>3.2 让 rating 出现在训练页</h3>
+<p>现在最大的断裂是：<b>你在训练页看不到 CS rating</b>。做完题只看到 ELO ±几点，而 rating 要跑到数据板或报告里才看得见。建议结算 toast 直接改成双行：<code>ELO 1455 (+3)</code> 一行，<code>Rating 2.05 ⚡ACE</code> 一行。</p>
+
+<h3>3.3 高光回看（名人堂）</h3>
+<p>你数据里现在有 61 道「做对且有六维证据」的题，其中 <code>q=4618</code>（31 秒 / 洞察 98 / 技巧 4）是现成的素材。建议在数据板加一个「高光时刻」收藏夹：自动收录历史 rating 前 20 的作答，可点开回看当时的题干、你的用时、六维雷达。<b>刷吧现在没有地方让你回味打得好的那几题</b>——这是留存情绪最便宜的一招。</p>
+
+<div class="grid2">
+<div class="card user">
+<div class="hd">🎮 你会感受到什么</div>
+<ul>
+<li>打出高 rating 时，界面<b>配得上你的表现</b>——不再是冷冰冰一个数字</li>
+<li>训练页当场就能看到 rating，不用切到数据板</li>
+<li>有「名人堂」可以回看自己的代表作，考前一晚翻一翻是很好的心理建设</li>
+<li>答错也有音效区分（现在答错是完全静音的，反馈缺失）</li>
+</ul>
+</div>
+<div class="card dev">
+<div class="hd">⚙️ 要改什么</div>
+<ul>
+<li class="mono">TodayView.tsx:776-794 — toast 改双行，接 rating</li>
+<li class="mono">audio.ts:37-58 — 补 ACE / DONK / 答错三类音效</li>
+<li>新增 <code>HighlightMoment.tsx</code> 组件（framer-motion，沿用现有 spring 参数）</li>
+<li>新增 <code>attempts</code> 表索引或直接复用 <code>elo_events</code> 查询 Top-N</li>
+<li class="mono">TodayView.tsx:806 — milestone 档位从硬编码扩到可配置</li>
+</ul>
+</div>
+</div>
+
+<h2><span class="num">05</span>改造四：工程地基——先拆组件，再谈体验</h2>
+
+<p class="small">优先级 <span class="tag p1">P1</span> · 预估 2 人天 · <b>必须排在改造三、五、六之前</b></p>
+
+<p>这一节不产生可见效果，但决定了后面三项改造会不会变成三倍工作量。勘察结果很明确：</p>
+
+<table>
+<thead><tr><th>重复项</th><th>现状</th><th>后果</th></tr></thead>
+<tbody>
+<tr><td>雷达图</td><td><code>InsightsView:720-806</code> 与 <code>GradingReportModal:353-364</code> <b>各写一遍</b>，圆心/半径/网格档位都不同</td><td>改一处视觉，另一处就错位</td></tr>
+<tr><td>进度条</td><td><code>six-bar-fill-bar</code> / <code>firepower-bar-fill</code> / <code>report-dimension-row i>b</code> / <code>progress-track</code> <b>四套独立 class</b></td><td>同一个进度条有四种粗细和圆角</td></tr>
+<tr><td>等级徽章</td><td><code>grade-badge</code> / <code>badge-letter</code> / <code>wmetric-grade</code> / <code>six-bar-grade-pill</code> / <code>tier-capsule</code> / <code>combat-tier-badge</code> <b>六套</b></td><td>新增一个等级档要改六个地方</td></tr>
+<tr><td>rating 口径</td><td><code>utils.ts csRatingTier</code>（0–2.5 五档）、<code>InsightsView:812</code> 内联百分制（S≥85）、<code>TodayView</code> ELO 九段 — <b>三套互不相干</b></td><td>同一个"等级"在三个页面含义不同</td></tr>
+<tr><td>通用组件</td><td><code>components/</code> 19 个文件里<b>没有</b> ProgressBar / Badge / Radar / Gauge / Metric 任何一个</td><td>每加一处就多一套</td></tr>
+</tbody>
+</table>
+
+<p><b>建议抽取 5 个通用组件</b>：<code>&lt;RatingBadge&gt;</code>（统一三套口径，内置 tier + tone + DONK/Clutch 两档）、<code>&lt;Radar&gt;</code>、<code>&lt;MetricBar&gt;</code>、<code>&lt;GradeBadge&gt;</code>、<code>&lt;Gauge&gt;</code>。抽取时顺手把 <code>InsightsView:70-98</code> 的 <code>averageReportRating</code> 和 <code>GradingReportModal:123-135</code> 的 <code>ratingForGrade</code> 合并成一个函数。</p>
+
+<div class="callout note">
+<span class="t">顺带修掉的两处</span>
+<p><code>InsightsView:646</code> 的 KAST 是<b>硬编码 <code>84.5%</code></b>，不是真实计算值；<code>:464-467</code> 的赛季 chip 带展开箭头但<b>没有 onClick</b>，是个死装饰。抽组件时一并处理。</p>
+</div>
+
+<h2><span class="num">06</span>改造五：批改报告的阅读体验</h2>
+
+<p class="small">优先级 <span class="tag p1">P1</span> · 预估 3.5 人天 · 涉及 <code>GradingReportModal.tsx</code></p>
+
+<h3>现状：一份你根本读不完的报告</h3>
+<p>20 组历史报告，每组<b>中位 8 题</b>（5–16 题），每题 9 个信息块。整页是单流长滚动，<b>没有目录、没有锚点、没有折叠、没有吸顶导航</b>。8 题需要滚 5–8 屏。</p>
+
+<table>
+<thead><tr><th>劝退点</th><th>具体表现</th></tr></thead>
+<tbody>
+<tr><td><b>① 做对的题和做错的题一样长</b></td><td>逐题区（<code>:391-550</code>）每题 9 块全展开。你只想看那 3 道错题，却必须滚过 5 道做对题的完整解析</td></tr>
+<tr><td><b>② 开头没有结论</b></td><td>概览四格（<code>:231-273</code>）是正确率 / Rating / 耗时 / KAST 四个陌生指标<b>并列</b>，无主次。第一眼看不出"这组我到底怎么样"</td></tr>
+<tr><td><b>③ 视觉噪声高</b></td><td>kicker 全大写中英混排（<code>:202/309/393/507/529/535</code>）+ emoji 前缀 + 长 LaTeX 公式堆在一起</td></tr>
+</tbody>
+</table>
+
+<h3>改造方案</h3>
+<ol class="steps">
+<li><b>结论前置</b>——顶部加一句自动生成的话。例：「8 题中错 3 道，全部卡在<b>交换积分次序</b>；平均 rating 1.42，比上一组 +0.11。最该先修的是 #10714。」这句话用模板 + 数据拼，不需要 AI。</li>
+<li><b>默认折叠做对的题</b>——做对的题只留题干 + rating + 一行「更优解」（如果有）。错题全展开。顶部给「展开全部 / 只看错题」切换。</li>
+<li><b>左侧固定目录</b>——题目清单吸顶，点击直达。错题标红点，有更优解的标蓝点。8 题以上的报告收益极大。</li>
+<li><b>严重度分级编码</b>——现在错题诊断是纯文本 + emoji 前缀，无分级。改成三色左边框：<span style="color:var(--red)">■ 概念盲区</span>（致命，必须重学）/ <span style="color:var(--amber)">■ 瞄准失误</span>（笔误）/<span style="color:var(--blue)">■ 战术绕路</span>（方法笨）。一眼扫过就知道该看哪些。</li>
+<li><b>诊断文本分层</b>——19% 的诊断文本超过 200 字（最长 692 字）。超过 150 字的默认收起，显示前两行 + 「展开全文」。</li>
+<li><b>kicker 改中文</b>——把 <code>EARLIEST ERROR</code> 这类全大写英文换成中文短标签，降低中英混排的割裂感。</li>
+<li><b>六维重心呈现（改造二 3.2 的落地点）</b>——全组雷达旁加「错题重心」雷达；逐题标题行加重心模板句；结论条点名本卷最强维 / 最拖后腿维。</li>
+<li><b>六维口径修正</b>——<code>dimensionAverage</code>（<code>:139-154</code>）不再把 outcome 兜底常量混进均值，只统计真实证据并标注覆盖率。</li>
+</ol>
+
+<div class="grid2">
+<div class="card user">
+<div class="hd">🎮 你会感受到什么</div>
+<ul>
+<li>打开报告 5 秒内知道"这次的核心问题是什么"，不用自己从 8 题里总结</li>
+<li>直接跳到错题，做对的题不再占用视线</li>
+<li>颜色分级让你一眼区分"真不会"和"手滑算错"</li>
+<li>长诊断不再糊脸，想看才展开</li>
+</ul>
+</div>
+<div class="card dev">
+<div class="hd">⚙️ 要改什么</div>
+<ul>
+<li class="mono">GradingReportModal.tsx:231-273 — 加结论条（含最强维/最拖后腿维）</li>
+<li class="mono">:391-550 — 逐题块抽成 &lt;ReportQuestionCard&gt;，支持 collapsed</li>
+<li>新增吸顶目录组件 + 锚点滚动</li>
+<li>错题严重度从 errorTags 映射到三色</li>
+<li class="mono">:202/309/393/507/529/535 — kicker 中文化</li>
+<li class="mono">:139-154 — 六维覆盖率口径 + 错题雷达 + 逐题重心标签</li>
+</ul>
+</div>
+</div>
+
+<h2><span class="num">07</span>改造六：数据板升级</h2>
+
+<p class="small">优先级 <span class="tag p2">P2</span> · 预估 4 人天 · 涉及 <code>InsightsView.tsx</code>（1344 行）</p>
+
+<h3>现状：数据很全，但没讲任何故事</h3>
+<p>四个 tab（个人战绩 / 比赛记录 / 错题复盘 / Codex 诊断）+ 四个板块（作战卡 / 能力雷达 / 地图表现 / 武器分析），图表全是手写 SVG/CSS，工作量很大。但有三个硬伤：</p>
+
+<ul>
+<li><b>没有时间维度。</b><code>:439-460</code> 那三个切换按钮是 ranked/all/solo 的<b>数据源</b>切换，不是时间。热力图硬编码 <code>trend.slice(-21)</code>。也就是说——<b>你看不到"我这周比上周进步了多少"</b>。而你的数据完全支撑：17 天连续打卡、0 次断更、每日 5–40 题。</li>
+<li><b>没有目标感。</b>grep <code>streak|goal|achievement|milestone</code> 在本文件 0 命中。你连续打卡 17 天，界面上一个字都没提。</li>
+<li><b>术语没有解释。</b>ADR / KAST / RWS / K-D 直接铺开，对备考的人来说是认知负担。</li>
+<li><b>「战术 Impact」雷达的区分度是假的。</b><code>:322-333</code> 的 <code>spread()</code> 把真实值围绕 58 线性拉伸 1.4–1.55 倍再截断到 [20, 98]——长板短板的对比是<b>算出来的装饰</b>，不是证据。这与改造二的思路正好相反：真实证据（错题六维重心、errorTags 聚合）已经够讲故事，不需要合成。改造二落地后这里应换成真实六维聚合，或至少在 UI 标注「合成指标」。</li>
+</ul>
+
+<h3>升级方案</h3>
+
+<h4>① 加时间维度（最高优先级，收益最大）</h4>
+<p>顶部加 <b>近 7 天 / 近 30 天 / 全部</b> 三档切换，所有指标随之重算。关键不是"能切"，是要配套出<b>对比</b>：<code>近 7 天 rating 1.31（上周 1.24，+0.07 ↑）</code>。有了对比，数据板才从"展示"变成"反馈"。</p>
+
+<h4>② 加叙事层：本期一句话</h4>
+<p>仿照批改报告的结论前置，数据板顶部也放一句自动生成的判断。例：「近 7 天做了 96 题，正确率 61%（↑6pp）；<b>二重积分</b>仍是最大缺口（覆盖 12%）；你最长的连对是 9 题，发生在 8/28。」</p>
+
+<h4>③ 加目标与进度</h4>
+<p>基于你自己的备考基线（每日数学 216 分钟 / 约 12 题），做三个进度环：今日题量、本周覆盖、距考试天数。<b>你现在的界面里没有任何东西告诉你"今天够了吗"</b>。</p>
+
+<h4>④ 加成就墙</h4>
+<p>你的数据里有大量现成素材：连续打卡 17 天、首次 DONK、单日 40 题、修复 10 道旧错题、某章覆盖过半……建议做一面成就墙，未解锁的显示灰色剪影 + 解锁条件。这是成本最低的留存钩子。</p>
+
+<h4>⑤ 加疆域叙事</h4>
+<p>题库 5388 题，你做了 245 题（<b>覆盖 4.5%</b>）。这个数字现在是藏在角落里的，建议提到台前——用一张「地图迷雾」式的高数/线代/概率三块疆域图，点亮的区域就是你打过的。备考路上，"我点亮了 4.5%"比"我做了 245 题"有成就感得多。</p>
+
+<div class="callout">
+<span class="t">优先级建议</span>
+<p>时间维度 &gt; 叙事层 &gt; 目标进度 &gt; 成就墙 &gt; 疆域图。前两项做完，数据板就从"数据堆砌"变成"能指导明天练什么"的工具。后三项是情绪价值，有余力再做。</p>
+</div>
+
+<h2><span class="num">08</span>执行计划</h2>
+
+<table>
+<thead><tr><th style="width:6%">阶段</th><th style="width:26%">内容</th><th style="width:9%">优先级</th><th class="num" style="width:10%">工作量</th><th>门禁与验收</th></tr></thead>
+<tbody>
+<tr>
+<td><b>一</b></td>
+<td>Rating 3.0 算法 + 回放脚本 + 测试同步</td>
+<td><span class="tag p0">P0</span></td>
+<td class="num">2 人天</td>
+<td><code>cargo test --locked</code> 全绿；回放脚本确认 stdev ≥ 0.45、2.00+ 有触发、做错中位不升</td>
+</tr>
+<tr>
+<td><b>二</b></td>
+<td>六维证据独立性：提示词锚点重写（<code>lib.rs</code> 两处）+ 下一组真实批改 A/B 验证</td>
+<td><span class="tag p0">P0</span></td>
+<td class="num">1 人天</td>
+<td>做对题单题六维极差中位数 ≥ 20（基线 5）；错题六维覆盖率不降；<code>probe_six_dims.py</code> 前后对照留档</td>
+</tr>
+<tr>
+<td><b>三</b></td>
+<td>通用组件抽取 + 三套 rating 口径统一</td>
+<td><span class="tag p1">P1</span></td>
+<td class="num">2 人天</td>
+<td>5 个组件落地；雷达图/进度条/徽章各只剩一套实现；<code>npm run build</code> 通过</td>
+</tr>
+<tr>
+<td><b>四</b></td>
+<td>高光时刻 + 训练页 rating 露出 + 名人堂</td>
+<td><span class="tag p0">P0</span></td>
+<td class="num">2.5 人天</td>
+<td>手动打一题触发 ACE，验证动效/音效/留档；答错有音效</td>
+</tr>
+<tr>
+<td><b>五</b></td>
+<td>批改报告阅读体验改造（含六维重心呈现与覆盖率口径）</td>
+<td><span class="tag p1">P1</span></td>
+<td class="num">3.5 人天</td>
+<td>用现有 20 组报告逐组打开验证；8 题报告首屏可见结论，错题可直达；错题雷达与重心标签正常渲染</td>
+</tr>
+<tr>
+<td><b>六</b></td>
+<td>数据板升级（时间维度 → 叙事层 → 目标 → 成就 → 疆域；Impact 雷达换真实聚合）</td>
+<td><span class="tag p2">P2</span></td>
+<td class="num">4 人天</td>
+<td>三档时间切换所有指标正确重算；叙事句与实际数据一致</td>
+</tr>
+</tbody>
+</table>
+
+<p><b>合计约 14.5 人天。</b>阶段一 + 二（算法与证据层）可以独立先发——不动 UI、风险最低、体感最直接，且阶段二是阶段五里六维呈现的数据前提。阶段三是硬前置，不做的话四、五、六会各多花 30% 时间。阶段六可以拆成小版本滚动发。</p>
+
+<h3>发版建议</h3>
+<ul>
+<li><b>v1.7.0</b>：阶段一 + 二 + 三 + 四 —— rating 惊喜感与六维证据这条主线一次打通，这是你最痛的点</li>
+<li><b>v1.7.1</b>：阶段五 —— 批改报告（含错题重心雷达）</li>
+<li><b>v1.8.0</b>：阶段六 —— 数据板</li>
+</ul>
+
+<div class="callout warn">
+<span class="t">发版前必读（AGENTS.md 红线）</span>
+<p>① 改段位表需<b>两处同步</b>——本次虽未改 ELO 九段，但改了 rating 阈值，<code>utils.ts 的 csRatingTier</code> 与 <code>GradingReportModal 的 DONK/Clutch 档</code> 必须一起改。<br>
+② 提交门禁：<code>cargo test --locked</code> 全绿 + <code>npm run build</code> 通过。<br>
+③ 本机 <code>npm run build</code> 会因 safe-delete 守卫失败（vite 清 dist 触发），用 <code>npx tsc -b</code> + <code>npx vite build --emptyOutDir false</code> 绕过，<b>不要为此改 vite 配置</b>。<br>
+④ 改 rating 后若同步改了 Cargo.toml 版本，记得 <code>cargo update -p shuaba --offline</code> 再跑 <code>--locked</code>。</p>
+</div>
+
+<h2><span class="num">09</span>验收标准：怎么判断做成了</h2>
+
+<table>
+<thead><tr><th style="width:30%">目标</th><th style="width:30%">现在的基线</th><th>做成什么样算达标</th></tr></thead>
+<tbody>
+<tr>
+<td>rating 有区分度</td>
+<td>52.1% 挤在 1.30–1.60<br>stdev 0.378</td>
+<td>该区间占比 &lt; 40%，stdev ≥ 0.45</td>
+</tr>
+<tr>
+<td>高光时刻真实存在</td>
+<td>2.00+ 触发 0 次</td>
+<td>按当前水平，每月能出现 1–3 次；出现时你有明确的"我刚才很强"的感觉</td>
+</tr>
+<tr>
+<td>快慢有价差</td>
+<td>31 秒秒杀 = 10 分钟磨出</td>
+<td>同样做对，极速与苦战的分差 ≥ 0.30</td>
+</tr>
+<tr>
+<td>六维看得出重心</td>
+<td>做对题六维极差中位数 5 分（满分六边形）；<br>错题 24 条重心证据在 UI 无出口</td>
+<td>打开任意报告 5 秒内能指出「最强维 / 最拖后腿维」且与草稿证据一致；做对题六维不再全落同一档；错题有独立的重心雷达</td>
+</tr>
+<tr>
+<td>报告读得完</td>
+<td>8 题需滚 5–8 屏，无导航</td>
+<td>打开 5 秒内看到结论；错题一键直达；做对的题默认不占屏</td>
+</tr>
+<tr>
+<td>数据板能指导行动</td>
+<td>无时间维度、无目标、无结论</td>
+<td>能回答"我这周比上周好不好"和"明天该练什么"</td>
+</tr>
+</tbody>
+</table>
+
+<hr>
+<p class="small">本文档所有数据结论来自 <code>%APPDATA%\com.shuaba.math\shuaba.db</code> 的只读副本（336 条有效作答，2026-08-14 ~ 08-30），经离线复现 <code>rating.rs</code> 公式验证。回放与诊断脚本已固化为 <code>scripts/replay_rating_params.py</code>（rating 新旧参数对比，改 rating 参数前必跑）与 <code>scripts/probe_six_dims.py</code>（六维区分度诊断），与 <code>replay_elo_params.py</code> 并列常驻；数据源是 <code>.workbuddy/tmp/rating_probe.db</code> 只读副本，跑之前先刷新副本。</p>
+
+</div>
+</body>
+</html>

@@ -29,6 +29,7 @@ import {
   getDailyTrend,
   getEloStatus,
   getHighlightMoments,
+  getPeriodOverview,
   getPressureGradingReport,
   getQuestion,
   getRatingDistribution,
@@ -64,6 +65,7 @@ import type {
   EloStatus,
   GradingReport,
   HighlightMoment,
+  PeriodOverview,
   PressureSession,
   Question,
   RatingDistribution,
@@ -75,6 +77,21 @@ import type {
 
 type DataTab = 'overview' | 'matches' | 'mistakes' | 'inbox'
 type ScopeMode = 'ranked' | 'all' | 'solo'
+
+/** 考研初试目标日（后续可移至设置页配置） */
+const EXAM_DATE = '2026-12-19'
+
+/** 周期档位切换按钮样式（阶段六 ①） */
+const periodBtnStyle = (active: boolean) => ({
+  padding: '4px 12px',
+  borderRadius: 16,
+  border: '1px solid var(--line)',
+  background: active ? 'var(--cyan)' : 'transparent',
+  color: active ? 'var(--surface)' : 'var(--muted)',
+  fontSize: 12,
+  fontWeight: 600,
+  cursor: 'pointer',
+})
 
 function averageReportRating(report: GradingReport | null): number | null {
   if (!report || report.grades.length === 0) return null
@@ -176,6 +193,13 @@ export function InsightsView({
   const [toastMsg, setToastMsg] = useState<string | null>(null)
   const [highlights, setHighlights] = useState<HighlightMoment[]>([])
   const [expandedHighlightId, setExpandedHighlightId] = useState<number | null>(null)
+  // 阶段六：时间维度（null = 全部）
+  const [periodDays, setPeriodDays] = useState<number | null>(7)
+  const [periodOverview, setPeriodOverview] = useState<PeriodOverview | null>(null)
+
+  useEffect(() => {
+    void getPeriodOverview(periodDays).then(setPeriodOverview).catch(() => undefined)
+  }, [periodDays])
 
   const handleOpenHighlightDetail = async (questionId: number) => {
     try {
@@ -312,6 +336,80 @@ export function InsightsView({
   const profile = tacticalData?.profile
   const weScore = profile?.weScore ?? 68.5
   const ratingPro = profile?.ratingPro ?? 1.15
+
+  // 阶段六 ②：叙事层——一句自动生成的判断（纯模板拼装）
+  const periodLabel = periodDays === 7 ? '近 7 天' : periodDays === 30 ? '近 30 天' : '全部历史'
+  const periodNarrative = useMemo(() => {
+    if (!periodOverview) return '加载中…'
+    const { current, previous, coveragePercent } = periodOverview
+    if (current.attempted === 0) return `${periodLabel}还没有作答记录——去今日训练开一局。`
+    const accDelta =
+      previous.attempted > 0 ? Math.round((current.accuracy - previous.accuracy) * 10) / 10 : null
+    const accText =
+      accDelta == null ? '' : `（${accDelta >= 0 ? '↑' : '↓'}${Math.abs(accDelta)}pp vs 上一周期）`
+    return (
+      [
+        `${periodLabel}完成 ${current.attempted} 题，正确率 ${current.accuracy}%${accText}`,
+        current.bestStreak >= 3 ? `最长连对 ${current.bestStreak} 题` : null,
+        `题库已点亮 ${coveragePercent}%`,
+      ]
+        .filter(Boolean)
+        .join('；') + '。'
+    )
+  }, [periodOverview, periodLabel])
+
+  const periodMetrics = useMemo(() => {
+    if (!periodOverview) return []
+    const { current, previous } = periodOverview
+    const fmtDelta = (cur: number, prev: number, unit: string, digits = 0) => {
+      if (previous.attempted === 0) return null
+      const factor = 10 ** digits
+      const delta = Math.round((cur - prev) * factor) / factor
+      return `${delta >= 0 ? '↑' : '↓'}${Math.abs(delta)}${unit}`
+    }
+    return [
+      {
+        label: '题量',
+        value: `${current.attempted}`,
+        delta: fmtDelta(current.attempted, previous.attempted, ''),
+      },
+      {
+        label: '正确率',
+        value: `${current.accuracy}%`,
+        delta: fmtDelta(current.accuracy, previous.accuracy, 'pp', 1),
+      },
+      {
+        label: '平均 Rating',
+        value: current.avgRating?.toFixed(2) ?? '—',
+        delta:
+          current.avgRating != null && previous.avgRating != null
+            ? fmtDelta(current.avgRating, previous.avgRating, '', 2)
+            : null,
+      },
+      {
+        label: '最长连对',
+        value: `${current.bestStreak}`,
+        delta: fmtDelta(current.bestStreak, previous.bestStreak, ''),
+      },
+    ]
+  }, [periodOverview])
+
+  // 阶段六 ④：成就墙（确定性派生，未解锁灰色剪影 + 条件）
+  const achievements = useMemo(() => {
+    const o = periodOverview
+    const streakDays = o?.longestActiveStreakDays ?? 0
+    const examScore = predictedExamScore(profile?.ratingPro ?? 1.0, 75)
+    return [
+      { icon: '🔥', name: '七日不辍', desc: '连续打卡 ≥7 天', unlocked: streakDays >= 7, note: `纪录 ${streakDays} 天` },
+      { icon: '🏆', name: '半月至尊', desc: '连续打卡 ≥17 天', unlocked: streakDays >= 17, note: `纪录 ${streakDays} 天` },
+      { icon: '👑', name: '首个 DONK', desc: '单题 Rating ≥2.00', unlocked: o?.firstDonkAt != null, note: o?.firstDonkAt ?? '未达成' },
+      { icon: '⚡', name: '单日狂飙', desc: '单日完成 ≥20 题', unlocked: (o?.bestDayCount ?? 0) >= 20, note: `纪录 ${o?.bestDayCount ?? 0} 题` },
+      { icon: '🔧', name: '修复工匠', desc: '修复 ≥10 道旧错题', unlocked: (o?.redeemedCount ?? 0) >= 10, note: `已修复 ${o?.redeemedCount ?? 0} 题` },
+      { icon: '🗺️', name: '点亮 5%', desc: '题库覆盖 ≥5%', unlocked: (o?.coveragePercent ?? 0) >= 5, note: `当前 ${o?.coveragePercent ?? 0}%` },
+      { icon: '🎯', name: '预估 110+', desc: '考场预估 ≥110 分', unlocked: examScore >= 110, note: `当前 ${examScore}` },
+    ]
+  }, [periodOverview, profile])
+  const daysLeft = Math.max(0, Math.ceil((new Date(EXAM_DATE).getTime() - Date.now()) / 86400000))
 
   // HLTV 2.0 战术与 Impact 影响力高维评估数据（敏感度增强，拉开长短板区分度）
   const impactDimensions = useMemo(() => {
@@ -633,6 +731,85 @@ export function InsightsView({
               </div>
             </section>
 
+            {/* 1.5 趋势战报（阶段六 ①②③：时间维度 + 叙事 + 目标进度） */}
+            <section className="tactical-card period-card" style={{ gridColumn: '1 / -1' }}>
+              <header className="tactical-card-header">
+                <h3>趋势战报</h3>
+                <div style={{ display: 'flex', gap: 6 }}>
+                  {([7, 30, null] as const).map((days) => (
+                    <button
+                      key={String(days)}
+                      type="button"
+                      style={periodBtnStyle(periodDays === days)}
+                      onClick={() => setPeriodDays(days)}
+                    >
+                      {days === 7 ? '近 7 天' : days === 30 ? '近 30 天' : '全部'}
+                    </button>
+                  ))}
+                </div>
+              </header>
+              <p style={{ fontSize: 13.5, lineHeight: 1.9, margin: '0 0 12px', color: 'var(--ink)' }}>
+                {periodNarrative}
+              </p>
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 10 }}>
+                {periodMetrics.map((metric) => (
+                  <div
+                    key={metric.label}
+                    style={{ border: '1px solid var(--line)', borderRadius: 10, padding: '10px 12px', background: 'var(--canvas)' }}
+                  >
+                    <span style={{ fontSize: 12, color: 'var(--muted)' }}>{metric.label}</span>
+                    <div style={{ display: 'flex', alignItems: 'baseline', gap: 8 }}>
+                      <strong style={{ fontSize: 22, fontWeight: 800 }}>{metric.value}</strong>
+                      {metric.delta && (
+                        <small
+                          style={{
+                            color: metric.delta.startsWith('↑') ? 'var(--success)' : 'var(--danger)',
+                            fontWeight: 700,
+                          }}
+                        >
+                          {metric.delta}
+                        </small>
+                      )}
+                    </div>
+                  </div>
+                ))}
+              </div>
+              <div style={{ display: 'flex', gap: 22, marginTop: 14, alignItems: 'center', flexWrap: 'wrap' }}>
+                <div className="ring-gauge-item">
+                  <span className="ring-gauge-title">今日题量</span>
+                  <Gauge
+                    percent={Math.min(100, (todayAttempts.length / Math.max(1, data.dailyProblemTarget)) * 100)}
+                    progressColor="var(--success)"
+                    progressClassName="glowing-ring"
+                    title="今日题量进度"
+                    center={
+                      <strong>
+                        {todayAttempts.length}
+                        <small style={{ fontSize: 11, color: 'var(--muted)' }}>/{data.dailyProblemTarget}</small>
+                      </strong>
+                    }
+                  />
+                </div>
+                <div className="ring-gauge-item">
+                  <span className="ring-gauge-title">本期正确率</span>
+                  <Gauge
+                    percent={periodOverview?.current.accuracy ?? 0}
+                    progressColor="var(--cyan)"
+                    progressClassName="glowing-ring"
+                    title="本期正确率"
+                    center={<strong>{periodOverview?.current.accuracy ?? 0}<small style={{ fontSize: 11, color: 'var(--muted)' }}>%</small></strong>}
+                  />
+                </div>
+                <div style={{ marginLeft: 'auto', textAlign: 'right' }}>
+                  <span style={{ fontSize: 12, color: 'var(--muted)' }}>距考研初试（{EXAM_DATE}）</span>
+                  <div style={{ fontSize: 32, fontWeight: 800, lineHeight: 1.15 }}>
+                    {daysLeft}
+                    <small style={{ fontSize: 13, color: 'var(--muted)' }}> 天</small>
+                  </div>
+                </div>
+              </div>
+            </section>
+
             {/* 2. 个人表现与战术雷达 */}
             <section className="tactical-card ability-card">
               <header className="tactical-card-header">
@@ -661,6 +838,9 @@ export function InsightsView({
                     ⚡ 战术 Impact
                   </button>
                 </div>
+                <span style={{ fontSize: 11, color: 'var(--muted)' }}>
+                  战术 Impact 为合成指标（基础六维推导），v2.0 将替换为真实聚合
+                </span>
               </header>
 
               <div className="ability-layout">
@@ -762,6 +942,13 @@ export function InsightsView({
             <section className="tactical-card map-card">
               <header className="tactical-card-header">
                 <h3>地图表现</h3>
+                {periodOverview && (
+                  <span style={{ fontSize: 12, color: 'var(--muted)' }}>
+                    疆域覆盖 {periodOverview.coveragePercent}% · 已点亮{' '}
+                    {Math.round((periodOverview.coveragePercent / 100) * periodOverview.questionCount)}
+                    /{periodOverview.questionCount} 题
+                  </span>
+                )}
               </header>
 
               <div className="map-chart-and-detail">
@@ -1086,6 +1273,42 @@ export function InsightsView({
                   })}
                 </div>
               )}
+            </section>
+
+            {/* 6. 成就墙（阶段六 ④）：确定性派生，未解锁灰色剪影 + 条件 */}
+            <section className="tactical-card achievements-card" style={{ gridColumn: '1 / -1' }}>
+              <header className="tactical-card-header">
+                <h3>成就墙</h3>
+                <span style={{ fontSize: 12, color: 'var(--muted)' }}>
+                  {achievements.filter((a) => a.unlocked).length}/{achievements.length} 已解锁
+                </span>
+              </header>
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(150px, 1fr))', gap: 10 }}>
+                {achievements.map((achievement) => (
+                  <div
+                    key={achievement.name}
+                    title={achievement.desc}
+                    style={{
+                      border: `1px solid ${achievement.unlocked ? 'var(--success)' : 'var(--line)'}`,
+                      borderRadius: 10,
+                      padding: '10px 12px',
+                      opacity: achievement.unlocked ? 1 : 0.55,
+                      background: achievement.unlocked
+                        ? 'color-mix(in srgb, var(--success) 7%, var(--surface))'
+                        : 'transparent',
+                    }}
+                  >
+                    <span style={{ fontSize: 20 }}>{achievement.icon}</span>
+                    <div style={{ fontSize: 13, fontWeight: 700, color: achievement.unlocked ? 'var(--ink)' : 'var(--muted)' }}>
+                      {achievement.name}
+                    </div>
+                    <div style={{ fontSize: 11.5, color: 'var(--muted)' }}>{achievement.desc}</div>
+                    <div style={{ fontSize: 11, color: achievement.unlocked ? 'var(--success)' : 'var(--muted)' }}>
+                      {achievement.unlocked ? `已解锁 · ${achievement.note}` : achievement.note}
+                    </div>
+                  </div>
+                ))}
+              </div>
             </section>
           </motion.div>
         ) : tab === 'mistakes' ? (

@@ -2,7 +2,7 @@ import { invoke } from '@tauri-apps/api/core'
 import { check, type Update } from '@tauri-apps/plugin-updater'
 import { relaunch } from '@tauri-apps/plugin-process'
 import { mockBootstrap, mockCategories, mockInbox, mockMastery, mockQuestions, mockRecommendations } from './mock'
-import type { BootstrapData, CategoryNode, CodexTask, DailyLog, DailyTrendPoint, EloStatus, TagClosure, ExportResult, FailedInboxItem, InboxItem, InboxSummary, InsightPoint, MasteryChapter, MasteryNode, MistakeDayGroup, PracticeSessionState, Question, QuestionPage, RatingDistribution, RecommendationBatch, RecommendedQuestion, ReviewHistory, ReviewPlan, SeasonStatus, SessionScoreboard, UserStreak, WeaknessRadar, PressureSession, GradingReport, TacticalDashboardData, UserProfileSettings, AttemptHighlight, HighlightMoment, FriendSyncConfig, FriendSyncRemoteSnapshot, LearningCenterSnapshot } from './types'
+import type { BootstrapData, CategoryNode, CodexTask, DailyLog, DailyTrendPoint, EloStatus, TagClosure, ExportResult, FailedInboxItem, InboxItem, InboxSummary, InsightPoint, MasteryChapter, MasteryNode, MistakeDayGroup, PracticeSessionState, Question, QuestionPage, RatingDistribution, RecommendationBatch, RecommendedQuestion, ReviewHistory, ReviewPlan, SeasonStatus, SessionScoreboard, UserStreak, WeaknessRadar, PressureSession, GradingReport, TacticalDashboardData, UserProfileSettings, AttemptHighlight, HighlightMoment, PeriodOverview, FriendSyncConfig, FriendSyncRemoteSnapshot, LearningCenterSnapshot } from './types'
 import { createPracticeSessionPayload } from './domain/evidence'
 
 const isTauri = () => '__TAURI_INTERNALS__' in window
@@ -217,6 +217,32 @@ export type RecordAttemptResult = {
 export async function getHighlightMoments(limit = 20): Promise<HighlightMoment[]> {
   if (isTauri()) return invoke('get_highlight_moments', { limit })
   return []
+}
+
+const emptyPeriodBucket = {
+  attempted: 0,
+  correct: 0,
+  partial: 0,
+  accuracy: 0,
+  avgRating: null,
+  totalDuration: 0,
+  bestStreak: 0,
+  distinctQuestions: 0,
+}
+
+export async function getPeriodOverview(days: number | null): Promise<PeriodOverview> {
+  if (isTauri()) return invoke('get_period_overview', { days })
+  return {
+    days,
+    current: { ...emptyPeriodBucket },
+    previous: { ...emptyPeriodBucket },
+    longestActiveStreakDays: 0,
+    bestDayCount: 0,
+    firstDonkAt: null,
+    redeemedCount: 0,
+    coveragePercent: 0,
+    questionCount: 0,
+  }
 }
 
 export async function recordAttempt(input: {

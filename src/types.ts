@@ -296,6 +296,30 @@ export type AttemptHighlight = {
   rating: number
 }
 
+export type PeriodBucket = {
+  attempted: number
+  correct: number
+  partial: number
+  /** 正确率（百分比，一位小数） */
+  accuracy: number
+  avgRating: number | null
+  totalDuration: number
+  bestStreak: number
+  distinctQuestions: number
+}
+
+export type PeriodOverview = {
+  days: number | null
+  current: PeriodBucket
+  previous: PeriodBucket
+  longestActiveStreakDays: number
+  bestDayCount: number
+  firstDonkAt: string | null
+  redeemedCount: number
+  coveragePercent: number
+  questionCount: number
+}
+
 export type HighlightMoment = {
   attemptId: number
   questionId: number

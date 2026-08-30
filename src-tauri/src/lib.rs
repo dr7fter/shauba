@@ -4989,6 +4989,277 @@ fn get_highlight_moments(
     Ok(moments)
 }
 
+// ============ 阶段六：数据板时间维度（周期战报与成就素材） ============
+
+struct PeriodRow {
+    outcome: String,
+    ai_rating: Option<f64>,
+    fluency: i32,
+    duration: i64,
+    difficulty_multiplier: Option<f64>,
+    question_type: String,
+    question_id: i64,
+    dims: services::rating::DimensionEvidence,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct PeriodBucket {
+    attempted: i64,
+    correct: i64,
+    partial: i64,
+    /// 正确率（百分比，一位小数）
+    accuracy: f64,
+    avg_rating: Option<f64>,
+    total_duration: i64,
+    /// 期间最长连对
+    best_streak: u32,
+    distinct_questions: i64,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct PeriodOverview {
+    /// None = 全部历史
+    days: Option<i64>,
+    current: PeriodBucket,
+    previous: PeriodBucket,
+    /// 连续打卡天数纪录（有作答的日历日连续段）
+    longest_active_streak_days: u32,
+    /// 单日题量纪录
+    best_day_count: i64,
+    /// 首次 DONK（elo_events.performance ≥ 2.0）日期
+    first_donk_at: Option<String>,
+    /// 旧错修复数：此前做错、后来做对的不同题目数
+    redeemed_count: i64,
+    /// 题库覆盖率（%）
+    coverage_percent: f64,
+    question_count: i64,
+}
+
+fn fetch_period_rows(
+    conn: &Connection,
+    from: &str,
+    to_exclusive: Option<&str>,
+) -> Result<Vec<PeriodRow>, String> {
+    let mut sql = String::from(
+        "SELECT COALESCE(a.outcome,a.result), a.ai_rating, COALESCE(a.fluency_rating,a.self_rating),
+                COALESCE(a.duration_seconds,600), a.difficulty_multiplier, q.question_type, a.question_id,
+                a.dim_rigor, a.dim_computation, a.dim_modeling, a.dim_method_use, a.dim_speed,
+                a.dim_strategy_insight, a.technique_level
+         FROM attempts a JOIN questions q ON q.id=a.question_id
+         WHERE COALESCE(a.outcome,a.result) <> 'uncertain' AND substr(a.attempted_at,1,10) >= ?1",
+    );
+    if to_exclusive.is_some() {
+        sql.push_str(" AND substr(a.attempted_at,1,10) < ?2");
+    }
+    sql.push_str(" ORDER BY a.id");
+    let mut stmt = conn.prepare(&sql).map_err(|e| e.to_string())?;
+    let map_row = |r: &rusqlite::Row| -> rusqlite::Result<PeriodRow> {
+        Ok(PeriodRow {
+            outcome: r.get(0)?,
+            ai_rating: r.get(1)?,
+            fluency: r.get(2)?,
+            duration: r.get(3)?,
+            difficulty_multiplier: r.get(4)?,
+            question_type: r.get(5)?,
+            question_id: r.get(6)?,
+            dims: services::rating::DimensionEvidence {
+                rigor: r.get(7)?,
+                computation: r.get(8)?,
+                modeling: r.get(9)?,
+                method_use: r.get(10)?,
+                speed: r.get(11)?,
+                strategy_insight: r.get(12)?,
+                technique_level: r.get(13)?,
+            },
+        })
+    };
+    let rows = if let Some(to) = to_exclusive {
+        stmt.query_map(params![from, to], map_row)
+            .map_err(|e| e.to_string())?
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(|e| e.to_string())?
+    } else {
+        stmt.query_map([from], map_row)
+            .map_err(|e| e.to_string())?
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(|e| e.to_string())?
+    };
+    drop(stmt);
+    Ok(rows)
+}
+
+/// 周期分桶聚合：rating 走与全局一致的回退链（六维 HLTV > Codex > 特征曲线）
+fn period_bucket(rows: &[PeriodRow]) -> PeriodBucket {
+    let attempted = rows.len() as i64;
+    let correct = rows.iter().filter(|r| r.outcome == "correct").count() as i64;
+    let partial = rows.iter().filter(|r| r.outcome == "partial").count() as i64;
+    let accuracy = if attempted > 0 {
+        ((correct as f64 / attempted as f64) * 1000.0).round() / 10.0
+    } else {
+        0.0
+    };
+    let mut rating_sum = 0.0;
+    let mut rating_count = 0usize;
+    let mut streak = 0u32;
+    let mut best_streak = 0u32;
+    let mut total_duration = 0i64;
+    for row in rows {
+        total_duration += row.duration;
+        let bench = services::rating::benchmark_seconds(&row.question_type);
+        let rating = if !row.dims.is_empty() {
+            services::rating::hltv_rating(
+                &row.outcome,
+                &row.dims,
+                row.duration,
+                bench,
+                row.difficulty_multiplier,
+            )
+        } else if let Some(value) = row
+            .ai_rating
+            .filter(|v| (services::rating::RATING_MIN..=services::rating::RATING_MAX).contains(v))
+        {
+            value
+        } else {
+            services::rating::attempt_rating(&row.outcome, row.fluency, row.duration, bench)
+        };
+        rating_sum += rating;
+        rating_count += 1;
+        if row.outcome == "correct" {
+            streak += 1;
+            best_streak = best_streak.max(streak);
+        } else {
+            streak = 0;
+        }
+    }
+    let avg_rating = if rating_count > 0 {
+        Some(((rating_sum / rating_count as f64) * 100.0).round() / 100.0)
+    } else {
+        None
+    };
+    let distinct_questions = rows
+        .iter()
+        .map(|r| r.question_id)
+        .collect::<std::collections::HashSet<_>>()
+        .len() as i64;
+    PeriodBucket {
+        attempted,
+        correct,
+        partial,
+        accuracy,
+        avg_rating,
+        total_duration,
+        best_streak,
+        distinct_questions,
+    }
+}
+
+/// 数据板时间维度（阶段六 ①②④⑤）：当前周期 + 等长上一周期对比，成就素材全时段。
+#[tauri::command]
+fn get_period_overview(days: Option<i64>, state: State<AppState>) -> Result<PeriodOverview, String> {
+    let conn = state.db.lock().map_err(|e| e.to_string())?;
+    let today = Local::now().date_naive();
+    let (current_rows, previous_rows) = match days {
+        Some(d) if d > 0 => {
+            let d = d.min(3650);
+            let current_from = (today - chrono::Duration::days(d - 1)).to_string();
+            let previous_from = (today - chrono::Duration::days(2 * d - 1)).to_string();
+            (
+                fetch_period_rows(&conn, &current_from, None)?,
+                fetch_period_rows(&conn, &previous_from, Some(&current_from))?,
+            )
+        }
+        _ => (fetch_period_rows(&conn, "0000-01-01", None)?, Vec::new()),
+    };
+    let current = period_bucket(&current_rows);
+    let previous = period_bucket(&previous_rows);
+
+    // 连续打卡天数纪录（日历日连续段）
+    let dates: Vec<String> = {
+        let mut stmt = conn
+            .prepare(
+                "SELECT DISTINCT substr(attempted_at,1,10) d FROM attempts
+                 WHERE attempted_at IS NOT NULL ORDER BY d",
+            )
+            .map_err(|e| e.to_string())?;
+        let rows = stmt
+            .query_map([], |r| r.get::<_, String>(0))
+            .map_err(|e| e.to_string())?
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(|e| e.to_string())?;
+        rows
+    };
+    let mut longest_active_streak_days = 0u32;
+    let mut run = 0u32;
+    let mut prev_day: Option<chrono::NaiveDate> = None;
+    for d in &dates {
+        let day = chrono::NaiveDate::parse_from_str(d, "%Y-%m-%d").unwrap_or(today);
+        run = match prev_day {
+            Some(prev) if (day - prev).num_days() == 1 => run + 1,
+            _ => 1,
+        };
+        longest_active_streak_days = longest_active_streak_days.max(run);
+        prev_day = Some(day);
+    }
+
+    let best_day_count: i64 = conn
+        .query_row(
+            "SELECT COALESCE(MAX(c),0) FROM (SELECT COUNT(*) c FROM attempts GROUP BY substr(attempted_at,1,10))",
+            [],
+            |r| r.get(0),
+        )
+        .map_err(|e| e.to_string())?;
+
+    let first_donk_at: Option<String> = conn
+        .query_row(
+            "SELECT substr(created_at,1,10) FROM elo_events WHERE performance >= 2.0 ORDER BY id LIMIT 1",
+            [],
+            |r| r.get(0),
+        )
+        .optional()
+        .map_err(|e| e.to_string())?;
+
+    let redeemed_count: i64 = conn
+        .query_row(
+            "SELECT COUNT(DISTINCT a.question_id) FROM attempts a
+             WHERE COALESCE(a.outcome,a.result)='correct' AND EXISTS (
+               SELECT 1 FROM attempts b WHERE b.question_id=a.question_id AND b.id < a.id
+               AND COALESCE(b.outcome,b.result) IN ('wrong','incorrect'))",
+            [],
+            |r| r.get(0),
+        )
+        .map_err(|e| e.to_string())?;
+
+    let question_count: i64 = conn
+        .query_row("SELECT COUNT(*) FROM questions", [], |r| r.get(0))
+        .map_err(|e| e.to_string())?;
+    let distinct_done: i64 = conn
+        .query_row(
+            "SELECT COUNT(DISTINCT question_id) FROM attempts",
+            [],
+            |r| r.get(0),
+        )
+        .map_err(|e| e.to_string())?;
+    let coverage_percent = if question_count > 0 {
+        ((distinct_done as f64 / question_count as f64) * 1000.0).round() / 10.0
+    } else {
+        0.0
+    };
+
+    Ok(PeriodOverview {
+        days,
+        current,
+        previous,
+        longest_active_streak_days,
+        best_day_count,
+        first_donk_at,
+        redeemed_count,
+        coverage_percent,
+        question_count,
+    })
+}
+
 #[tauri::command]
 fn record_attempt(
     input: AttemptInput,
@@ -11073,6 +11344,7 @@ pub fn run() {
             add_supplemental_question,
             record_attempt,
             get_highlight_moments,
+            get_period_overview,
             undo_last_attempt,
             toggle_favorite,
             save_note,

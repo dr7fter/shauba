@@ -7655,6 +7655,7 @@ struct TacticalAttemptRow {
 #[tauri::command]
 async fn get_tactical_dashboard_stats(
     scope: String,
+    season_start: Option<String>,
     state: State<'_, AppState>,
 ) -> Result<TacticalDashboardData, String> {
     let conn = state.db.lock().map_err(|e| e.to_string())?;
@@ -7663,6 +7664,22 @@ async fn get_tactical_dashboard_stats(
         "solo" => "a.mode IN ('practice', 'recommendation')",
         _ => "1=1",
     };
+    // 赛季筛选（v1.8.1，完美平台式）：season_start = 周一日期，窗口 7 天；None = 全部生涯
+    let (season_filter, season_from, season_to): (String, Vec<String>, Vec<String>) =
+        match season_start.as_deref() {
+            Some(start) => {
+                let to = chrono::NaiveDate::parse_from_str(start, "%Y-%m-%d")
+                    .map(|d| (d + chrono::Duration::days(7)).to_string())
+                    .unwrap_or_else(|_| "9999-12-31".into());
+                (
+                    " AND substr(a.attempted_at,1,10) >= ?1 AND substr(a.attempted_at,1,10) < ?2"
+                        .into(),
+                    vec![start.to_string()],
+                    vec![to],
+                )
+            }
+            None => (String::new(), Vec::new(), Vec::new()),
+        };
 
     let (_, current_elo) = current_elo(&conn)?;
     let peak_elo: f64 = conn
@@ -7690,12 +7707,14 @@ async fn get_tactical_dashboard_stats(
                 a.dim_strategy_insight
          FROM attempts a
          JOIN questions q ON q.id = a.question_id
-         WHERE {mode_filter} AND COALESCE(a.outcome, a.result) <> 'uncertain'
+         WHERE {mode_filter}{season_filter} AND COALESCE(a.outcome, a.result) <> 'uncertain'
          ORDER BY a.id ASC"
     );
     let mut stmt = conn.prepare(&sql).map_err(|e| e.to_string())?;
     let rows = stmt
-        .query_map([], |r| {
+        .query_map(
+            rusqlite::params_from_iter(season_from.iter().chain(season_to.iter())),
+            |r| {
             let qtype: String = r.get(1)?;
             let bench = services::rating::benchmark_seconds(&qtype);
             Ok(TacticalAttemptRow {
@@ -7715,7 +7734,8 @@ async fn get_tactical_dashboard_stats(
                 speed: r.get(12)?,
                 strategy_insight: r.get(13)?,
             })
-        })
+            },
+        )
         .map_err(|e| e.to_string())?
         .collect::<Result<Vec<_>, _>>()
         .map_err(|e| e.to_string())?;

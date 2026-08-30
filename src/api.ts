@@ -11,9 +11,12 @@ export async function bootstrap(): Promise<BootstrapData> {
   return isTauri() ? invoke('bootstrap') : mockBootstrap
 }
 
-export async function getTacticalDashboardStats(scope = 'ranked'): Promise<TacticalDashboardData> {
+export async function getTacticalDashboardStats(
+  scope = 'ranked',
+  seasonStart: string | null = null,
+): Promise<TacticalDashboardData> {
   if (isTauri()) {
-    return invoke('get_tactical_dashboard_stats', { scope })
+    return invoke('get_tactical_dashboard_stats', { scope, seasonStart })
   }
   return {
     profile: {

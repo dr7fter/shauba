@@ -313,14 +313,6 @@ export type SeasonLadder = {
   seasons: SeasonSummary[]
   allPoints: SeasonPoint[]
 }
-export type ProgressComparison = {
-  questionId: number
-  stem: string
-  categoryPath: string
-  wrongDuration: number
-  correctDuration: number
-  fixedAt: string
-}
 
 export type UndoLastAttemptResult = {
   question: Question

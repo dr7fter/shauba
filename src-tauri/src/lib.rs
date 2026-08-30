@@ -5227,8 +5227,9 @@ fn get_season_ladder(state: State<AppState>) -> Result<SeasonLadder, String> {
     let monday = week_start_of(today).to_string();
     let mut week_points = Vec::new();
     let mut all_points = Vec::new();
-    let mut seasons: Vec<SeasonSummary> = Vec::new();
-    let mut current_week: Option<(String, f64, f64, i64)> = None; // (week_start, start, last, count)
+    // 按周聚合（BTreeMap 天然去重 + 升序）：事件时间交错也不会产生重复赛季
+    let mut season_acc: std::collections::BTreeMap<String, (f64, f64, i64)> =
+        std::collections::BTreeMap::new();
     for (date, rating) in &rows {
         all_points.push(SeasonPoint { date: date.clone(), rating: *rating });
         if date.as_str() >= monday.as_str() {
@@ -5238,34 +5239,24 @@ fn get_season_ladder(state: State<AppState>) -> Result<SeasonLadder, String> {
             .map(week_start_of)
             .map(|d| d.to_string())
             .unwrap_or_else(|_| monday.clone());
-        match &mut current_week {
-            Some((cur_ws, start, last, count)) if *cur_ws == ws => {
+        season_acc
+            .entry(ws)
+            .and_modify(|(_start, last, count)| {
                 *last = *rating;
                 *count += 1;
-            }
-            _ => {
-                if let Some((ws_done, start, last, count)) = current_week.take() {
-                    seasons.push(SeasonSummary {
-                        delta: ((last - start) * 100.0).round() / 100.0,
-                        week_start: ws_done,
-                        start_rating: start,
-                        end_rating: last,
-                        settlements: count,
-                    });
-                }
-                current_week = Some((ws, *rating, *rating, 1));
-            }
-        }
+            })
+            .or_insert((*rating, *rating, 1));
     }
-    if let Some((ws_done, start, last, count)) = current_week.take() {
-        seasons.push(SeasonSummary {
-            delta: ((last - start) * 100.0).round() / 100.0,
-            week_start: ws_done,
-            start_rating: start,
-            end_rating: last,
-            settlements: count,
-        });
-    }
+    let mut seasons: Vec<SeasonSummary> = season_acc
+        .into_iter()
+        .map(|(week_start, (start_rating, end_rating, settlements))| SeasonSummary {
+            delta: ((end_rating - start_rating) * 100.0).round() / 100.0,
+            week_start,
+            start_rating,
+            end_rating,
+            settlements,
+        })
+        .collect();
     seasons.reverse(); // 最新赛季在前
     let week_start_rating = week_points.first().map(|p| p.rating);
     let week_current_rating = week_points.last().map(|p| p.rating);

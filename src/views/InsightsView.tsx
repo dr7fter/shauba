@@ -30,7 +30,6 @@ import {
   getEloStatus,
   getHighlightMoments,
   getPeriodOverview,
-  getProgressComparisons,
   getSeasonLadder,
   getPressureGradingReport,
   getQuestion,
@@ -68,7 +67,6 @@ import type {
   GradingReport,
   HighlightMoment,
   PeriodOverview,
-  ProgressComparison,
   SeasonLadder,
   PressureSession,
   Question,
@@ -156,7 +154,6 @@ export function InsightsView({
   const [tacticalData, setTacticalData] = useState<TacticalDashboardData | null>(null)
   const [seasonPick, setSeasonPick] = useState<string>('current')
   const [seasonLadder, setSeasonLadder] = useState<SeasonLadder | null>(null)
-  const [comparisons, setComparisons] = useState<ProgressComparison[]>([])
 
   const [distribution, setDistribution] = useState<RatingDistribution | null>(null)
   const [elo, setElo] = useState<EloStatus | null>(null)
@@ -202,7 +199,6 @@ export function InsightsView({
       void getPeriodOverview(periodDays).then(setPeriodOverview).catch(() => undefined)
       void getHighlightMoments(20).then(setHighlights).catch(() => undefined)
       void getSeasonLadder().then(setSeasonLadder).catch(() => undefined)
-      void getProgressComparisons().then(setComparisons).catch(() => undefined)
     }
     // periodDays 变化由其专属 effect 负责，此处只在切 tab 时触发
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -851,28 +847,6 @@ export function InsightsView({
               </div>
             </section>
 
-            {/* 1.6 进步对照（v1.8）：同一断点修复前后的真实对比 */}
-            <section className="tactical-card progress-card" style={{ gridColumn: '1 / -1' }}>
-              <header className="tactical-card-header">
-                <h3>进步对照 · 你确实在变强</h3>
-              </header>
-              {comparisons.length === 0 ? (
-                <p style={{ fontSize: 13, color: 'var(--muted)', margin: 0 }}>
-                  还没有可对照的修复记录——修好一道旧错后，这里会出现前后对比。
-                </p>
-              ) : (
-                <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-                  {comparisons.map((c) => (
-                    <div key={c.questionId} style={{ fontSize: 12.5, color: 'var(--muted)' }}>
-                      <span style={{ color: 'var(--ink)', fontWeight: 700 }}>#{c.questionId}</span>{' '}
-                      {c.wrongDuration}s → <b style={{ color: 'var(--success)' }}>{c.correctDuration}s</b>
-                      {' '}（快 {(c.wrongDuration / c.correctDuration).toFixed(1)}×）· {c.fixedAt} 修复
-                    </div>
-                  ))}
-                </div>
-              )}
-            </section>
-
             {/* 2. 个人表现与战术雷达 */}
             <section className="tactical-card ability-card">
               <header className="tactical-card-header">
@@ -1457,7 +1431,7 @@ export function InsightsView({
                   <h3>历史战绩</h3>
                   <p>共 {validSessions.length} 场已批改对决 · 胜率 {winRate === null ? '等待首场' : `${winRate}%`}</p>
                 </div>
-                <span className="match-filter">全部已结算⌄</span>
+                <span className="match-filter">全部已结算</span>
               </header>
               {validSessions.length === 0 ? (
                 <div className="empty-state match-empty">

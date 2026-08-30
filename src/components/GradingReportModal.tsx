@@ -35,6 +35,133 @@ import { RatingBadge } from './ui/RatingBadge'
 import { MetricBar } from './ui/MetricBar'
 import type { GradingReport, PressureSession, Question } from '../types'
 
+// ============ 阶段五：报告阅读体验 ============
+
+type DimKey = 'rigor' | 'computation' | 'modeling' | 'methodUse' | 'speed' | 'strategyInsight'
+
+const DIM_LABELS: Record<DimKey, string> = {
+  rigor: '严谨性',
+  computation: '计算力',
+  modeling: '审题建模',
+  methodUse: '方法使用',
+  speed: '速度',
+  strategyInsight: '策略洞察力',
+}
+
+/** 严重度三色（v1.7.0 阶段五）：致命=概念盲区、笔误=瞄准失误、方法=战术绕路 */
+type Severity = 'fatal' | 'slip' | 'detour'
+
+const SEVERITY_BY_TAG: Record<string, Severity> = {
+  概念盲区: 'fatal',
+  概念边界: 'fatal',
+  瞄准失误: 'slip',
+  计算笔误: 'slip',
+  战术绕路: 'detour',
+  方法绕路: 'detour',
+  方法未掌握: 'detour',
+}
+
+const SEVERITY_META: Record<Severity, { label: string; color: string }> = {
+  fatal: { label: '致命 · 概念盲区', color: 'var(--danger)' },
+  slip: { label: '笔误 · 瞄准失误', color: 'var(--warn)' },
+  detour: { label: '方法 · 战术绕路', color: 'var(--cyan)' },
+}
+
+function severityOf(grade: GradingReport['grades'][number], fallbackKey: GradeOutcome): Severity {
+  const tags = grade.errorTags ?? []
+  for (const tag of tags) {
+    if (SEVERITY_BY_TAG[tag] === 'fatal') return 'fatal'
+  }
+  for (const tag of tags) {
+    const mapped = SEVERITY_BY_TAG[tag]
+    if (mapped) return mapped
+  }
+  if (fallbackKey === 'wrong') return 'fatal'
+  if (fallbackKey === 'partial') return 'slip'
+  return 'detour'
+}
+
+/** 逐题六维真实证据：score 为 null 的维度不计入（哨兵 S4——不伪造证据） */
+function evidenceDims(grade: GradingReport['grades'][number]): {
+  key: DimKey
+  label: string
+  value: number
+}[] {
+  const dims = grade.dimensions
+  if (!dims) return []
+  return (Object.keys(DIM_LABELS) as DimKey[])
+    .map((key) => ({ key, label: DIM_LABELS[key], value: dims[key]?.score }))
+    .filter(
+      (d): d is { key: DimKey; label: string; value: number } =>
+        typeof d.value === 'number' && Number.isFinite(d.value),
+    )
+}
+
+/** 逐题重心标签：最高维与最低维差 ≥ 20 时输出模板句（纯前端拼装，不加 AI 调用） */
+function focusSentence(grade: GradingReport['grades'][number]): string | null {
+  const dims = evidenceDims(grade)
+  if (dims.length < 2) return null
+  const sorted = [...dims].sort((a, b) => b.value - a.value)
+  const top = sorted[0]
+  const bottom = sorted[sorted.length - 1]
+  if (top.value - bottom.value < 20) return null
+  const pair = `${top.key}>${bottom.key}`
+  const templates: Record<string, string> = {
+    'computation>strategyInsight': '算得动，但没找到路',
+    'computation>methodUse': '算得动，但路走错了',
+    'modeling>computation': '思路对，算挂了',
+    'strategyInsight>computation': '思路对，算挂了',
+    'speed>rigor': '手比脑子快',
+    'speed>computation': '手比脑子快',
+  }
+  const verdictText = templates[pair] ?? `强在${top.label}，弱在${bottom.label}`
+  return `${DIM_LABELS[top.key]} ${Math.round(top.value)} / ${DIM_LABELS[bottom.key]} ${Math.round(
+    bottom.value,
+  )} → ${verdictText}`
+}
+
+/** 长诊断分层：超过 limit 字默认收起两行，点「展开全文」查看 */
+function LongText({ value, limit = 150 }: { value: string; limit?: number }) {
+  const [expanded, setExpanded] = useState(false)
+  const truncated = value.length > limit && !expanded
+  return (
+    <div>
+      <div style={truncated ? { maxHeight: '3.2em', overflow: 'hidden' } : undefined}>
+        <MathText value={value} />
+      </div>
+      {value.length > limit && (
+        <button
+          type="button"
+          onClick={() => setExpanded((prev) => !prev)}
+          style={{
+            background: 'none',
+            border: 'none',
+            color: 'var(--cyan)',
+            cursor: 'pointer',
+            fontSize: 12,
+            fontWeight: 600,
+            padding: '2px 0',
+          }}
+        >
+          {expanded ? '收起' : '展开全文'}
+        </button>
+      )}
+    </div>
+  )
+}
+
+/** 只看错题 / 全部题目 切换按钮样式（阶段五 ②） */
+const filterBtnStyle = (active: boolean) => ({
+  padding: '4px 12px',
+  borderRadius: 16,
+  border: '1px solid var(--line)',
+  background: active ? 'var(--cyan)' : 'transparent',
+  color: active ? 'var(--surface)' : 'var(--muted)',
+  fontSize: 12,
+  fontWeight: 600,
+  cursor: 'pointer',
+})
+
 export function PressureLearningReportView({
   report,
   session,
@@ -55,6 +182,9 @@ export function PressureLearningReportView({
   const [detailQuestion, setDetailQuestion] = useState<Question | null>(null)
   const [favoriteMap, setFavoriteMap] = useState<Record<number, boolean>>({})
   const [toastMsg, setToastMsg] = useState<string | null>(null)
+  // 阶段五：逐题折叠与错题过滤
+  const [questionFilter, setQuestionFilter] = useState<'all' | 'wrong'>('all')
+  const [expandedMap, setExpandedMap] = useState<Record<string, boolean>>({})
   const onCloseRef = useRef(onClose)
   onCloseRef.current = onClose
 
@@ -133,28 +263,91 @@ export function PressureLearningReportView({
   const averageRatingScore = averageCsRating(ratingScores) ?? 0
   const ratingTier = csRatingTier(averageRatingScore) ?? 'D'
   const ratingTone = csRatingTone(averageRatingScore)
-  const dimensionAverage = (key: 'rigor' | 'computation' | 'modeling' | 'methodUse' | 'speed' | 'strategyInsight', fallback: (grade: GradingReport['grades'][number]) => number) => {
-    const observed = grades
+  // 六维聚合（阶段五口径修正）：只统计真实证据，不再混入 outcome 兜底常量；
+  // 证据缺失显示「无证据」而非伪造数值（哨兵 S4）。
+  const dimStats = (Object.keys(DIM_LABELS) as DimKey[]).map((key) => {
+    const values = grades
       .map((grade) => grade.dimensions?.[key]?.score)
       .filter((score): score is number => typeof score === 'number' && Number.isFinite(score))
-    return observed.length
-      ? Math.round(observed.reduce((sum, score) => sum + score, 0) / observed.length)
-      : grades.length ? Math.round(grades.reduce((sum, grade) => sum + fallback(grade), 0) / grades.length) : 0
-  }
-  const ratingDimensions = [
-    { label: '严谨性', value: dimensionAverage('rigor', (grade) => (gradeTone(grade).key === 'correct' ? 75 : gradeTone(grade).key === 'partial' ? 60 : 55)) },
-    { label: '计算力', value: dimensionAverage('computation', (grade) => Math.max(1, Math.min(4, grade.selfRating ?? 2)) / 4 * 100) },
-    { label: '速度', value: dimensionAverage('speed', (grade) => Math.max(45, Math.min(115, (averageDuration / Math.max(1, grade.duration || averageDuration)) * 100))) },
-    { label: '审题建模', value: dimensionAverage('modeling', (grade) => (gradeTone(grade).key === 'correct' ? 60 : gradeTone(grade).key === 'partial' ? 50 : 40)) },
-    { label: '方法使用', value: dimensionAverage('methodUse', (grade) => (gradeTone(grade).key === 'correct' ? 60 : gradeTone(grade).key === 'partial' ? 50 : 40)) },
-    { label: '策略洞察力', value: dimensionAverage('strategyInsight', (grade) => (grade.betterSolution ? 72 : gradeTone(grade).key === 'correct' ? 60 : 50)) },
-  ]
-  const kastRate = Math.round(
-    0.50 * ratingDimensions[0].value +
-    0.30 * ratingDimensions[1].value +
-    0.20 * ratingDimensions[3].value
+    return {
+      key,
+      label: DIM_LABELS[key],
+      value: values.length
+        ? Math.round(values.reduce((sum, score) => sum + score, 0) / values.length)
+        : null,
+      count: values.length,
+    }
+  })
+  const ratingDimensions = dimStats.map((d) => ({ ...d }))
+  const evidenceCoverage = grades.filter((grade) => evidenceDims(grade).length > 0).length
+  // KAST 仍按内核口径 0.5 严谨 + 0.3 计算 + 0.2 建模；证据全缺退回中性 75（考场预估用）
+  const kastRate = (() => {
+    const rigor = dimStats.find((d) => d.key === 'rigor')?.value
+    const computation = dimStats.find((d) => d.key === 'computation')?.value
+    const modeling = dimStats.find((d) => d.key === 'modeling')?.value
+    if (rigor == null && computation == null && modeling == null) return null
+    return Math.round(0.5 * (rigor ?? 75) + 0.3 * (computation ?? 75) + 0.2 * (modeling ?? 75))
+  })()
+  const examPrediction = predictedExamScore(averageRatingScore, kastRate ?? 75)
+
+  // 错题重心（改造二 3.2）：只聚合做错/部分正确作答的真实六维证据
+  const wrongGrades = grades.filter((grade) => ['wrong', 'partial'].includes(gradeTone(grade).key))
+  const wrongDimStats = (Object.keys(DIM_LABELS) as DimKey[]).map((key) => {
+    const values = wrongGrades
+      .map((grade) => grade.dimensions?.[key]?.score)
+      .filter((score): score is number => typeof score === 'number' && Number.isFinite(score))
+    return {
+      key,
+      label: DIM_LABELS[key],
+      value: values.length
+        ? Math.round(values.reduce((sum, score) => sum + score, 0) / values.length)
+        : null,
+    }
+  })
+  const wrongDimsPresent = wrongDimStats.filter(
+    (d): d is { key: DimKey; label: string; value: number } => d.value != null,
   )
-  const examPrediction = predictedExamScore(averageRatingScore, kastRate)
+  const strongestWrongDim =
+    wrongDimsPresent.length >= 2 ? [...wrongDimsPresent].sort((a, b) => b.value - a.value)[0] : null
+  const weakestWrongDim =
+    wrongDimsPresent.length >= 2 ? [...wrongDimsPresent].sort((a, b) => a.value - b.value)[0] : null
+
+  // 结论前置（阶段五 ①）：模板 + 数据拼装，不需要 AI
+  const weaknessTally = new Map<string, number>()
+  grades.forEach((grade) => {
+    if (gradeOutcomeKey(grade) === 'correct') return
+    for (const tag of grade.weaknessTags ?? []) {
+      weaknessTally.set(tag, (weaknessTally.get(tag) ?? 0) + 1)
+    }
+  })
+  const topWeakness = [...weaknessTally.entries()].sort((a, b) => b[1] - a[1])[0]?.[0] ?? null
+  const worstGradeEntry = grades
+    .filter((grade) => gradeOutcomeKey(grade) === 'wrong')
+    .map((grade) => ({ grade, rating: ratingForGrade(grade) }))
+    .sort((a, b) => a.rating - b.rating)[0] ?? null
+  const worstGradeIndex = worstGradeEntry ? grades.indexOf(worstGradeEntry.grade) : -1
+
+  // 阶段五 ②③：逐题折叠、只看错题、吸顶目录
+  const isGradeExpanded = (grade: GradingReport['grades'][number], index: number) =>
+    expandedMap[`${grade.questionId}-${index}`] ?? gradeOutcomeKey(grade) !== 'correct'
+  const toggleGradeExpanded = (grade: GradingReport['grades'][number], index: number) => {
+    const mapKey = `${grade.questionId}-${index}`
+    setExpandedMap((prev) => ({
+      ...prev,
+      [mapKey]: !(prev[mapKey] ?? gradeOutcomeKey(grade) !== 'correct'),
+    }))
+  }
+  const expandAllGrades = () => {
+    setExpandedMap(
+      Object.fromEntries(grades.map((grade, index) => [`${grade.questionId}-${index}`, true])),
+    )
+  }
+  const scrollToQuestion = (index: number) => {
+    document.getElementById(`report-q-${index}`)?.scrollIntoView({ behavior: 'smooth', block: 'start' })
+  }
+  const visibleEntries = grades
+    .map((grade, index) => ({ grade, index }))
+    .filter(({ grade }) => questionFilter === 'all' || gradeOutcomeKey(grade) === 'wrong')
 
   const summaryGroups = [
     {
@@ -190,7 +383,7 @@ export function PressureLearningReportView({
           <div className="report-header tactical-report-header">
             <div>
               <span className="report-badge-kicker">
-                <ClipboardCheck size={16} /> TACTICAL AFTER-ACTION REPORT · 压力演练复盘
+                <ClipboardCheck size={16} /> 战后复盘 · 压力演练报告
               </span>
               <h2 id="pressure-learning-report-title">
                 压力模拟学习报告
@@ -294,10 +487,42 @@ export function PressureLearningReportView({
             </div>
           </section>
 
+          {/* 阶段五 ①：结论前置——5 秒内知道本场核心问题 */}
+          <section
+            className="report-verdict-banner"
+            aria-label="本场结论"
+            style={{
+              borderLeft: '3px solid var(--cyan)',
+              background: 'color-mix(in srgb, var(--cyan) 7%, var(--surface))',
+              borderRadius: 10,
+              padding: '12px 16px',
+              margin: '0 0 16px',
+              fontSize: 13.5,
+              lineHeight: 1.8,
+            }}
+          >
+            <strong style={{ display: 'block', marginBottom: 4 }}>
+              📌 本场结论{topWeakness ? `：主要卡在「${topWeakness}」` : ''}
+            </strong>
+            <span style={{ color: 'var(--muted)' }}>
+              {totalCount} 题中做错 {wrongCount} 道
+              {partialCount > 0 ? `、部分正确 ${partialCount} 道` : ''}，平均 Rating{' '}
+              <b style={{ color: 'var(--ink)' }}>{averageRatingScore.toFixed(2)}</b>。
+              {strongestWrongDim && weakestWrongDim && strongestWrongDim.key !== weakestWrongDim.key
+                ? `错题画像：最强维 ${strongestWrongDim.label} ${strongestWrongDim.value}，最拖后腿 ${weakestWrongDim.label} ${weakestWrongDim.value}。`
+                : ''}
+              {worstGradeEntry && worstGradeIndex >= 0
+                ? `最该先修：第 ${worstGradeIndex + 1} 题（#${worstGradeEntry.grade.questionId}，Rating ${worstGradeEntry.rating.toFixed(2)}）。`
+                : wrongCount === 0 && partialCount === 0
+                ? '全场做对——去名人堂看看这次能不能上榜。'
+                : ''}
+            </span>
+          </section>
+
           <section className={`report-rating-panel ${ratingTone}`} aria-label="本次作答 rating">
             <div className="report-rating-heading">
               <div>
-                <span className="report-kicker"><Activity size={15} /> TACTICAL RATING 3.0 & RADAR</span>
+                <span className="report-kicker"><Activity size={15} /> 本场 Rating 与六维雷达</span>
                 <h3>本次作答 Rating 与六维能力分布</h3>
                 <p>基于得分产出(Cast)、突破上限(Clutch)、防白给率(KAST)与节奏效率(Pacing)多维复合评估。</p>
               </div>
@@ -342,7 +567,7 @@ export function PressureLearningReportView({
               <div className="report-radar-wrap">
                 <Radar
                   className="report-radar"
-                  dimensions={ratingDimensions.map((d) => ({ key: d.label, label: d.label, value: d.value }))}
+                  dimensions={ratingDimensions.map((d) => ({ key: d.label, label: d.label, value: d.value ?? 0 }))}
                   width={280}
                   height={220}
                   cx={140}
@@ -364,18 +589,78 @@ export function PressureLearningReportView({
               </div>
               <div className="report-dimension-list">
                 <div className="dimension-kast-banner">
-                  <span>🛡️ KAST 防白给指数</span>
-                  <strong>{kastRate}%</strong>
+                  <span>🛡️ KAST 防白给指数（六维证据 {evidenceCoverage}/{grades.length} 题）</span>
+                  <strong>{kastRate != null ? `${kastRate}%` : '—'}</strong>
                 </div>
                 {ratingDimensions.map((item) => (
-                  <div className="report-dimension-row" key={item.label}>
+                  <div className="report-dimension-row" key={item.key}>
                     <span>{item.label}</span>
-                    <strong>{item.value}</strong>
-                    <MetricBar value={item.value} trackTag="i" fillTag="b" />
+                    <strong>{item.value != null ? item.value : '无证据'}</strong>
+                    <MetricBar
+                      value={item.value ?? 0}
+                      trackTag="i"
+                      fillTag="b"
+                      fillStyle={item.value == null ? { background: 'var(--line)' } : undefined}
+                    />
                   </div>
                 ))}
               </div>
             </div>
+
+            {/* 错题重心雷达（改造二 3.2）：只聚合做错/部分正确作答的真实证据 */}
+            {wrongDimsPresent.length >= 3 && strongestWrongDim && weakestWrongDim && (
+              <div
+                style={{
+                  display: 'flex',
+                  gap: 14,
+                  alignItems: 'center',
+                  marginTop: 12,
+                  padding: '10px 14px',
+                  border: '1px dashed var(--line)',
+                  borderRadius: 10,
+                  flexWrap: 'wrap',
+                }}
+              >
+                <Radar
+                  width={170}
+                  height={150}
+                  cx={85}
+                  cy={76}
+                  radius={46}
+                  labelRadius={58}
+                  dimensions={wrongDimsPresent.map((d) => ({ key: d.key, label: d.label, value: d.value }))}
+                  gridStroke="var(--line)"
+                  gridInnerDash="3 3"
+                  axisStroke="var(--line)"
+                  axisOpacity={0.6}
+                  shapeFill="var(--danger)"
+                  shapeFillOpacity={0.2}
+                  shapeStroke="var(--danger)"
+                  shapeStrokeWidth={2}
+                  dotVariant="simple"
+                  dotRadius={2.5}
+                  dotFill="var(--danger)"
+                  labelAnchorMode="smart"
+                  labelFill="var(--muted)"
+                  labelFontSize={9.5}
+                  labelFontWeight={700}
+                  role="img"
+                  ariaLabel="错题六维重心雷达"
+                />
+                <div style={{ flex: 1, minWidth: 160, fontSize: 12.5, color: 'var(--muted)', lineHeight: 1.9 }}>
+                  <strong style={{ display: 'block', color: 'var(--ink)', fontSize: 13 }}>🎯 错题重心</strong>
+                  只聚合做错 / 部分正确作答的真实六维证据，不再被做对题稀释。
+                  {weakestWrongDim && (
+                    <span style={{ display: 'block' }}>
+                      最拖后腿：<b style={{ color: 'var(--danger)' }}>{weakestWrongDim.label} {weakestWrongDim.value}</b>
+                      {strongestWrongDim.key !== weakestWrongDim.key
+                        ? ` · 最强维：${strongestWrongDim.label} ${strongestWrongDim.value}`
+                        : ''}
+                    </span>
+                  )}
+                </div>
+              </div>
+            )}
           </section>
 
           {ungradedIds.length > 0 && (
@@ -389,8 +674,18 @@ export function PressureLearningReportView({
 
           <section className="report-questions">
             <div className="report-questions-title-row">
-              <h3>逐题步骤诊断与断点复盘 (STEP-BY-STEP BREAKDOWN)</h3>
-              <small>点击题号或“原题解析”查看完整官方解析 · 可随时一键收藏</small>
+              <h3>逐题步骤诊断与断点复盘</h3>
+              <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
+                <button type="button" style={filterBtnStyle(questionFilter === 'all')} onClick={() => setQuestionFilter('all')}>
+                  全部题目
+                </button>
+                <button type="button" style={filterBtnStyle(questionFilter === 'wrong')} onClick={() => setQuestionFilter('wrong')}>
+                  只看错题
+                </button>
+                <button type="button" style={filterBtnStyle(false)} onClick={expandAllGrades}>
+                  全部展开
+                </button>
+              </div>
             </div>
             {grades.length === 0 ? (
               <EmptyState
@@ -399,152 +694,281 @@ export function PressureLearningReportView({
                 text="请刷新报告，或回到收件箱确认 Codex 整组批改。"
               />
             ) : (
-              grades.map((grade, index) => {
-                const tone = gradeTone(grade)
-                const question = questions[grade.questionId]
-                const errorTags = grade.errorTags ?? []
-                const weaknessTags = grade.weaknessTags ?? []
-                const isFav = favoriteMap[grade.questionId] ?? question?.favorite ?? false
-                return (
-                  <article
-                    key={`${grade.questionId}-${index}`}
-                    className={`report-question-item tactical-q-item ${tone.key}`}
-                  >
-                    <div className="report-question-header">
-                      <div>
-                        <button
-                          type="button"
-                          className="question-number-btn"
-                          onClick={() => void handleOpenDetail(grade.questionId)}
-                          title="点击查看完整原题、选项与标准解析"
-                        >
-                          第 {index + 1} 题 · #{grade.questionId}
-                        </button>
-                        {question && (
-                          <small className="question-cat-path">
-                            {question.categoryPath}
-                          </small>
+              <div style={{ display: 'flex', gap: 12, alignItems: 'flex-start' }}>
+                {/* 吸顶目录（阶段五 ③）：错题红点 / 有秒杀思路蓝点，点击直达 */}
+                <nav
+                  aria-label="题目目录"
+                  style={{
+                    position: 'sticky',
+                    top: 8,
+                    display: 'flex',
+                    flexDirection: 'column',
+                    gap: 4,
+                    flexShrink: 0,
+                  }}
+                >
+                  {grades.map((grade, index) => {
+                    const isWrong = gradeOutcomeKey(grade) === 'wrong'
+                    const hasBetter = Boolean(grade.betterSolution)
+                    const inView = visibleEntries.some((entry) => entry.index === index)
+                    return (
+                      <button
+                        key={`${grade.questionId}-${index}`}
+                        type="button"
+                        onClick={() => scrollToQuestion(index)}
+                        title={`第 ${index + 1} 题 #${grade.questionId}${isWrong ? ' · 错题' : ''}${hasBetter ? ' · 有秒杀思路' : ''}`}
+                        style={{
+                          display: 'inline-flex',
+                          alignItems: 'center',
+                          justifyContent: 'center',
+                          gap: 4,
+                          minWidth: 34,
+                          padding: '3px 6px',
+                          borderRadius: 8,
+                          border: '1px solid var(--line)',
+                          background: inView ? 'var(--surface)' : 'transparent',
+                          color: isWrong ? 'var(--danger)' : 'var(--muted)',
+                          fontSize: 11.5,
+                          fontWeight: 700,
+                          cursor: 'pointer',
+                        }}
+                      >
+                        {index + 1}
+                        {isWrong && (
+                          <i style={{ width: 6, height: 6, borderRadius: '50%', background: 'var(--danger)' }} />
                         )}
-                      </div>
-                      <div className="question-status-group">
-                        <button
-                          type="button"
-                          className={`tactical-heart-fav-btn ${isFav ? 'active' : ''}`}
-                          onClick={() => void handleToggleFav(grade.questionId)}
-                          title={isFav ? '取消收藏此题' : '收藏此题到题本'}
-                          aria-label="收藏题目"
-                        >
-                          <Heart
-                            size={14}
-                            fill={isFav ? 'currentColor' : 'none'}
-                          />
-                          <span>{isFav ? '已收藏' : '收藏'}</span>
-                        </button>
-
-                        <button
-                          type="button"
-                          className="tactical-preview-btn"
-                          onClick={() => void handleOpenDetail(grade.questionId)}
-                          title="查看题目完整原题、解析与笔记"
-                        >
-                          <BookOpen size={13} />
-                          <span>原题解析</span>
-                        </button>
-
-                        {onStartVariant && (
-                          <button
-                            type="button"
-                            className="tactical-variant-practice-btn"
-                            onClick={() => onStartVariant(grade.questionId)}
-                            title="调出此题同考点的 3 道变式题趁热打铁"
-                          >
-                            <Sparkles size={12} />
-                            <span>练变式</span>
-                          </button>
+                        {!isWrong && hasBetter && (
+                          <i style={{ width: 6, height: 6, borderRadius: '50%', background: 'var(--cyan)' }} />
                         )}
+                      </button>
+                    )
+                  })}
+                </nav>
+                <div style={{ flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column', gap: 12 }}>
+                  {visibleEntries.map(({ grade, index }) => {
+                    const tone = gradeTone(grade)
+                    const question = questions[grade.questionId]
+                    const errorTags = grade.errorTags ?? []
+                    const weaknessTags = grade.weaknessTags ?? []
+                    const isFav = favoriteMap[grade.questionId] ?? question?.favorite ?? false
+                    const expanded = isGradeExpanded(grade, index)
+                    const sevMeta = tone.key === 'correct' ? null : SEVERITY_META[severityOf(grade, tone.key)]
+                    const focus = focusSentence(grade)
+                    return (
+                      <article
+                        key={`${grade.questionId}-${index}`}
+                        id={`report-q-${index}`}
+                        className={`report-question-item tactical-q-item ${tone.key}`}
+                        style={{ borderLeft: sevMeta ? `3px solid ${sevMeta.color}` : undefined }}
+                      >
+                        <div className="report-question-header">
+                          <div>
+                            <button
+                              type="button"
+                              className="question-number-btn"
+                              onClick={() => void handleOpenDetail(grade.questionId)}
+                              title="点击查看完整原题、选项与标准解析"
+                            >
+                              第 {index + 1} 题 · #{grade.questionId}
+                            </button>
+                            {question && (
+                              <small className="question-cat-path">
+                                {question.categoryPath}
+                              </small>
+                            )}
+                          </div>
+                          <div className="question-status-group">
+                            <button
+                              type="button"
+                              className={`tactical-heart-fav-btn ${isFav ? 'active' : ''}`}
+                              onClick={() => void handleToggleFav(grade.questionId)}
+                              title={isFav ? '取消收藏此题' : '收藏此题到题本'}
+                              aria-label="收藏题目"
+                            >
+                              <Heart
+                                size={14}
+                                fill={isFav ? 'currentColor' : 'none'}
+                              />
+                              <span>{isFav ? '已收藏' : '收藏'}</span>
+                            </button>
 
-                        <span className={`verdict-pill ${tone.key}`}>
-                          {tone.label}
-                        </span>
-                        <span className="question-duration">
-                          <Clock3 size={13} /> {formatElapsed(Math.max(0, grade.duration || 0) * 1000)}
-                        </span>
-                        {grade.selfRating != null && (
-                          <span className="question-fluency-label">
-                            熟练度 {grade.selfRating}/4
-                          </span>
-                        )}
-                      </div>
-                    </div>
-                    {question && (
-                      <div className="report-question-content">
-                        <div className="question-stem">
-                          <MathText value={question.stem} />
+                            <button
+                              type="button"
+                              className="tactical-preview-btn"
+                              onClick={() => void handleOpenDetail(grade.questionId)}
+                              title="查看题目完整原题、解析与笔记"
+                            >
+                              <BookOpen size={13} />
+                              <span>原题解析</span>
+                            </button>
+
+                            {onStartVariant && (
+                              <button
+                                type="button"
+                                className="tactical-variant-practice-btn"
+                                onClick={() => onStartVariant(grade.questionId)}
+                                title="调出此题同考点的 3 道变式题趁热打铁"
+                              >
+                                <Sparkles size={12} />
+                                <span>练变式</span>
+                              </button>
+                            )}
+
+                            <span className={`verdict-pill ${tone.key}`}>
+                              {tone.label}
+                            </span>
+                            <span className="question-duration">
+                              <Clock3 size={13} /> {formatElapsed(Math.max(0, grade.duration || 0) * 1000)}
+                            </span>
+                            {grade.selfRating != null && (
+                              <span className="question-fluency-label">
+                                熟练度 {grade.selfRating}/4
+                              </span>
+                            )}
+                            <button
+                              type="button"
+                              onClick={() => toggleGradeExpanded(grade, index)}
+                              style={{
+                                background: 'none',
+                                border: '1px solid var(--line)',
+                                borderRadius: 8,
+                                fontSize: 11,
+                                color: 'var(--muted)',
+                                cursor: 'pointer',
+                                padding: '2px 8px',
+                              }}
+                            >
+                              {expanded ? '收起 ▲' : '展开 ▼'}
+                            </button>
+                          </div>
                         </div>
-                      </div>
-                    )}
-                    {(grade.userAnswer || grade.correctAnswer) && (
-                      <div className="answer-comparison">
-                        <span>
-                          你的答案：<strong>{grade.userAnswer || '纸笔作答'}</strong>
-                        </span>
-                        <span>
-                          参考答案：<strong>{grade.correctAnswer || '见解析'}</strong>
-                        </span>
-                      </div>
-                    )}
-                    {grade.feedback && (
-                      <div className="report-feedback">
-                        <span className="feedback-icon">📝</span>
-                        <div className="feedback-text">
-                          <MathText value={grade.feedback} />
-                        </div>
-                      </div>
-                    )}
-                    {grade.earliestError && (
-                      <div className="earliest-error">
-                        <strong className="earliest-error-title">⚠️ 最早错误断点定位 (BREAKPOINT)</strong>
-                        <p>
-                          <MathText value={grade.earliestError} />
-                        </p>
-                      </div>
-                    )}
-                    {(errorTags.length > 0 || weaknessTags.length > 0) && (
-                      <div className="tag-line">
-                        {errorTags.map((tag) => (
-                          <span className="error-tag" key={`e-${tag}`}>
-                            {tag}
-                          </span>
-                        ))}
-                        {weaknessTags.map((tag) => (
-                          <span className="weakness-tag" key={`w-${tag}`}>
-                            {tag}
-                          </span>
-                        ))}
-                      </div>
-                    )}
-                    {grade.betterSolution && (
-                      <div className="better-solution-box">
-                        <strong>⚡ 考场更优秒杀解法 (SPEED-KILL SOLUTION)</strong>
-                        <MathText value={grade.betterSolution} />
-                      </div>
-                    )}
-                    {grade.advice && (
-                      <div className="advice-box">
-                        <strong className="advice-box-title">🎯 专项修复执行动作 (ACTION)</strong>
-                        <p>
-                          <MathText value={grade.advice} />
-                        </p>
-                      </div>
-                    )}
-                    {grade.confidence != null && (
-                      <small className="diagnosis-confidence-note">
-                        Codex 诊断置信度 {Math.round(grade.confidence * 100)}%
-                      </small>
-                    )}
-                  </article>
-                )
-              })
+                        {expanded ? (
+                          <>
+                            {question && (
+                              <div className="report-question-content">
+                                <div className="question-stem">
+                                  <MathText value={question.stem} />
+                                </div>
+                              </div>
+                            )}
+                            {(grade.userAnswer || grade.correctAnswer) && (
+                              <div className="answer-comparison">
+                                <span>
+                                  你的答案：<strong>{grade.userAnswer || '纸笔作答'}</strong>
+                                </span>
+                                <span>
+                                  参考答案：<strong>{grade.correctAnswer || '见解析'}</strong>
+                                </span>
+                              </div>
+                            )}
+                            {focus && (
+                              <div
+                                style={{
+                                  fontSize: 12.5,
+                                  color: 'var(--ink)',
+                                  background: 'var(--canvas)',
+                                  border: '1px dashed var(--line)',
+                                  borderRadius: 8,
+                                  padding: '6px 10px',
+                                }}
+                              >
+                                🎯 {focus}
+                              </div>
+                            )}
+                            {grade.feedback && (
+                              <div className="report-feedback">
+                                <span className="feedback-icon">📝</span>
+                                <div className="feedback-text">
+                                  <LongText value={grade.feedback} />
+                                </div>
+                              </div>
+                            )}
+                            {grade.earliestError && (
+                              <div className="earliest-error">
+                                <strong className="earliest-error-title">⚠️ 最早错误断点</strong>
+                                <p>
+                                  <LongText value={grade.earliestError} />
+                                </p>
+                              </div>
+                            )}
+                            {(errorTags.length > 0 || weaknessTags.length > 0) && (
+                              <div className="tag-line">
+                                {sevMeta && (
+                                  <span style={{ color: sevMeta.color, fontWeight: 700, fontSize: 12 }}>
+                                    {sevMeta.label}
+                                  </span>
+                                )}
+                                {errorTags.map((tag) => (
+                                  <span className="error-tag" key={`e-${tag}`}>
+                                    {tag}
+                                  </span>
+                                ))}
+                                {weaknessTags.map((tag) => (
+                                  <span className="weakness-tag" key={`w-${tag}`}>
+                                    {tag}
+                                  </span>
+                                ))}
+                              </div>
+                            )}
+                            {grade.betterSolution && (
+                              <div className="better-solution-box">
+                                <strong>⚡ 考场秒杀思路</strong>
+                                <MathText value={grade.betterSolution} />
+                              </div>
+                            )}
+                            {grade.advice && (
+                              <div className="advice-box">
+                                <strong className="advice-box-title">🎯 专项修复动作</strong>
+                                <p>
+                                  <LongText value={grade.advice} />
+                                </p>
+                              </div>
+                            )}
+                            {grade.confidence != null && (
+                              <small className="diagnosis-confidence-note">
+                                Codex 诊断置信度 {Math.round(grade.confidence * 100)}%
+                              </small>
+                            )}
+                          </>
+                        ) : (
+                          <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+                            {question && (
+                              <div
+                                style={{
+                                  fontSize: 13,
+                                  color: 'var(--muted)',
+                                  overflow: 'hidden',
+                                  display: '-webkit-box',
+                                  WebkitLineClamp: 2,
+                                  WebkitBoxOrient: 'vertical',
+                                }}
+                              >
+                                <MathText value={question.stem} />
+                              </div>
+                            )}
+                            {grade.betterSolution ? (
+                              <div
+                                style={{
+                                  fontSize: 12.5,
+                                  color: 'var(--cyan)',
+                                  overflow: 'hidden',
+                                  display: '-webkit-box',
+                                  WebkitLineClamp: 1,
+                                  WebkitBoxOrient: 'vertical',
+                                }}
+                              >
+                                ⚡ <MathText value={grade.betterSolution} />
+                              </div>
+                            ) : (
+                              <span style={{ fontSize: 12, color: 'var(--muted)' }}>做对——展开可查看完整题干与解析入口</span>
+                            )}
+                          </div>
+                        )}
+                      </article>
+                    )
+                  })}
+                </div>
+              </div>
             )}
           </section>
 

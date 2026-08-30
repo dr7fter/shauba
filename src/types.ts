@@ -288,6 +288,7 @@ export type TacticalProfile = {
   kdRatio: number
   rws: number
   firepower: number
+  kastRate: number
 }
 
 export type TacticalMapSubject = {

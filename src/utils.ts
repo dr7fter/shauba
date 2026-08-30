@@ -122,6 +122,67 @@ export function csRatingTone(value: number | null | undefined): CsRatingTone {
   return 'average'
 }
 
+export type CsRatingAccent = 'donk' | 'clutch'
+
+/**
+ * rating 的高光档位（唯一口径）：≥2.00 DONK、≥1.35 Clutch。
+ * 此前报告弹窗与 utils 各自硬编码，改档位要改两处——现在只改这里。
+ */
+export function csRatingAccent(value: number | null | undefined): CsRatingAccent | null {
+  if (typeof value !== 'number' || !Number.isFinite(value)) return null
+  if (value >= 2.0) return 'donk'
+  if (value >= 1.35) return 'clutch'
+  return null
+}
+
+/**
+ * 0-100 百分制维度的档位（六维条、能力条共用阈值）。
+ * 此前散落在 InsightsView 内联，改档要找半天——现在只改这里。
+ */
+export function gradeFromPercent(value: number): CsRatingTier {
+  if (value >= 85) return 'S'
+  if (value >= 75) return 'A'
+  if (value >= 62) return 'B'
+  if (value >= 48) return 'C'
+  return 'D'
+}
+
+export type GradeOutcome = 'correct' | 'partial' | 'uncertain' | 'wrong'
+
+export type GradeLike = {
+  rating?: number | null
+  verdict?: string | null
+  result?: string | null
+  correct?: boolean
+  selfRating?: number | null
+  duration?: number | null
+  difficultyMultiplier?: number | null
+}
+
+/**
+ * 从批改结果推导结果键（洞察页与报告弹窗此前各写一份，语义必须完全一致）。
+ */
+export function gradeOutcomeKey(grade: GradeLike): GradeOutcome {
+  if (grade.verdict === 'partial') return 'partial'
+  if (grade.verdict === 'uncertain' || grade.result === 'uncertain') return 'uncertain'
+  if (grade.verdict === 'incorrect' || grade.result === 'wrong' || !grade.correct) return 'wrong'
+  return 'correct'
+}
+
+/**
+ * 单条批改结果 → CS rating（洞察页 averageReportRating 与报告弹窗 ratingForGrade 的合并实现）。
+ */
+export function gradeToCsRating(grade: GradeLike, averageDuration?: number | null): number {
+  return deriveGradeCsRating({
+    rating: grade.rating,
+    outcome: gradeOutcomeKey(grade),
+    selfRating: grade.selfRating,
+    duration: grade.duration,
+    averageDuration: averageDuration ?? null,
+    difficultyMultiplier: grade.difficultyMultiplier,
+  })
+}
+
 export function deriveGradeCsRating(input: {
   rating?: number | null
   outcome: 'correct' | 'partial' | 'wrong' | 'uncertain'

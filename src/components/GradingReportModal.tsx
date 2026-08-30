@@ -18,15 +18,21 @@ import { addToCustomQueue, getQuestion, toggleFavorite } from '../api'
 import {
   CS_RATING_MAX,
   averageCsRating,
+  csRatingAccent,
   csRatingTier,
   csRatingTone,
-  deriveGradeCsRating,
+  gradeOutcomeKey,
+  gradeToCsRating,
   formatElapsed,
   predictedExamScore,
+  type GradeOutcome,
 } from '../utils'
 import { MathText } from './MathText'
 import { EmptyState } from './EmptyState'
 import { QuestionDetail } from './QuestionDetailModal'
+import { Radar } from './ui/Radar'
+import { RatingBadge } from './ui/RatingBadge'
+import { MetricBar } from './ui/MetricBar'
 import type { GradingReport, PressureSession, Question } from '../types'
 
 export function PressureLearningReportView({
@@ -90,14 +96,15 @@ export function PressureLearningReportView({
     }
   }
 
+  const OUTCOME_LABELS: Record<GradeOutcome, string> = {
+    correct: '正确',
+    partial: '部分正确',
+    uncertain: '不确定',
+    wrong: '错误',
+  }
   const gradeTone = (grade: GradingReport['grades'][number]) => {
-    if (grade.verdict === 'partial')
-      return { key: 'partial', label: '部分正确' }
-    if (grade.verdict === 'uncertain' || grade.result === 'uncertain')
-      return { key: 'uncertain', label: '不确定' }
-    if (grade.verdict === 'incorrect' || grade.result === 'wrong' || !grade.correct)
-      return { key: 'wrong', label: '错误' }
-    return { key: 'correct', label: '正确' }
+    const key = gradeOutcomeKey(grade)
+    return { key, label: OUTCOME_LABELS[key] }
   }
 
   const grades = report.grades ?? []
@@ -120,18 +127,8 @@ export function PressureLearningReportView({
   const reportTime = report.confirmedAt ?? report.createdAt
   const reportDate = new Date(reportTime < 1_000_000_000_000 ? reportTime * 1000 : reportTime)
   const ungradedIds = report.ungradedQuestionIds ?? []
-  const ratingForGrade = (grade: GradingReport['grades'][number]) => {
-    const tone = gradeTone(grade).key
-    const outcome = tone === 'correct' ? 'correct' : tone === 'partial' ? 'partial' : tone === 'uncertain' ? 'uncertain' : 'wrong'
-    return deriveGradeCsRating({
-      rating: grade.rating,
-      outcome,
-      selfRating: grade.selfRating,
-      duration: grade.duration,
-      averageDuration,
-      difficultyMultiplier: grade.difficultyMultiplier,
-    })
-  }
+  const ratingForGrade = (grade: GradingReport['grades'][number]) =>
+    gradeToCsRating(grade, averageDuration)
   const ratingScores = grades.map(ratingForGrade)
   const averageRatingScore = averageCsRating(ratingScores) ?? 0
   const ratingTier = csRatingTier(averageRatingScore) ?? 'D'
@@ -159,12 +156,6 @@ export function PressureLearningReportView({
   )
   const examPrediction = predictedExamScore(averageRatingScore, kastRate)
 
-  const radarPoint = (index: number, value: number, radius = 78) => {
-    const angle = -Math.PI / 2 + (Math.PI * 2 * index) / ratingDimensions.length
-    return `${140 + Math.cos(angle) * radius * value / 100},${104 + Math.sin(angle) * radius * value / 100}`
-  }
-  const radarGrid = (scale: number) => ratingDimensions.map((_, index) => radarPoint(index, scale)).join(' ')
-  const radarShape = ratingDimensions.map((item, index) => radarPoint(index, item.value)).join(' ')
   const summaryGroups = [
     {
       title: '做得好的地方',
@@ -313,9 +304,7 @@ export function PressureLearningReportView({
               <div className="report-rating-total">
                 <div className="rating-num-row">
                   <strong className={`rating-number rating-${ratingTone}`}>{averageRatingScore.toFixed(2)}</strong>
-                  <b className={`tier-capsule ${averageRatingScore >= 2.0 ? 'donk-tier' : ''}`}>
-                    {averageRatingScore >= 2.0 ? '👑 DONK' : `${ratingTier} 级`}
-                  </b>
+                  <RatingBadge value={averageRatingScore} tier={ratingTier} />
                 </div>
                 <span className="rating-exam-subtext">🎯 考场预测分 {examPrediction} / 150</span>
               </div>
@@ -324,8 +313,9 @@ export function PressureLearningReportView({
               <div className="report-rating-chart" role="list" aria-label="逐题 rating 分布">
                 {grades.map((grade, index) => {
                   const score = ratingScores[index] ?? 0
-                  const isDonk = score >= 2.0
-                  const isClutch = score >= 1.35 && !isDonk
+                  const accent = csRatingAccent(score)
+                  const isDonk = accent === 'donk'
+                  const isClutch = accent === 'clutch'
                   const tone = gradeTone(grade)
                   return (
                     <div className="report-rating-column" key={`${grade.questionId}-${index}`} role="listitem">
@@ -350,18 +340,27 @@ export function PressureLearningReportView({
             )}
             <div className="report-rating-dimensions">
               <div className="report-radar-wrap">
-                <svg className="report-radar" viewBox="0 0 280 220" role="img" aria-label="本次作答六维 rating 雷达图">
-                  <title>本次作答六维 rating</title>
-                  {[25, 50, 75, 100].map((scale) => <polygon key={scale} points={radarGrid(scale)} className="report-radar-grid" />)}
-                  {ratingDimensions.map((item, index) => (
-                    <g key={item.label}>
-                      <line x1="140" y1="104" x2={radarPoint(index, 100).split(',')[0]} y2={radarPoint(index, 100).split(',')[1]} className="report-radar-axis" />
-                      <text x={radarPoint(index, 120).split(',')[0]} y={radarPoint(index, 120).split(',')[1]} className="report-radar-label" textAnchor="middle">{item.label}</text>
-                    </g>
-                  ))}
-                  <polygon points={radarShape} className="report-radar-shape" />
-                  {ratingDimensions.map((item, index) => <circle key={`${item.label}-dot`} cx={radarPoint(index, item.value).split(',')[0]} cy={radarPoint(index, item.value).split(',')[1]} r="3.5" className="report-radar-dot" />)}
-                </svg>
+                <Radar
+                  className="report-radar"
+                  dimensions={ratingDimensions.map((d) => ({ key: d.label, label: d.label, value: d.value }))}
+                  width={280}
+                  height={220}
+                  cx={140}
+                  cy={104}
+                  radius={78}
+                  labelRadius={93.6}
+                  labelAnchorMode="center"
+                  gridClassName="report-radar-grid"
+                  axisClassName="report-radar-axis"
+                  shapeClassName="report-radar-shape"
+                  dotVariant="simple"
+                  dotRadius={3.5}
+                  dotClassName="report-radar-dot"
+                  labelClassName="report-radar-label"
+                  role="img"
+                  ariaLabel="本次作答六维 rating 雷达图"
+                  title="本次作答六维 rating"
+                />
               </div>
               <div className="report-dimension-list">
                 <div className="dimension-kast-banner">
@@ -372,7 +371,7 @@ export function PressureLearningReportView({
                   <div className="report-dimension-row" key={item.label}>
                     <span>{item.label}</span>
                     <strong>{item.value}</strong>
-                    <i><b style={{ width: `${item.value}%` }} /></i>
+                    <MetricBar value={item.value} trackTag="i" fillTag="b" />
                   </div>
                 ))}
               </div>

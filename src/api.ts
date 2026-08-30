@@ -32,6 +32,7 @@ export async function getTacticalDashboardStats(scope = 'ranked'): Promise<Tacti
       adr: 105,
       kdRatio: 1.65,
       rws: 13.98,
+      kastRate: 78.1,
       firepower: 68,
     },
     mapSubjects: [],

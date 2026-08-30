@@ -6771,6 +6771,9 @@ pub struct TacticalProfile {
     pub kd_ratio: f64,
     pub rws: f64,
     pub firepower: i64,
+    /// KAST 防白给率（v1 口径）：做对或部分得分的题占比。
+    /// 阶段 B 升级为 KAST-Math 四路径（含战略弃题与 72h 修复）。
+    pub kast_rate: f64,
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
@@ -6989,6 +6992,17 @@ async fn get_tactical_dashboard_stats(
         ((correct_count as f64 / wrong_count as f64) * 100.0).round() / 100.0
     } else {
         correct_count as f64
+    };
+
+    // KAST 防白给率（v1 口径）：做对或部分得分（未完全白给）的题占比
+    let kast_count = rows
+        .iter()
+        .filter(|r| r.outcome == "correct" || r.outcome == "partial")
+        .count() as i64;
+    let kast_rate = if matches > 0 {
+        ((kast_count as f64 / matches as f64) * 1000.0).round() / 10.0
+    } else {
+        0.0
     };
 
     let headshot_count = rows
@@ -7276,6 +7290,7 @@ async fn get_tactical_dashboard_stats(
         kd_ratio,
         rws,
         firepower,
+        kast_rate,
     };
 
     // --- 5 大学科地图表现 ---

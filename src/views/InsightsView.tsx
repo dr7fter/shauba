@@ -42,13 +42,18 @@ import {
   CS_RATING_MIN,
   averageCsRating,
   csRatingTone,
-  deriveGradeCsRating,
+  gradeFromPercent,
+  gradeToCsRating,
   formatElapsed,
   predictedExamScore,
   getRankDescription,
 } from '../utils'
 import { MathText } from '../components/MathText'
 import { QuestionDetail } from '../components/QuestionDetailModal'
+import { Gauge } from '../components/ui/Gauge'
+import { GradeBadge } from '../components/ui/GradeBadge'
+import { MetricBar } from '../components/ui/MetricBar'
+import { Radar } from '../components/ui/Radar'
 import { InboxView } from './InboxView'
 import type {
   BootstrapData,
@@ -76,25 +81,7 @@ function averageReportRating(report: GradingReport | null): number | null {
         report.grades.reduce((sum, grade) => sum + Math.max(0, grade.duration || 0), 0)) /
         Math.max(1, report.summary.totalCount || report.grades.length)
     )
-  const ratings = report.grades.map((grade) => {
-    const outcome =
-      grade.verdict === 'partial'
-        ? 'partial'
-        : grade.verdict === 'uncertain' || grade.result === 'uncertain'
-        ? 'uncertain'
-        : grade.verdict === 'incorrect' || grade.result === 'wrong' || !grade.correct
-        ? 'wrong'
-        : 'correct'
-    return deriveGradeCsRating({
-      rating: grade.rating,
-      outcome,
-      selfRating: grade.selfRating,
-      duration: grade.duration,
-      averageDuration,
-      difficultyMultiplier: grade.difficultyMultiplier,
-    })
-  })
-  return averageCsRating(ratings)
+  return averageCsRating(report.grades.map((grade) => gradeToCsRating(grade, averageDuration)))
 }
 
 function accuracyPercent(report: GradingReport | null): number | null {
@@ -344,12 +331,6 @@ export function InsightsView({
 
   const currentRadarDimensions = radarMode === 'base' ? sixDimensions : impactDimensions
 
-  const getRadarCoords = (index: number, value: number, radius = 75, cx = 155, cy = 130) => {
-    const angle = -Math.PI / 2 + (Math.PI * 2 * index) / 6
-    const x = cx + Math.cos(angle) * radius * (value / 100)
-    const y = cy + Math.sin(angle) * radius * (value / 100)
-    return { x, y, str: `${x.toFixed(1)},${y.toFixed(1)}` }
-  }
   const mapSubjects = tacticalData?.mapSubjects ?? []
   const currentMap = mapSubjects[selectedMapIdx] ?? mapSubjects[0] ?? {
     id: 'single_calculus',
@@ -463,7 +444,6 @@ export function InsightsView({
           {tab === 'overview' && (
             <div className="season-selector-chip" title="周赛季制：每周一 00:00 开启，周日晚 24:00 自动结算">
               <span>赛季：{tacticalData?.currentSeason ?? 'S1'}</span>
-              <ChevronDown size={14} />
             </div>
           )}
           <button
@@ -550,52 +530,26 @@ export function InsightsView({
                     <span className="ring-gauge-title">
                       WE 制胜评价 <TrendingUp size={12} className="trend-icon-up" />
                     </span>
-                    <div className="ring-gauge-svg-wrap">
-                      <svg width="104" height="104" viewBox="0 0 104 104">
-                        <circle cx="52" cy="52" r="42" fill="none" stroke="var(--line)" strokeWidth="8" />
-                        <circle
-                          cx="52"
-                          cy="52"
-                          r="42"
-                          fill="none"
-                          stroke="var(--green)"
-                          strokeWidth="8"
-                          strokeLinecap="round"
-                          strokeDasharray={`${Math.min(264, Math.max(10, (weScore / 100) * 264))} 264`}
-                          transform="rotate(-90 52 52)"
-                          className="glowing-ring"
-                        />
-                      </svg>
-                      <div className="ring-gauge-center">
-                        <strong>{(weScore / 7.2).toFixed(1)}</strong>
-                      </div>
-                    </div>
+                    <Gauge
+                      percent={weScore}
+                      progressColor="var(--green)"
+                      progressClassName="glowing-ring"
+                      title="WE 制胜评价"
+                      center={<strong>{(weScore / 7.2).toFixed(1)}</strong>}
+                    />
                   </div>
 
                   <div className="ring-gauge-item">
                     <span className="ring-gauge-title">
                       Rating Pro <TrendingUp size={12} className="trend-icon-up" />
                     </span>
-                    <div className="ring-gauge-svg-wrap">
-                      <svg width="104" height="104" viewBox="0 0 104 104">
-                        <circle cx="52" cy="52" r="42" fill="none" stroke="var(--line)" strokeWidth="8" />
-                        <circle
-                          cx="52"
-                          cy="52"
-                          r="42"
-                          fill="none"
-                          stroke="var(--cyan)"
-                          strokeWidth="8"
-                          strokeLinecap="round"
-                          strokeDasharray={`${Math.min(264, Math.max(10, (ratingPro / 2.0) * 264))} 264`}
-                          transform="rotate(-90 52 52)"
-                          className="glowing-ring"
-                        />
-                      </svg>
-                      <div className="ring-gauge-center">
-                        <strong>{ratingPro.toFixed(2)}</strong>
-                      </div>
-                    </div>
+                    <Gauge
+                      percent={(ratingPro / 2.0) * 100}
+                      progressColor="var(--cyan)"
+                      progressClassName="glowing-ring"
+                      title="Rating Pro"
+                      center={<strong>{ratingPro.toFixed(2)}</strong>}
+                    />
                   </div>
                 </div>
 
@@ -643,7 +597,7 @@ export function InsightsView({
                     <span>
                       KAST 防白给 <TrendingUp size={11} className="trend-icon-up" />
                     </span>
-                    <strong className="cyan-accent">84.5<small>%</small></strong>
+                    <strong className="cyan-accent">{(profile?.kastRate ?? 0).toFixed(1)}<small>%</small></strong>
                   </div>
                   <div className="matrix-cell">
                     <span>
@@ -709,7 +663,7 @@ export function InsightsView({
                       <div className="skill-cell" key={skill.id} title={skill.desc}>
                         {getSkillIcon(skill.icon)}
                         <span>{skill.label}</span>
-                        <strong className={`grade-badge ${skill.grade.toLowerCase()}`}>{skill.grade} 级</strong>
+                        <GradeBadge grade={skill.grade} className={`grade-badge ${skill.grade.toLowerCase()}`} suffix=" 级" />
                       </div>
                     ))}
                   </div>
@@ -717,7 +671,34 @@ export function InsightsView({
 
                 <div className="six-dimension-wrap">
                   <div className="six-radar-svg-col">
-                    <svg viewBox="0 0 250 220" className="six-radar-svg">
+                    <Radar
+                      className="six-radar-svg"
+                      dimensions={currentRadarDimensions.map((d) => ({ key: d.key, label: d.label, value: d.value }))}
+                      width={250}
+                      height={220}
+                      cx={125}
+                      cy={110}
+                      radius={58}
+                      labelRadius={82}
+                      gridStroke="var(--line)"
+                      gridOuterOpacity={0.9}
+                      gridInnerOpacity={0.6}
+                      gridInnerDash="3 3"
+                      axisStroke="var(--line)"
+                      axisOpacity={0.65}
+                      shapeFill={radarMode === 'base' ? 'url(#baseRadarGlow)' : 'url(#impactRadarGlow)'}
+                      shapeStroke={radarMode === 'base' ? 'var(--success)' : 'var(--warn)'}
+                      shapeStrokeWidth={2.5}
+                      dotVariant="ring"
+                      dotColor={radarMode === 'base' ? 'var(--success)' : 'var(--warn)'}
+                      dotSurfaceColor="var(--surface)"
+                      labelAnchorMode="smart"
+                      labelFill="var(--ink)"
+                      labelFontSize={11}
+                      labelFontWeight={800}
+                      role="img"
+                      ariaLabel="六维战术能力雷达图"
+                    >
                       <defs>
                         <radialGradient id="baseRadarGlow" cx="50%" cy="50%" r="50%">
                           <stop offset="0%" stopColor="var(--success)" stopOpacity="0.45" />
@@ -728,104 +709,28 @@ export function InsightsView({
                           <stop offset="100%" stopColor="var(--warn)" stopOpacity="0.08" />
                         </radialGradient>
                       </defs>
-
-                      {/* 背景同心多边形网格 */}
-                      {[0.25, 0.5, 0.75, 1.0].map((scale) => (
-                        <polygon
-                          key={scale}
-                          points={currentRadarDimensions.map((_, i) => getRadarCoords(i, scale * 100, 58, 125, 110).str).join(' ')}
-                          fill="none"
-                          stroke="var(--line)"
-                          strokeWidth={scale === 1.0 ? '1.5' : '1'}
-                          strokeDasharray={scale === 1.0 ? 'none' : '3 3'}
-                          opacity={scale === 1.0 ? 0.9 : 0.6}
-                        />
-                      ))}
-
-                      {/* 坐标轴辐射线 */}
-                      {currentRadarDimensions.map((_, i) => {
-                        const endPt = getRadarCoords(i, 100, 58, 125, 110)
-                        return (
-                          <line
-                            key={i}
-                            x1="125"
-                            y1="110"
-                            x2={endPt.x}
-                            y2={endPt.y}
-                            stroke="var(--line)"
-                            strokeWidth="1"
-                            opacity={0.65}
-                          />
-                        )
-                      })}
-
-                      {/* 动态能力雷达多边形 */}
-                      <polygon
-                        points={currentRadarDimensions.map((item, idx) => getRadarCoords(idx, item.value, 58, 125, 110).str).join(' ')}
-                        fill={radarMode === 'base' ? 'url(#baseRadarGlow)' : 'url(#impactRadarGlow)'}
-                        stroke={radarMode === 'base' ? 'var(--success)' : 'var(--warn)'}
-                        strokeWidth="2.5"
-                        strokeLinejoin="round"
-                      />
-
-                      {/* 顶点数据指示光点 */}
-                      {currentRadarDimensions.map((dim, i) => {
-                        const pt = getRadarCoords(i, dim.value, 58, 125, 110)
-                        const color = radarMode === 'base' ? 'var(--success)' : 'var(--warn)'
-                        return (
-                          <g key={dim.key}>
-                            <circle cx={pt.x} cy={pt.y} r="4.5" fill="var(--surface)" stroke={color} strokeWidth="2" />
-                            <circle cx={pt.x} cy={pt.y} r="2" fill={color} />
-                          </g>
-                        )
-                      })}
-
-                      {/* 顶点文本标签 */}
-                      {currentRadarDimensions.map((dim, i) => {
-                        const pt = getRadarCoords(i, 100, 82, 125, 110)
-                        const isTop = i === 0
-                        const isBottom = i === 3
-                        const isRight = i === 1 || i === 2
-                        const anchor = isTop || isBottom ? 'middle' : isRight ? 'start' : 'end'
-                        const xOffset = isTop || isBottom ? 0 : isRight ? 2 : -2
-                        return (
-                          <text
-                            key={dim.key}
-                            x={pt.x + xOffset}
-                            y={pt.y}
-                            textAnchor={anchor}
-                            dominantBaseline="central"
-                            fontSize="11"
-                            fontWeight="800"
-                            fill="var(--ink)"
-                          >
-                            {dim.label}
-                          </text>
-                        )
-                      })}
-                    </svg>
+                    </Radar>
                   </div>
 
                   <div className="six-bars-list">
                     {currentRadarDimensions.map((dim) => {
                       const val = Math.round(dim.value)
-                      const grade = val >= 85 ? 'S' : val >= 75 ? 'A' : val >= 62 ? 'B' : val >= 48 ? 'C' : 'D'
-                      const gradeClass = grade.toLowerCase()
+                      const grade = gradeFromPercent(val)
                       return (
                         <div className="six-bar-card-row" key={dim.key} title={dim.desc}>
                           <div className="six-bar-meta">
                             <span className="six-bar-name">{dim.label}</span>
                             <span className="six-bar-code">{dim.enLabel}</span>
                           </div>
-                          <div className="six-bar-progress-container">
-                            <div
-                              className={`six-bar-fill-bar ${radarMode === 'base' ? 'base-theme' : 'impact-theme'}`}
-                              style={{ width: `${Math.min(100, Math.max(12, val))}%` }}
-                            />
-                          </div>
+                          <MetricBar
+                            value={val}
+                            floor={12}
+                            trackClassName="six-bar-progress-container"
+                            fillClassName={`six-bar-fill-bar ${radarMode === 'base' ? 'base-theme' : 'impact-theme'}`}
+                          />
                           <div className="six-bar-score-group">
                             <strong className="six-bar-score-num">{val}</strong>
-                            <span className={`six-bar-grade-pill grade-${gradeClass}`}>{grade}</span>
+                            <GradeBadge grade={grade} className={`six-bar-grade-pill grade-${grade.toLowerCase()}`} />
                           </div>
                         </div>
                       )
@@ -864,9 +769,7 @@ export function InsightsView({
                         {subj.attemptedCount > 0 ? `${subj.winRate.toFixed(0)}%` : '0%'}
                       </span>
                       <div className="map-bar-icon-badge">
-                        <span className={`badge-letter ${subj.masteryGrade.toLowerCase()}`}>
-                          {subj.masteryGrade}
-                        </span>
+                        <GradeBadge grade={subj.masteryGrade} className={`badge-letter ${subj.masteryGrade.toLowerCase()}`} />
                       </div>
                     </div>
                   ))}
@@ -966,9 +869,7 @@ export function InsightsView({
                           {currentWeapon.killTime}
                           <small>MS</small>
                         </strong>
-                        <span className={`wmetric-grade ${currentWeapon.killTimeGrade.toLowerCase()}`}>
-                          {currentWeapon.killTimeGrade}
-                        </span>
+                        <GradeBadge grade={currentWeapon.killTimeGrade} className={`wmetric-grade ${currentWeapon.killTimeGrade.toLowerCase()}`} />
                       </div>
                     </div>
 
@@ -989,9 +890,7 @@ export function InsightsView({
                       <span className="wmetric-title">扫射精准度</span>
                       <div className="wmetric-val-row">
                         <strong>{currentWeapon.sprayAccuracy.toFixed(1)}%</strong>
-                        <span className={`wmetric-grade ${currentWeapon.sprayGrade.toLowerCase()}`}>
-                          {currentWeapon.sprayGrade}
-                        </span>
+                        <GradeBadge grade={currentWeapon.sprayGrade} className={`wmetric-grade ${currentWeapon.sprayGrade.toLowerCase()}`} />
                       </div>
                     </div>
 
@@ -999,9 +898,7 @@ export function InsightsView({
                       <span className="wmetric-title">爆头率</span>
                       <div className="wmetric-val-row">
                         <strong>{currentWeapon.headshotRate.toFixed(1)}%</strong>
-                        <span className={`wmetric-grade ${currentWeapon.headshotGrade.toLowerCase()}`}>
-                          {currentWeapon.headshotGrade}
-                        </span>
+                        <GradeBadge grade={currentWeapon.headshotGrade} className={`wmetric-grade ${currentWeapon.headshotGrade.toLowerCase()}`} />
                       </div>
                     </div>
 
@@ -1009,9 +906,7 @@ export function InsightsView({
                       <span className="wmetric-title">急停成功率</span>
                       <div className="wmetric-val-row">
                         <strong>{currentWeapon.quickStopRate.toFixed(1)}%</strong>
-                        <span className={`wmetric-grade ${currentWeapon.quickStopGrade.toLowerCase()}`}>
-                          {currentWeapon.quickStopGrade}
-                        </span>
+                        <GradeBadge grade={currentWeapon.quickStopGrade} className={`wmetric-grade ${currentWeapon.quickStopGrade.toLowerCase()}`} />
                       </div>
                     </div>
 
@@ -1019,9 +914,7 @@ export function InsightsView({
                       <span className="wmetric-title">场均击杀</span>
                       <div className="wmetric-val-row">
                         <strong>{currentWeapon.avgKills}</strong>
-                        <span className={`wmetric-grade ${currentWeapon.avgKillsGrade.toLowerCase()}`}>
-                          {currentWeapon.avgKillsGrade}
-                        </span>
+                        <GradeBadge grade={currentWeapon.avgKillsGrade} className={`wmetric-grade ${currentWeapon.avgKillsGrade.toLowerCase()}`} />
                       </div>
                     </div>
                   </div>

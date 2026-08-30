@@ -28,7 +28,7 @@ import {
   X,
   Zap,
 } from 'lucide-react'
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import './App.css'
 import {
   addToCustomQueue,
@@ -52,7 +52,7 @@ import {
 } from './api'
 import { BlitzExamModal } from './components/BlitzExamModal'
 import { FormulaDrawer } from './components/FormulaDrawer'
-import { FriendsLadderView } from './components/FriendsLadderView'
+const FriendsLadderView = lazy(() => import('./components/FriendsLadderView').then((m) => ({ default: m.FriendsLadderView })))
 import { PressureLearningReportView } from './components/GradingReportModal'
 import { KeyboardHelpModal } from './components/KeyboardHelpModal'
 import { formatElapsed } from './utils'
@@ -72,12 +72,12 @@ import type {
   RecommendedQuestion,
   View,
 } from './types'
-import { InsightsView } from './views/InsightsView'
-import { LearningCenterView } from './views/LearningCenterView'
-import { LibraryView } from './views/LibraryView'
+const InsightsView = lazy(() => import('./views/InsightsView').then((m) => ({ default: m.InsightsView })))
+const LearningCenterView = lazy(() => import('./views/LearningCenterView').then((m) => ({ default: m.LearningCenterView })))
+const LibraryView = lazy(() => import('./views/LibraryView').then((m) => ({ default: m.LibraryView })))
 import { MasteryMapView } from './views/MasteryMapView'
 import { MistakesView } from './views/MistakesView'
-import { ReviewMapView } from './views/ReviewView'
+const ReviewMapView = lazy(() => import('./views/ReviewView').then((m) => ({ default: m.ReviewMapView })))
 import { SettingsView } from './views/SettingsView'
 import { TodayView } from './views/TodayView'
 
@@ -1052,6 +1052,13 @@ export default function App() {
             exit={{ opacity: 0, y: -5 }}
             transition={{ duration: 0.18 }}
           >
+            <Suspense
+              fallback={
+                <div style={{ display: 'flex', justifyContent: 'center', padding: 56, color: 'var(--muted)', fontSize: 13 }}>
+                  模块加载中…
+                </div>
+              }
+            >
             {learningCenterEnabled && view === 'learning' && (
               <LearningCenterView
                 onNotify={setNotice}
@@ -1389,6 +1396,7 @@ export default function App() {
                 onOpenHelp={() => setKeyboardHelpOpen(true)}
               />
             )}
+            </Suspense>
           </motion.div>
         </AnimatePresence>
       </main>

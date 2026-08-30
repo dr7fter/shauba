@@ -18,6 +18,68 @@ pub const RATING_AVERAGE: f64 = 1.0;
 
 const DIFFICULTY_MULTIPLIER_MIN: f64 = 0.94;
 const DIFFICULTY_MULTIPLIER_MAX: f64 = 1.10;
+
+// ---- Rating 3.0 阶段一重标定（docs/v1.7.0 §02，参数经 336 条真实作答回放验证）----
+
+/// 节奏中性值从 100 下调至 85：「恰好按基准耗时完成」不该与 AI 满分速度同值，
+/// 正是旧标定让 31 秒秒杀和 10 分钟磨出拿到同一个分。
+const PACING_NEUTRAL: f64 = 85.0;
+const PACING_MIN: f64 = 45.0;
+const PACING_MAX: f64 = 135.0;
+/// 主客观融合：客观耗时略占优，杜绝「AI 说快就是快、实际磨 20 分钟」的虚高。
+const PACING_AI_WEIGHT: f64 = 0.45;
+const PACING_TIME_WEIGHT: f64 = 0.55;
+/// 草率护栏：做错时的「快」是草率不是效率，节奏分封顶在中性值。
+const PACING_RUSH_CAP_ON_WRONG: f64 = 85.0;
+/// 难度软压缩取代硬 clamp：区间 [0.92, 1.10] 内原样，超出部分按 45% 折算，
+/// 上封顶 1.24。保留攻克难题的额外回报（回放：难题做对摆动是普通题的 2 倍），
+/// 同时防止 AI 提交的极端难度（实测有 1.2~1.5）失控。
+const SOFT_DIFF_FLOOR: f64 = 0.92;
+const SOFT_DIFF_CEIL: f64 = 1.10;
+const SOFT_DIFF_CAP: f64 = 1.24;
+const SOFT_DIFF_SLOPE: f64 = 0.45;
+/// Donk 门槛从物理不可达的 125（pacing 上限曾是 115）下调至 118 ≈ 0.7×基准耗时，
+/// 并移除 technique_level ≥ 4 的附加条件——回放确认 336 条中仅 1 条触发，依然稀有。
+const DONK_PACING_THRESHOLD: f64 = 118.0;
+/// 情境乘子：修复旧错 ×1.04；当日连对每多一连 +1.5%，封顶 +6%。
+const REDEEM_MULTIPLIER: f64 = 1.04;
+const STREAK_STEP: f64 = 0.015;
+const STREAK_BONUS_CAP: f64 = 0.06;
+/// 当日连对的前 2 连不加成，从第 3 连开始给正反馈。
+const STREAK_FREE_COUNT: u32 = 2;
+
+/// 难度软压缩（Rating 3.0 ③）：取代 [0.94, 1.10] 硬 clamp。
+fn soft_diff(difficulty: f64) -> f64 {
+    let compressed = if difficulty < SOFT_DIFF_FLOOR {
+        SOFT_DIFF_FLOOR + (difficulty - SOFT_DIFF_FLOOR) * SOFT_DIFF_SLOPE
+    } else if difficulty > SOFT_DIFF_CEIL {
+        SOFT_DIFF_CEIL + (difficulty - SOFT_DIFF_CEIL) * SOFT_DIFF_SLOPE
+    } else {
+        difficulty
+    };
+    compressed.min(SOFT_DIFF_CAP)
+}
+
+/// 情境乘子（Rating 3.0 ⑥）：修复旧错与当日连对手感，只奖励 correct 结果。
+/// 只作用于「当前水平评分链」（`aggregate_question_rating`）；
+/// ELO 结算链路（lib.rs `settle_elo`）不经过此处，保持 v1.6.9 已回放验证的行为。
+pub fn apply_rating_context(
+    rating: f64,
+    outcome: &str,
+    repaired: bool,
+    streak_correct_today: u32,
+) -> f64 {
+    if outcome != "correct" {
+        return rating;
+    }
+    let mut multiplied = rating;
+    if repaired {
+        multiplied *= REDEEM_MULTIPLIER;
+    }
+    let bonus = ((streak_correct_today.saturating_sub(STREAK_FREE_COUNT)) as f64 * STREAK_STEP)
+        .min(STREAK_BONUS_CAP);
+    round2((multiplied * (1.0 + bonus)).clamp(RATING_MIN, RATING_MAX))
+}
 /// How many recent attempts participate in one question's rating.
 const RATING_ATTEMPT_WINDOW: usize = 8;
 /// Daily decay applied to older attempts while averaging; without the floor a
@@ -91,6 +153,10 @@ pub struct AttemptEvidence {
     pub dims: DimensionEvidence,
     pub difficulty_multiplier: Option<f64>,
     pub attempted_date: Option<NaiveDate>,
+    /// 情境乘子（阶段一 ⑥）：本题此前是否有做错记录（本次做对即「修复旧错」）。
+    pub repaired: bool,
+    /// 本次作答之前、同一天的连续做对次数（0 = 无连对手感加成）。
+    pub streak_correct_today: u32,
 }
 
 /// Fold one question's recent attempts into a single decay-weighted rating.
@@ -125,6 +191,13 @@ pub fn aggregate_question_rating(evidence: &[AttemptEvidence], today: NaiveDate)
                 _ => attempt_rating(&item.outcome, item.fluency, duration, item.benchmark_seconds),
             }
         };
+        // 情境乘子只进「当前水平评分链」；ELO 结算链路不经过此函数。
+        let rating = apply_rating_context(
+            rating,
+            &item.outcome,
+            item.repaired,
+            item.streak_correct_today,
+        );
         weighted_sum += rating * weight;
         weight_sum += weight;
     }
@@ -139,7 +212,7 @@ pub fn aggregate_question_rating(evidence: &[AttemptEvidence], today: NaiveDate)
 pub fn compute_question_ratings(conn: &Connection, today: NaiveDate) -> Result<HashMap<i64, f64>, String> {
     let mut stmt = conn
         .prepare(
-            "SELECT a.question_id, substr(a.attempted_at,1,10), COALESCE(a.outcome,a.result),
+            "SELECT a.id, a.question_id, substr(a.attempted_at,1,10), COALESCE(a.outcome,a.result),
                     COALESCE(a.fluency_rating,a.self_rating), a.ai_rating, a.duration_seconds, q.question_type,
                     a.dim_rigor, a.dim_computation, a.dim_modeling, a.dim_method_use, a.dim_speed,
                     a.dim_strategy_insight, a.technique_level, a.difficulty_multiplier
@@ -152,20 +225,21 @@ pub fn compute_question_ratings(conn: &Connection, today: NaiveDate) -> Result<H
         .query_map([], |r| {
             Ok((
                 r.get::<_, i64>(0)?,
-                r.get::<_, Option<String>>(1)?,
-                r.get::<_, String>(2)?,
-                r.get::<_, i32>(3)?,
-                r.get::<_, Option<f64>>(4)?,
-                r.get::<_, Option<i64>>(5)?,
-                r.get::<_, String>(6)?,
-                r.get::<_, Option<f64>>(7)?,
+                r.get::<_, i64>(1)?,
+                r.get::<_, Option<String>>(2)?,
+                r.get::<_, String>(3)?,
+                r.get::<_, i32>(4)?,
+                r.get::<_, Option<f64>>(5)?,
+                r.get::<_, Option<i64>>(6)?,
+                r.get::<_, String>(7)?,
                 r.get::<_, Option<f64>>(8)?,
                 r.get::<_, Option<f64>>(9)?,
                 r.get::<_, Option<f64>>(10)?,
                 r.get::<_, Option<f64>>(11)?,
                 r.get::<_, Option<f64>>(12)?,
-                r.get::<_, Option<i32>>(13)?,
-                r.get::<_, Option<f64>>(14)?,
+                r.get::<_, Option<f64>>(13)?,
+                r.get::<_, Option<i32>>(14)?,
+                r.get::<_, Option<f64>>(15)?,
             ))
         })
         .map_err(|e| e.to_string())?
@@ -173,10 +247,42 @@ pub fn compute_question_ratings(conn: &Connection, today: NaiveDate) -> Result<H
         .map_err(|e| e.to_string())?;
     drop(stmt);
 
+    // 情境乘子上下文（阶段一 ⑥）：
+    // 连对手感按全局时间序统计（同一天内连续做对，错题/换天清零）；
+    // 修复标记按同题历史判断（此前做错、本次做对）。
+    let mut chronological: Vec<(String, i64, &str)> = rows
+        .iter()
+        .map(|(id, _qid, day, outcome, ..)| (day.clone().unwrap_or_default(), *id, outcome.as_str()))
+        .collect();
+    chronological.sort();
+    let mut streak_by_id: HashMap<i64, u32> = HashMap::new();
+    let mut streak: u32 = 0;
+    let mut current_day = String::new();
+    for (day, id, outcome) in chronological {
+        let is_correct = outcome == "correct";
+        streak = if !is_correct {
+            0
+        } else if day == current_day {
+            streak + 1
+        } else {
+            1
+        };
+        current_day = day;
+        if is_correct {
+            streak_by_id.insert(id, streak.saturating_sub(1));
+        }
+    }
+
     let mut by_question: HashMap<i64, Vec<AttemptEvidence>> = HashMap::new();
-    for (question_id, date_str, outcome, fluency, ai_rating, duration, question_type, rigor, computation, modeling, method_use, speed, strategy_insight, technique_level, difficulty_multiplier) in
+    let mut ever_wrong: HashMap<i64, bool> = HashMap::new();
+    for (id, question_id, date_str, outcome, fluency, ai_rating, duration, question_type, rigor, computation, modeling, method_use, speed, strategy_insight, technique_level, difficulty_multiplier) in
         rows
     {
+        let is_correct = outcome == "correct";
+        let repaired = is_correct && ever_wrong.get(&question_id).copied().unwrap_or(false);
+        if outcome == "wrong" || outcome == "incorrect" {
+            ever_wrong.insert(question_id, true);
+        }
         by_question.entry(question_id).or_default().push(AttemptEvidence {
             outcome,
             fluency,
@@ -196,6 +302,8 @@ pub fn compute_question_ratings(conn: &Connection, today: NaiveDate) -> Result<H
             attempted_date: date_str
                 .as_deref()
                 .and_then(|d| NaiveDate::parse_from_str(d, "%Y-%m-%d").ok()),
+            repaired,
+            streak_correct_today: streak_by_id.get(&id).copied().unwrap_or(0),
         });
     }
 
@@ -299,8 +407,6 @@ const HLTV3_SLOPE: f64 = 0.0125;
 /// 高于上界的记录多半是漏停计时器。
 const PACING_MIN_PLAUSIBLE_SECONDS: f64 = 5.0;
 const PACING_MAX_PLAUSIBLE_SECONDS: f64 = 1800.0;
-/// 计时不可信时的中性节奏分：既不奖励也不惩罚，等价于「按基准耗时完成」。
-const PACING_NEUTRAL_WHEN_IMPLAUSIBLE: f64 = 100.0;
 
 /// Codex 六维证据（0-100），任一存在即走 HLTV 合成。
 #[derive(Debug, Clone, Copy, Default, PartialEq)]
@@ -332,9 +438,8 @@ pub fn hltv_rating(
     benchmark_seconds: i64,
     difficulty_multiplier: Option<f64>,
 ) -> f64 {
-    let diff = difficulty_multiplier
-        .unwrap_or(1.0)
-        .clamp(DIFFICULTY_MULTIPLIER_MIN, DIFFICULTY_MULTIPLIER_MAX);
+    // 难度软压缩（阶段一 ③）：区间内原样，超出按 45% 折算封顶 1.24
+    let diff = soft_diff(difficulty_multiplier.unwrap_or(1.0));
 
     // 1. Cast (得分产出值)
     let comp_hint = dims.computation.unwrap_or(50.0);
@@ -389,21 +494,34 @@ pub fn hltv_rating(
     });
     let kast = (0.50 * rigor + 0.30 * computation + 0.20 * modeling).clamp(0.0, 100.0);
 
-    // 4. Pacing (时间节奏分)
+    // 4. Pacing (时间节奏分) — 阶段一 ①②：重标定 + 主客观融合
     let duration = duration_seconds.max(1) as f64;
     let bench = benchmark_seconds.max(1) as f64;
     // 计时护栏：纸笔作答的最短路程不可能在 5 秒内完成，超过 30 分钟多半是漏停计时器。
-    // 这类记录的耗时不可信，此前会被 (bench/duration) 直接顶到 115 的满分上限，
-    // 导致脏数据反而拿到最高节奏分，系统性虚高 rating。这里回落到中性值 100。
+    // 这类记录的耗时不可信，此前会被 (bench/duration) 直接顶到满分上限，
+    // 导致脏数据反而拿到最高节奏分。这里回落到中性值。
     let timing_plausible =
         duration >= PACING_MIN_PLAUSIBLE_SECONDS && duration <= PACING_MAX_PLAUSIBLE_SECONDS;
-    let pacing = dims.speed.unwrap_or_else(|| {
-        if timing_plausible {
-            ((bench / duration) * 100.0).clamp(45.0, 115.0)
-        } else {
-            PACING_NEUTRAL_WHEN_IMPLAUSIBLE
+    let p_time = if timing_plausible {
+        ((bench / duration) * PACING_NEUTRAL).clamp(PACING_MIN, PACING_MAX)
+    } else {
+        PACING_NEUTRAL
+    };
+    // AI 的 speed 维（0-100）映射到 [45, 135] 后与客观耗时融合，客观略占优：
+    // 「AI 说快但实际磨了 20 分钟」再也拿不到满分节奏。
+    let pacing = match dims.speed {
+        Some(speed) => {
+            let p_ai = PACING_MIN + (speed.clamp(0.0, 100.0) / 100.0) * (PACING_MAX - PACING_MIN);
+            PACING_AI_WEIGHT * p_ai + PACING_TIME_WEIGHT * p_time
         }
-    });
+        None => p_time,
+    };
+    // 草率护栏（阶段一 ⑤）：做错时「快」是草率不是效率，节奏分封顶在中性值。
+    let pacing = if outcome == "wrong" || outcome == "incorrect" {
+        pacing.min(PACING_RUSH_CAP_ON_WRONG)
+    } else {
+        pacing
+    };
 
     // 5. EcoDrag (经济黑洞非线性惩罚: 做错且超时严重)
     let eco_drag = if outcome == "wrong" || outcome == "incorrect" {
@@ -424,12 +542,9 @@ pub fn hltv_rating(
         - eco_drag;
 
     let base_raw = HLTV3_INTERCEPT + HLTV3_SLOPE * composite;
-    // Donk-tier 极端高光爆发：当且仅当高技巧等级 (technique_level >= 4) + 极速秒杀 (pacing >= 125) + 严密作答无明显失误时，允许向上突破 2.00 达到 2.05 ~ 2.45
-    let rating = if outcome == "correct"
-        && base_raw > 1.40
-        && dims.technique_level.unwrap_or(0) >= 4
-        && pacing >= 125.0
-    {
+    // Donk-tier 极端高光爆发（阶段一 ④）：门槛 125 → 118（约 0.7×基准耗时），移除
+    // technique_level ≥ 4 限制。回放验证：336 条中仅 1 条（31 秒秒杀满分六维）触达 2.05。
+    let rating = if outcome == "correct" && base_raw > 1.40 && pacing >= DONK_PACING_THRESHOLD {
         let burst = (base_raw - 1.40).powf(0.82) * 1.55;
         (1.40 + burst) * diff
     } else {
@@ -506,13 +621,14 @@ mod tests {
 
     #[test]
     fn hltv_composite_anchors_the_distribution() {
-        // 部分正确、无维度证据：略低于均值 1.00
+        // 阶段一重标定后的锚点（pacing 中性 85 / Donk 118 / 软难度）：
+        // 部分正确、无维度证据：略低于均值 1.00（pacing 85 使其比旧版低约 0.03）
         let partial = hltv_rating("partial", &DimensionEvidence::default(), 600, 600, None);
         assert!((0.88..=0.98).contains(&partial), "partial should sit near 1.00: {partial}");
-        // 普通全对（无维度）：约 1.36
+        // 普通全对（无维度）：约 1.31（旧标定 1.35——中性节奏不再是满分）
         let correct = hltv_rating("correct", &DimensionEvidence::default(), 600, 600, None);
-        assert!((1.30..=1.42).contains(&correct), "plain correct: {correct}");
-        // 六维全优 + 高技巧等级：逼近 1.55，难度系数可再抬一档
+        assert!((1.28..=1.35).contains(&correct), "plain correct: {correct}");
+        // 六维全优 + 高技巧等级 + 半倍基准耗时：冲刺 Donk 区间边缘（软难度 1.10 下约 1.93）
         let elite = hltv_rating(
             "correct",
             &DimensionEvidence {
@@ -526,7 +642,7 @@ mod tests {
             600,
             Some(1.10),
         );
-        assert!(elite >= 1.55, "elite should reach 1.55+: {elite}");
+        assert!((1.85..=2.00).contains(&elite), "elite should reach the Donk rim: {elite}");
         // 做错且超时：沉到 0.4 一档
         let wrong = hltv_rating("wrong", &DimensionEvidence::default(), 900, 600, None);
         assert!(wrong <= 0.45, "wrong should sink: {wrong}");
@@ -547,6 +663,68 @@ mod tests {
     }
 
     #[test]
+    fn soft_diff_compresses_extremes_without_touching_the_band() {
+        assert_eq!(soft_diff(1.0), 1.0);
+        assert_eq!(soft_diff(0.94), 0.94);
+        // 区间上方 45% 折算：1.2 → 1.145，极端值封顶 1.24
+        assert!((soft_diff(1.2) - 1.145).abs() < 1e-9);
+        assert_eq!(soft_diff(1.5), SOFT_DIFF_CAP);
+        // 区间下方同样折算，不再一刀切回 0.94
+        assert!((soft_diff(0.5) - (SOFT_DIFF_FLOOR - 0.42 * SOFT_DIFF_SLOPE)).abs() < 1e-9);
+    }
+
+    #[test]
+    fn context_multipliers_reward_redeem_and_hot_streaks_only_for_corrects() {
+        assert_eq!(apply_rating_context(1.0, "correct", true, 0), 1.04);
+        // 前 2 连不加成，第 3 连起每连 +1.5%，封顶 +6%
+        assert_eq!(apply_rating_context(1.0, "correct", false, 2), 1.0);
+        assert_eq!(apply_rating_context(1.2, "correct", false, 3), 1.22);
+        assert_eq!(apply_rating_context(1.0, "correct", false, 100), 1.06);
+        // 做错不享受任何情境加成
+        assert_eq!(apply_rating_context(1.0, "wrong", true, 100), 1.0);
+        assert_eq!(apply_rating_context(1.0, "partial", false, 8), 1.0);
+    }
+
+    #[test]
+    fn rushing_a_wrong_answer_earns_no_pacing_credit() {
+        // 草率护栏：「秒错」与「按基准磨出做错」节奏分同为中性值 85，
+        // 快而错不再伪装成高效率。
+        let rushed = hltv_rating(
+            "wrong",
+            &DimensionEvidence {
+                speed: Some(100.0),
+                ..Default::default()
+            },
+            60,
+            600,
+            None,
+        );
+        let unhurried = hltv_rating("wrong", &DimensionEvidence::default(), 600, 600, None);
+        assert_eq!(rushed, unhurried, "a fast wrong must not outscore a slow wrong");
+    }
+
+    #[test]
+    fn subjective_speed_cannot_overrule_objective_overtime() {
+        // 主客观融合（客观 0.55 占优）：AI 给满分速度但实际耗时 2 倍基准，
+        // 融合 pacing = 0.45*135 + 0.55*45 = 85.5 ≈ 中性，不得分。
+        let fast_claim_slow_reality = hltv_rating(
+            "correct",
+            &DimensionEvidence {
+                speed: Some(100.0),
+                ..Default::default()
+            },
+            1200,
+            600,
+            None,
+        );
+        let neutral = hltv_rating("correct", &DimensionEvidence::default(), 600, 600, None);
+        assert!(
+            fast_claim_slow_reality < neutral + 0.02,
+            "claiming speed while being slow must not beat neutral pacing: {fast_claim_slow_reality} vs {neutral}"
+        );
+    }
+
+    #[test]
     fn aggregate_trusts_ai_rating_and_decays_old_attempts() {
         let today = NaiveDate::from_ymd_opt(2026, 8, 22).unwrap();
         let evidence = vec![
@@ -559,6 +737,8 @@ mod tests {
                 dims: DimensionEvidence::default(),
                 difficulty_multiplier: None,
                 attempted_date: Some(NaiveDate::from_ymd_opt(2026, 6, 1).unwrap()),
+                repaired: false,
+                streak_correct_today: 0,
             },
             AttemptEvidence {
                 outcome: "correct".into(),
@@ -569,33 +749,55 @@ mod tests {
                 dims: DimensionEvidence::default(),
                 difficulty_multiplier: None,
                 attempted_date: Some(NaiveDate::from_ymd_opt(2026, 8, 20).unwrap()),
+                // 此前做错、本次做对 → 修复旧错，×1.04
+                repaired: true,
+                streak_correct_today: 0,
             },
         ];
         let rating = aggregate_question_rating(&evidence, today).unwrap();
-        // the recent 1.6 dominates the two-month-old low attempt
+        // the recent 1.6 dominates the two-month-old low attempt (redeem adds ×1.04)
         assert!(rating > 1.5, "recent evidence should dominate: {rating}");
         assert!(aggregate_question_rating(&[], today).is_none());
     }
 
     #[test]
     fn donk_burst_reaches_two_plus_under_god_mode() {
-        // Donk 级神仙表现：压轴难题 + 极速秒杀 + 5级技巧降维打击 + 0笔误
+        // Donk 级神仙表现：压轴难题（软压缩后 1.2 → 1.145）+ 极速秒杀 + 满分六维。
+        // 门槛 118 在 pacing 重标定后真实可达，但 2.00+ 仍需难度与速度同时到位。
         let donk = hltv_rating(
             "correct",
             &DimensionEvidence {
                 rigor: Some(100.0),
                 computation: Some(100.0),
+                modeling: Some(100.0),
                 strategy_insight: Some(98.0),
                 method_use: Some(95.0),
                 technique_level: Some(5),
-                speed: Some(150.0),
-                ..Default::default()
+                speed: Some(100.0),
             },
             180,
             600,
-            Some(1.10),
+            Some(1.2),
         );
         assert!(donk >= 2.00, "donk mode should breakthrough 2.00+: {donk}");
+        // 反向护栏：六维再完美，慢速做对也绝不触发 Donk 爆发公式
+        //（base ≈ 1.47，Clutch+软难度抬到 1.62，仍远低于 Donk 区间下沿 ~1.85）。
+        let grinding = hltv_rating(
+            "correct",
+            &DimensionEvidence {
+                rigor: Some(100.0),
+                computation: Some(100.0),
+                modeling: Some(100.0),
+                strategy_insight: Some(100.0),
+                method_use: Some(100.0),
+                technique_level: Some(5),
+                ..Default::default()
+            },
+            600,
+            600,
+            Some(1.10),
+        );
+        assert!(grinding < 1.75, "slow perfect work must stay below Donk: {grinding}");
     }
 
     #[test]

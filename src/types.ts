@@ -296,6 +296,32 @@ export type AttemptHighlight = {
   rating: number
 }
 
+export type SeasonPoint = { date: string; rating: number }
+export type SeasonSummary = {
+  weekStart: string
+  startRating: number
+  endRating: number
+  delta: number
+  settlements: number
+}
+export type SeasonLadder = {
+  weekStart: string
+  weekStartRating: number | null
+  weekCurrentRating: number | null
+  weekDelta: number | null
+  weekPoints: SeasonPoint[]
+  seasons: SeasonSummary[]
+  allPoints: SeasonPoint[]
+}
+export type ProgressComparison = {
+  questionId: number
+  stem: string
+  categoryPath: string
+  wrongDuration: number
+  correctDuration: number
+  fixedAt: string
+}
+
 export type UndoLastAttemptResult = {
   question: Question
   removedEloDelta: number | null

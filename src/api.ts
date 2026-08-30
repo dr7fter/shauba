@@ -2,7 +2,7 @@ import { invoke } from '@tauri-apps/api/core'
 import { check, type Update } from '@tauri-apps/plugin-updater'
 import { relaunch } from '@tauri-apps/plugin-process'
 import { mockBootstrap, mockCategories, mockInbox, mockMastery, mockQuestions, mockRecommendations } from './mock'
-import type { BootstrapData, CategoryNode, CodexTask, DailyLog, DailyTrendPoint, EloStatus, TagClosure, ExportResult, FailedInboxItem, InboxItem, InboxSummary, InsightPoint, MasteryChapter, MasteryNode, MistakeDayGroup, PracticeSessionState, Question, QuestionPage, RatingDistribution, RecommendationBatch, RecommendedQuestion, ReviewHistory, ReviewPlan, SeasonStatus, SessionScoreboard, UserStreak, WeaknessRadar, PressureSession, GradingReport, TacticalDashboardData, UserProfileSettings, AttemptHighlight, ConfirmInboxResult, HighlightMoment, PeriodOverview, UndoLastAttemptResult, FriendSyncConfig, FriendSyncRemoteSnapshot, LearningCenterSnapshot } from './types'
+import type { BootstrapData, CategoryNode, CodexTask, DailyLog, DailyTrendPoint, EloStatus, TagClosure, ExportResult, FailedInboxItem, InboxItem, InboxSummary, InsightPoint, MasteryChapter, MasteryNode, MistakeDayGroup, PracticeSessionState, Question, QuestionPage, RatingDistribution, RecommendationBatch, RecommendedQuestion, ReviewHistory, ReviewPlan, SeasonStatus, SessionScoreboard, UserStreak, WeaknessRadar, PressureSession, GradingReport, TacticalDashboardData, UserProfileSettings, AttemptHighlight, ConfirmInboxResult, ProgressComparison, SeasonLadder, HighlightMoment, PeriodOverview, UndoLastAttemptResult, FriendSyncConfig, FriendSyncRemoteSnapshot, LearningCenterSnapshot } from './types'
 import { createPracticeSessionPayload } from './domain/evidence'
 
 const isTauri = () => '__TAURI_INTERNALS__' in window
@@ -212,6 +212,16 @@ export type RecordAttemptResult = {
   streakToday?: number
   /** 高光时刻（donk/ace/s1mple/clutch/redeem/zywoo） */
   highlight?: AttemptHighlight | null
+}
+
+export async function getSeasonLadder(): Promise<SeasonLadder> {
+  if (isTauri()) return invoke('get_season_ladder')
+  return { weekStart: '', weekStartRating: null, weekCurrentRating: null, weekDelta: null, weekPoints: [], seasons: [], allPoints: [] }
+}
+
+export async function getProgressComparisons(): Promise<ProgressComparison[]> {
+  if (isTauri()) return invoke('get_progress_comparisons')
+  return []
 }
 
 export async function getHighlightMoments(limit = 20): Promise<HighlightMoment[]> {

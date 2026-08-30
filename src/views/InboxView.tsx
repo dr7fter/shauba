@@ -22,6 +22,7 @@ import {
 } from '../api'
 import { EmptyState } from '../components/EmptyState'
 import { HighlightMoment } from '../components/HighlightMoment'
+import { RevealCards } from '../components/RevealCards'
 import { MathText } from '../components/MathText'
 import { playHighlightSound } from '../data/audio'
 import type { AttemptHighlight, FailedInboxItem, InboxItem } from '../types'
@@ -52,7 +53,12 @@ export function InboxView({
   const [loading, setLoading] = useState(true)
   const [failedItems, setFailedItems] = useState<FailedInboxItem[]>([])
   const [copiedTask, setCopiedTask] = useState<string | null>(null)
-  const [highlight, setHighlight] = useState<AttemptHighlight | null>(null)
+  const [pendingFlow, setPendingFlow] = useState<{
+    highlight: AttemptHighlight
+    taskId: string
+    openReport: boolean
+    stage: 'reveal' | 'moment'
+  } | null>(null)
 
   const load = useCallback(() => {
     setLoading(true)
@@ -81,24 +87,29 @@ export function InboxView({
   const decide = async (item: InboxItem, apply: boolean) => {
     try {
       const result = await confirmInbox(item.id, apply)
-      // 整组确认的高光时刻（阶段四补全）：确认即结算，情绪最高点不再哑火
       if (apply && result.highlight) {
-        setHighlight(result.highlight)
+        // 揭晓卡 → 全屏高光 → 报告：亲手翻开今天的名场面
+        setPendingFlow({
+          highlight: result.highlight,
+          taskId: item.taskId,
+          openReport: item.kind === 'batch',
+          stage: 'reveal',
+        })
         playHighlightSound(result.highlight.kind)
+        notify(`已入账 ${result.appliedAttempts} 题 · 做对 ${result.appliedCorrect} · 揭晓名场面`)
+      } else {
+        notify(
+          apply
+            ? item.kind === 'paper'
+            ? '整卷结果已写入训练记录'
+            : item.kind === 'batch'
+            ? '整组批改结果已写入训练记录，正在加载学习报告'
+            : '诊断已进入推荐画像，并会影响后续荐题'
+          : '已忽略本次诊断'
+        )
       }
-      notify(
-        apply
-          ? result.appliedAttempts > 0
-          ? `已入账 ${result.appliedAttempts} 题 · 做对 ${result.appliedCorrect}${result.highlight ? ' · 高光时刻！' : ''}`
-          : item.kind === 'paper'
-          ? '整卷结果已写入训练记录'
-          : item.kind === 'batch'
-          ? '整组批改结果已写入训练记录，正在加载学习报告'
-          : '诊断已进入推荐画像，并会影响后续荐题'
-        : '已忽略本次诊断'
-      )
       if (refresh) void refresh()
-      if (apply && item.kind === 'batch') await onOpenPressureReport(item.taskId)
+      if (apply && item.kind === 'batch' && !result.highlight) await onOpenPressureReport(item.taskId)
     } catch (error) {
       notify(`处理回传失败：${String(error)}`)
     } finally {
@@ -390,8 +401,21 @@ export function InboxView({
           })}
         </div>
       )}
-      {highlight && (
-        <HighlightMoment highlight={highlight} onDone={() => setHighlight(null)} />
+      {pendingFlow?.stage === 'reveal' && (
+        <RevealCards
+          highlight={pendingFlow.highlight}
+          onDone={() => setPendingFlow((prev) => (prev ? { ...prev, stage: 'moment' } : prev))}
+        />
+      )}
+      {pendingFlow?.stage === 'moment' && (
+        <HighlightMoment
+          highlight={pendingFlow.highlight}
+          onDone={() => {
+            const flow = pendingFlow
+            setPendingFlow(null)
+            if (flow.openReport) void onOpenPressureReport(flow.taskId)
+          }}
+        />
       )}
     </div>
   )

@@ -30,6 +30,8 @@ import {
   getEloStatus,
   getHighlightMoments,
   getPeriodOverview,
+  getProgressComparisons,
+  getSeasonLadder,
   getPressureGradingReport,
   getQuestion,
   getRatingDistribution,
@@ -66,6 +68,8 @@ import type {
   GradingReport,
   HighlightMoment,
   PeriodOverview,
+  ProgressComparison,
+  SeasonLadder,
   PressureSession,
   Question,
   RatingDistribution,
@@ -80,6 +84,22 @@ type ScopeMode = 'ranked' | 'all' | 'solo'
 
 /** 考研初试目标日（后续可移至设置页配置） */
 const EXAM_DATE = '2026-12-19'
+
+/** 折线点串生成（赛季天梯用） */
+function seasonLine(points: { date: string; rating: number }[]) {
+  if (points.length < 2) return null
+  const vals = points.map((p) => p.rating)
+  const min = Math.min(...vals)
+  const span = Math.max(...vals) - min || 1
+  const pts = points
+    .map(
+      (p, i) =>
+        `${((i / (points.length - 1)) * 600).toFixed(1)},${(110 - ((p.rating - min) / span) * 92 - 10).toFixed(1)}`,
+    )
+    .join(' ')
+  const delta = Math.round((points[points.length - 1].rating - points[0].rating) * 100) / 100
+  return { pts, delta, first: points[0], last: points[points.length - 1] }
+}
 
 /** 周期档位切换按钮样式（阶段六 ①） */
 const periodBtnStyle = (active: boolean) => ({
@@ -186,6 +206,8 @@ export function InsightsView({
     if (tab === 'overview') {
       void getPeriodOverview(periodDays).then(setPeriodOverview).catch(() => undefined)
       void getHighlightMoments(20).then(setHighlights).catch(() => undefined)
+      void getSeasonLadder().then(setSeasonLadder).catch(() => undefined)
+      void getProgressComparisons().then(setComparisons).catch(() => undefined)
     }
     // periodDays 变化由其专属 effect 负责，此处只在切 tab 时触发
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -204,6 +226,9 @@ export function InsightsView({
   const [highlights, setHighlights] = useState<HighlightMoment[]>([])
   const [expandedHighlightId, setExpandedHighlightId] = useState<number | null>(null)
   // 阶段六：时间维度（null = 全部）
+  const [seasonLadder, setSeasonLadder] = useState<SeasonLadder | null>(null)
+  const [comparisons, setComparisons] = useState<ProgressComparison[]>([])
+  const [seasonMode, setSeasonMode] = useState<'week' | 'all' | 'seasons'>('week')
   const [periodDays, setPeriodDays] = useState<number | null>(7)
   const [periodOverview, setPeriodOverview] = useState<PeriodOverview | null>(null)
 
@@ -818,6 +843,81 @@ export function InsightsView({
                   </div>
                 </div>
               </div>
+            </section>
+
+            {/* 1.6 赛季天梯 · 进步对照（v1.8） */}
+            <section className="tactical-card season-card" style={{ gridColumn: '1 / -1' }}>
+              <header className="tactical-card-header">
+                <h3>赛季天梯 · 进步对照</h3>
+                <div style={{ display: 'flex', gap: 6 }}>
+                  {(['week', 'all', 'seasons'] as const).map((mode) => (
+                    <button key={mode} type="button" style={periodBtnStyle(seasonMode === mode)} onClick={() => setSeasonMode(mode)}>
+                      {mode === 'week' ? '本周' : mode === 'all' ? '全部' : '各赛季'}
+                    </button>
+                  ))}
+                </div>
+              </header>
+              {(() => {
+                if (!seasonLadder) {
+                  return <p style={{ fontSize: 13, color: 'var(--muted)', margin: 0 }}>加载中…</p>
+                }
+                if (seasonMode === 'seasons') {
+                  return (
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+                      {seasonLadder.seasons.length === 0 && (
+                        <p style={{ fontSize: 13, color: 'var(--muted)', margin: 0 }}>还没有赛季结算记录</p>
+                      )}
+                      {seasonLadder.seasons.map((season) => (
+                        <div key={season.weekStart} style={{ display: 'flex', alignItems: 'baseline', gap: 10, fontSize: 13, borderBottom: '1px solid var(--line)', paddingBottom: 6 }}>
+                          <span style={{ color: 'var(--muted)', minWidth: 92 }}>周 {season.weekStart}</span>
+                          <span>{season.startRating.toFixed(0)} → {season.endRating.toFixed(0)}</span>
+                          <b style={{ color: season.delta >= 0 ? 'var(--success)' : 'var(--danger)', fontWeight: 800 }}>
+                            {season.delta >= 0 ? '+' : ''}{season.delta.toFixed(2)}
+                          </b>
+                          <small style={{ color: 'var(--muted)' }}>{season.settlements} 次结算</small>
+                        </div>
+                      ))}
+                    </div>
+                  )
+                }
+                const points = seasonMode === 'week' ? seasonLadder.weekPoints : seasonLadder.allPoints.slice(-120)
+                const line = seasonLine(points)
+                if (!line) {
+                  return (
+                    <p style={{ fontSize: 13, color: 'var(--muted)', margin: 0 }}>
+                      {seasonMode === 'week' ? '本周还没有结算记录——做第一题就会点亮曲线。' : '还没有足够的结算记录'}
+                    </p>
+                  )
+                }
+                return (
+                  <div>
+                    <svg viewBox="0 0 600 120" style={{ width: '100%', height: 120 }} role="img" aria-label="rating 曲线">
+                      <polyline points={line.pts} fill="none" stroke="var(--cyan)" strokeWidth="2.5" strokeLinejoin="round" strokeLinecap="round" />
+                    </svg>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', fontSize: 12, color: 'var(--muted)' }}>
+                      <span>{line.first.date} · {line.first.rating.toFixed(0)}</span>
+                      <b style={{ color: line.delta >= 0 ? 'var(--success)' : 'var(--danger)', fontSize: 15 }}>
+                        {line.delta >= 0 ? '+' : ''}{line.delta.toFixed(2)} 分
+                      </b>
+                      <span>{line.last.date} · {line.last.rating.toFixed(0)}</span>
+                    </div>
+                  </div>
+                )
+              })()}
+              {comparisons.length > 0 && (
+                <div style={{ marginTop: 14, paddingTop: 12, borderTop: '1px dashed var(--line)' }}>
+                  <strong style={{ fontSize: 13, display: 'block', marginBottom: 8 }}>📈 进步对照 · 你确实在变强</strong>
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+                    {comparisons.map((c) => (
+                      <div key={c.questionId} style={{ fontSize: 12.5, color: 'var(--muted)' }}>
+                        <span style={{ color: 'var(--ink)', fontWeight: 700 }}>#{c.questionId}</span>{' '}
+                        {c.wrongDuration}s → <b style={{ color: 'var(--success)' }}>{c.correctDuration}s</b>
+                        {' '}（快 {(c.wrongDuration / c.correctDuration).toFixed(1)}×）· {c.fixedAt} 修复
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
             </section>
 
             {/* 2. 个人表现与战术雷达 */}

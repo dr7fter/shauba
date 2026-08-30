@@ -66,6 +66,7 @@ import {
   normalizeAnswer,
 } from '../utils'
 import { questionRoleMeta } from '../utils/questionRole'
+import { CountUp } from '../components/ui/CountUp'
 import { HighlightMoment } from '../components/HighlightMoment'
 import {
   areSameCodexBatchQuestionIds,
@@ -227,6 +228,8 @@ export function TodayView({
     streakToday?: number
   } | null>(null)
   const [highlight, setHighlight] = useState<AttemptHighlight | null>(null)
+  const [comboStreak, setComboStreak] = useState(0)
+  const [tomorrowPreview, setTomorrowPreview] = useState<{ stem: string; reason: string } | null>(null)
   const [scoreboard, setScoreboard] = useState<SessionScoreboard | null>(null)
   const [achievementData, setAchievementData] = useState<{
     correct: boolean
@@ -783,6 +786,7 @@ export function TodayView({
         playWrongSound()
       }
       // 高光时刻（阶段四）：后端按稀有度判定 donk/ace/s1mple/clutch/redeem/zywoo
+      setComboStreak(recorded.streakToday ?? 0)
       if (recorded.highlight) {
         setHighlight(recorded.highlight)
         playHighlightSound(recorded.highlight.kind)
@@ -833,7 +837,16 @@ export function TodayView({
           data.dailyProblemTarget > 0 &&
           data.todayDone < data.dailyProblemTarget &&
           newTodayDone >= data.dailyProblemTarget
-        if (goalJustReached) playHighlightSound('goal')
+        if (goalJustReached) {
+          playHighlightSound('goal')
+          // 收工战报：明天第一件事（取推荐队列第一条）
+          void getRecommendations(1)
+            .then((recs) => {
+              const first = recs[0]
+              if (first) setTomorrowPreview({ stem: first.question.stem, reason: first.reason })
+            })
+            .catch(() => undefined)
+        }
 
         const achievementPayload = {
           correct,
@@ -1749,6 +1762,25 @@ export function TodayView({
             <i>·</i>
             <span>
               {contextStep === 1 ? '先在纸上完成' : '已看答案，自评默认「不熟练」，可改后记录'}
+              {data.dailyProblemTarget > 0 && data.todayDone < data.dailyProblemTarget && (
+                <span style={{ color: 'var(--muted)' }}>
+                  · 还差 {data.dailyProblemTarget - data.todayDone} 题达标
+                </span>
+              )}
+              {comboStreak >= 2 && (
+                <span
+                  style={{
+                    display: 'inline-flex',
+                    alignItems: 'center',
+                    gap: 2,
+                    fontWeight: 800,
+                    color: comboStreak >= 12 ? '#C297FF' : comboStreak >= 8 ? '#E5534B' : '#E87722',
+                  }}
+                  title={`今日连对 ${comboStreak} 题`}
+                >
+                  <Flame size={13} />×{comboStreak}
+                </span>
+              )}
             </span>
           </div>
         </div>
@@ -2470,7 +2502,7 @@ export function TodayView({
                 {eloFlash.rankName}
               </span>
               <span style={{ fontSize: 18, fontWeight: 800, fontVariantNumeric: 'tabular-nums' }}>
-                {Math.round(eloFlash.current)}
+                <CountUp value={eloFlash.current} />
               </span>
               <span
                 style={{
@@ -2494,7 +2526,7 @@ export function TodayView({
                       color: '#F5F3EE',
                     }}
                   >
-                    {eloFlash.rating.toFixed(2)}
+                    <CountUp value={eloFlash.rating} decimals={2} animateOnMount />
                   </span>
                   {(() => {
                     const accent = csRatingAccent(eloFlash.rating)
@@ -2589,6 +2621,11 @@ export function TodayView({
                 <div className="milestone-banner">
                   🎯 今日目标达成，可以收工——明天的修复动作已在队列里等你
                 </div>
+              )}
+              {achievementData.goalReached && tomorrowPreview && (
+                <p style={{ fontSize: 12.5, color: 'var(--muted)', margin: '6px 0 0' }}>
+                  明天第一件事：{tomorrowPreview.reason}
+                </p>
               )}
 
               <div className="achievement-stats">

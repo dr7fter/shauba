@@ -5171,6 +5171,180 @@ fn period_bucket(rows: &[PeriodRow]) -> PeriodBucket {
 }
 
 /// 数据板时间维度（阶段六 ①②④⑤）：当前周期 + 等长上一周期对比，成就素材全时段。
+// ============ v1.8：赛季天梯与进步对照（多巴胺体系的数据面） ============
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct SeasonPoint {
+    date: String,
+    rating: f64,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct SeasonSummary {
+    week_start: String,
+    start_rating: f64,
+    end_rating: f64,
+    delta: f64,
+    settlements: i64,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct SeasonLadder {
+    week_start: String,
+    week_start_rating: Option<f64>,
+    week_current_rating: Option<f64>,
+    week_delta: Option<f64>,
+    week_points: Vec<SeasonPoint>,
+    seasons: Vec<SeasonSummary>,
+    all_points: Vec<SeasonPoint>,
+}
+
+fn week_start_of(date: chrono::NaiveDate) -> chrono::NaiveDate {
+    use chrono::Datelike;
+    date - chrono::Duration::days(date.weekday().num_days_from_monday() as i64)
+}
+
+/// 赛季天梯（v1.8）：赛季 = 自然周。默认展示本周 ELO 轨迹，
+/// 可切换全部历史与各赛季（周）结算摘要。数据源是既有的 elo_events。
+#[tauri::command]
+fn get_season_ladder(state: State<AppState>) -> Result<SeasonLadder, String> {
+    let conn = state.db.lock().map_err(|e| e.to_string())?;
+    let rows: Vec<(String, f64)> = {
+        let mut stmt = conn
+            .prepare("SELECT substr(created_at,1,10), rating_after FROM elo_events ORDER BY id")
+            .map_err(|e| e.to_string())?;
+        let rows = stmt
+            .query_map([], |r| Ok((r.get::<_, String>(0)?, r.get::<_, f64>(1)?)))
+            .map_err(|e| e.to_string())?
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(|e| e.to_string())?;
+        rows
+    };
+    let today = Local::now().date_naive();
+    let monday = week_start_of(today).to_string();
+    let mut week_points = Vec::new();
+    let mut all_points = Vec::new();
+    let mut seasons: Vec<SeasonSummary> = Vec::new();
+    let mut current_week: Option<(String, f64, f64, i64)> = None; // (week_start, start, last, count)
+    for (date, rating) in &rows {
+        all_points.push(SeasonPoint { date: date.clone(), rating: *rating });
+        if date.as_str() >= monday.as_str() {
+            week_points.push(SeasonPoint { date: date.clone(), rating: *rating });
+        }
+        let ws = chrono::NaiveDate::parse_from_str(date, "%Y-%m-%d")
+            .map(week_start_of)
+            .map(|d| d.to_string())
+            .unwrap_or_else(|_| monday.clone());
+        match &mut current_week {
+            Some((cur_ws, start, last, count)) if *cur_ws == ws => {
+                *last = *rating;
+                *count += 1;
+            }
+            _ => {
+                if let Some((ws_done, start, last, count)) = current_week.take() {
+                    seasons.push(SeasonSummary {
+                        delta: ((last - start) * 100.0).round() / 100.0,
+                        week_start: ws_done,
+                        start_rating: start,
+                        end_rating: last,
+                        settlements: count,
+                    });
+                }
+                current_week = Some((ws, *rating, *rating, 1));
+            }
+        }
+    }
+    if let Some((ws_done, start, last, count)) = current_week.take() {
+        seasons.push(SeasonSummary {
+            delta: ((last - start) * 100.0).round() / 100.0,
+            week_start: ws_done,
+            start_rating: start,
+            end_rating: last,
+            settlements: count,
+        });
+    }
+    seasons.reverse(); // 最新赛季在前
+    let week_start_rating = week_points.first().map(|p| p.rating);
+    let week_current_rating = week_points.last().map(|p| p.rating);
+    let week_delta = match (week_start_rating, week_current_rating) {
+        (Some(a), Some(b)) => Some(((b - a) * 100.0).round() / 100.0),
+        _ => None,
+    };
+    Ok(SeasonLadder {
+        week_start: monday,
+        week_start_rating,
+        week_current_rating,
+        week_delta,
+        week_points,
+        seasons,
+        all_points,
+    })
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct ProgressComparison {
+    question_id: i64,
+    stem: String,
+    category_path: String,
+    wrong_duration: i64,
+    correct_duration: i64,
+    fixed_at: String,
+}
+
+/// 进步对照卡（v1.8）：「同一断点修复前后」的真实对比——
+/// 修好且快了 2 倍以上的题按提速倍数取前三。
+#[tauri::command]
+fn get_progress_comparisons(state: State<AppState>) -> Result<Vec<ProgressComparison>, String> {
+    let conn = state.db.lock().map_err(|e| e.to_string())?;
+    let mut stmt = conn
+        .prepare(
+            "SELECT c.question_id, q.stem, q.category_path,
+                    MAX(w.duration_seconds), MIN(c.duration_seconds),
+                    MAX(substr(c.attempted_at,1,10))
+             FROM attempts c
+             JOIN attempts w ON w.question_id=c.question_id AND w.id<c.id
+                AND COALESCE(w.outcome,w.result) IN ('wrong','incorrect')
+             JOIN questions q ON q.id=c.question_id
+             WHERE COALESCE(c.outcome,c.result)='correct'
+             GROUP BY c.question_id
+             HAVING MIN(c.duration_seconds) > 0",
+        )
+        .map_err(|e| e.to_string())?;
+    let rows = stmt
+        .query_map([], |r| {
+            Ok((
+                r.get::<_, i64>(0)?,
+                r.get::<_, String>(1)?,
+                r.get::<_, String>(2)?,
+                r.get::<_, i64>(3)?,
+                r.get::<_, i64>(4)?,
+                r.get::<_, String>(5)?,
+            ))
+        })
+        .map_err(|e| e.to_string())?
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|e| e.to_string())?;
+    drop(stmt);
+    let mut list: Vec<ProgressComparison> = rows
+        .into_iter()
+        .map(|(question_id, stem, category_path, wrong_duration, correct_duration, fixed_at)| {
+            ProgressComparison { question_id, stem, category_path, wrong_duration, correct_duration, fixed_at }
+        })
+        .filter(|c| c.wrong_duration >= c.correct_duration * 2 && c.correct_duration >= 5)
+        .collect();
+    list.sort_by(|a, b| {
+        let ra = a.wrong_duration as f64 / a.correct_duration as f64;
+        let rb = b.wrong_duration as f64 / b.correct_duration as f64;
+        rb.partial_cmp(&ra).unwrap_or(std::cmp::Ordering::Equal)
+    });
+    list.truncate(3);
+    Ok(list)
+}
+
 #[tauri::command]
 fn get_period_overview(days: Option<i64>, state: State<AppState>) -> Result<PeriodOverview, String> {
     let conn = state.db.lock().map_err(|e| e.to_string())?;
@@ -11528,6 +11702,8 @@ pub fn run() {
             record_attempt,
             get_highlight_moments,
             get_period_overview,
+            get_season_ladder,
+            get_progress_comparisons,
             undo_last_attempt,
             toggle_favorite,
             save_note,

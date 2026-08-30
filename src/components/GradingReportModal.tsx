@@ -48,6 +48,16 @@ const DIM_LABELS: Record<DimKey, string> = {
   strategyInsight: '策略洞察力',
 }
 
+/** 迷你雷达用短标签（170px 宽度下全称会挤爆） */
+const DIM_SHORT_LABELS: Record<DimKey, string> = {
+  rigor: '严谨',
+  computation: '计算',
+  modeling: '建模',
+  methodUse: '方法',
+  speed: '速度',
+  strategyInsight: '洞察',
+}
+
 /** 严重度三色（v1.7.0 阶段五）：致命=概念盲区、笔误=瞄准失误、方法=战术绕路 */
 type Severity = 'fatal' | 'slip' | 'detour'
 
@@ -586,6 +596,9 @@ export function PressureLearningReportView({
                   ariaLabel="本次作答六维 rating 雷达图"
                   title="本次作答六维 rating"
                 />
+                <span style={{ display: 'block', textAlign: 'center', fontSize: 11, color: 'var(--muted)' }}>
+                  全组均值（做对+做错一起平均）
+                </span>
               </div>
               <div className="report-dimension-list">
                 <div className="dimension-kast-banner">
@@ -628,7 +641,11 @@ export function PressureLearningReportView({
                   cy={76}
                   radius={46}
                   labelRadius={58}
-                  dimensions={wrongDimsPresent.map((d) => ({ key: d.key, label: d.label, value: d.value }))}
+                  dimensions={wrongDimsPresent.map((d) => ({
+                    key: d.key,
+                    label: DIM_SHORT_LABELS[d.key],
+                    value: d.value,
+                  }))}
                   gridStroke="var(--line)"
                   gridInnerDash="3 3"
                   axisStroke="var(--line)"

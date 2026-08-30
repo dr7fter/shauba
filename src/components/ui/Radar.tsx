@@ -151,7 +151,14 @@ export function Radar({
   }
 
   return (
-    <svg viewBox={`0 0 ${width} ${height}`} className={className} role={role} aria-label={ariaLabel}>
+    <svg
+      width={width}
+      height={height}
+      viewBox={`0 0 ${width} ${height}`}
+      className={className}
+      role={role}
+      aria-label={ariaLabel}
+    >
       {title && <title>{title}</title>}
       {children}
       {gridScales.map((scale) => (

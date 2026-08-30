@@ -793,7 +793,7 @@
   font-size: 11px;
   margin-left: 6px;
   padding: 1px 6px;
-  border-radius: 999px;
+  border-radius: var(--r-full);
   vertical-align: 1px;
 }
 .qrole-badge.scan, .qrole-mini.scan { color: var(--info); background: var(--info-soft); }
@@ -802,8 +802,8 @@
 .qrole-badge.synthetic, .qrole-mini.synthetic { color: var(--gold-strong); background: var(--gold-soft); }
 .qrole-badge.transfer, .qrole-mini.transfer { color: var(--cyan-strong); background: var(--cyan-soft); }
 .qrole-badge.blitz, .qrole-mini.blitz { color: var(--danger-strong); background: var(--warn-soft); }
-.qrole-badge.boss, .qrole-mini.boss { color: var(--on-color, #fff); background: var(--danger-strong); }
-.qrole-badge.review, .qrole-mini.review { color: var(--muted); background: var(--sunken, rgba(0,0,0,0.05)); }
+.qrole-badge.boss, .qrole-mini.boss { color: var(--on-color); background: var(--danger-strong); }
+.qrole-badge.review, .qrole-mini.review { color: var(--muted); background: var(--sunken); }
 /* 沉浸模式收敛：只留徽章，不留提示小字 */
 .zen-mode .qrole-badge .qrole-hint { display: none; }
 .question-stem { display: block; font-family: var(--font-stem); font-size: var(--fs-2xl); font-weight: 500; line-height: 1.82; color: var(--ink); }

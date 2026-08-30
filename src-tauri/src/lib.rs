@@ -2473,6 +2473,21 @@ fn apply_batch_payload(
     // untrusted batch item rejects the entire formal settlement.
     for attempt in &payload.batch_attempts {
         validate_batch_attempt_result_verdict(attempt)?;
+        // 题号存在性（稳固批次补齐）：不受信任的 question_id 不得入账，
+        // 否则会创建孤儿 attempt 并触发 ELO 结算。
+        let exists: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM questions WHERE id=?1",
+                [attempt.question_id],
+                |row| row.get(0),
+            )
+            .map_err(|e| e.to_string())?;
+        if exists == 0 {
+            return Err(format!(
+                "题号 {} 不存在于题库，整组批改拒绝入账（task {}）",
+                attempt.question_id, payload.task_id
+            ));
+        }
     }
     let tx = conn.unchecked_transaction().map_err(|e| e.to_string())?;
     apply_batch_payload_in_tx(&tx, payload, pressure_durations, application_mode)?;
@@ -5348,14 +5363,25 @@ fn undo_last_attempt(question_id: i64, state: State<AppState>) -> Result<Questio
 fn undo_last_attempt_row(conn: &Connection, question_id: i64) -> Result<(), String> {
     let now = Local::now().to_rfc3339();
     let today = Local::now().date_naive().to_string();
-    let deleted = conn
-        .execute(
-            "DELETE FROM attempts WHERE id IN (
-               SELECT id FROM attempts WHERE question_id=?1 AND substr(attempted_at,1,10)=?2
-               ORDER BY id DESC LIMIT 1
-             )",
+    // 先定位今天该题最新一条作答。ELO 结算行与作答同生共死：
+    // 若只删 attempts，elo_events 会留下幽灵结算——当前 ELO 不回滚、
+    // 自适应锚点与 EloStatus 历史仍读得到已撤销的作答。
+    let attempt_id: Option<i64> = conn
+        .query_row(
+            "SELECT id FROM attempts WHERE question_id=?1 AND substr(attempted_at,1,10)=?2
+             ORDER BY id DESC LIMIT 1",
             params![question_id, today],
+            |r| r.get(0),
         )
+        .optional()
+        .map_err(|e| e.to_string())?;
+    let Some(attempt_id) = attempt_id else {
+        return Err("今天还没有为这道题提交过记录，无法撤销".into());
+    };
+    conn.execute("DELETE FROM elo_events WHERE attempt_id=?1", [attempt_id])
+        .map_err(|e| e.to_string())?;
+    let deleted = conn
+        .execute("DELETE FROM attempts WHERE id=?1", [attempt_id])
         .map_err(|e| e.to_string())?;
     if deleted == 0 {
         return Err("今天还没有为这道题提交过记录，无法撤销".into());
@@ -13907,8 +13933,7 @@ mod tests {
         init_schema(&conn).unwrap();
         insert_test_question(&conn, 1, "高等数学 / 测试");
         let historical_attempt_id = test_attempt(&conn, 1, "correct");
-        let before_history = attempt_and_elo_counts(&conn);
-        let before_progress = progress_snapshot(&conn, 1);
+        let (attempts_before, elo_before) = attempt_and_elo_counts(&conn);
         // The current create API supplies only question ids/durations. A historical
         // attempt (even with the same question) is not proof it belongs to this round.
         insert_codex_task_context(
@@ -13954,6 +13979,31 @@ mod tests {
             )
             .unwrap();
         assert_eq!(adjudications, 0);
+        // 只允许恰好一条新作答 + 一次新结算：历史记录不得被补结算或重复入账
+        let (attempts_after, elo_after) = attempt_and_elo_counts(&conn);
+        assert_eq!(attempts_after, attempts_before + 1);
+        assert_eq!(elo_after, elo_before + 1);
+    }
+
+    #[test]
+    fn undo_last_attempt_also_removes_its_elo_settlement() {
+        let conn = Connection::open_in_memory().unwrap();
+        init_schema(&conn).unwrap();
+        insert_test_question(&conn, 1, "高等数学 / 测试");
+        let (attempts_before, elo_before) = attempt_and_elo_counts(&conn);
+        let attempt_id = test_attempt(&conn, 1, "correct");
+        undo_last_attempt_row(&conn, 1).unwrap();
+        let orphan_elo: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM elo_events WHERE attempt_id=?1",
+                [attempt_id],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(orphan_elo, 0, "撤销作答必须连带删除其 ELO 结算行");
+        let (attempts_after, elo_after) = attempt_and_elo_counts(&conn);
+        assert_eq!(attempts_after, attempts_before);
+        assert_eq!(elo_after, elo_before, "ELO 必须完全回滚到撤销前");
     }
 
     #[test]

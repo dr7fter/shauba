@@ -1835,14 +1835,31 @@ export function TodayView({
                       : ''
                   }
                 />
-                <span className="question-timer-digits">
-                  {formatTimer(
-                    revealed && settledDuration !== null ? settledDuration : questionElapsedSec
-                  )}
-                </span>
-                <span className="question-timer-bench">
-                  / 建议基准 {formatTimer(benchmarkSec)} ({benchmarkLabel})
-                </span>
+                {(() => {
+                  const activeSec = revealed && settledDuration !== null ? settledDuration : questionElapsedSec
+                  const isOvertimeRisk = !revealed && benchmarkSec > 0 && activeSec > 1.2 * benchmarkSec
+                  const isWarningPace = !revealed && benchmarkSec > 0 && !isOvertimeRisk && activeSec > 0.85 * benchmarkSec
+                  return (
+                    <>
+                      <span className={`question-timer-digits ${isOvertimeRisk ? 'pace-digits-overtime' : isWarningPace ? 'pace-digits-warning' : ''}`}>
+                        {formatTimer(activeSec)}
+                      </span>
+                      <span className="question-timer-bench">
+                        / 建议基准 {formatTimer(benchmarkSec)} ({benchmarkLabel})
+                      </span>
+                      {isOvertimeRisk && (
+                        <span className="pace-overtime-pill" title="用时已超考场基准1.2倍，若出错将触发经济拖累扣分">
+                          ⚠️ 节奏偏慢
+                        </span>
+                      )}
+                      {isWarningPace && (
+                        <span className="pace-warning-pill" title="接近考场建议基准用时">
+                          ⏳ 接近基线
+                        </span>
+                      )}
+                    </>
+                  )
+                })()}
                 {pressureMode && isPressurePaused && (
                   <span className="pressure-paused-pill">已暂停</span>
                 )}

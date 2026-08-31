@@ -34,6 +34,7 @@ export function MistakesView({
   const [selectedIds, setSelectedIds] = useState<Set<number>>(new Set())
   const [detailQuestion, setDetailQuestion] = useState<Question | null>(null)
   const [submitting, setSubmitting] = useState(false)
+  const [tacticalFilter, setTacticalFilter] = useState<'all' | 'concept' | 'aim' | 'tactic'>('all')
 
   const load = useCallback(async (isRefresh = false) => {
     if (isRefresh) setRefreshing(true)
@@ -58,14 +59,44 @@ export function MistakesView({
     return groups.reduce((acc, g) => acc + g.items.length, 0)
   }, [groups])
 
-  // Filtered groups by search query
+  const matchesTacticalTag = useCallback((item: import('../types').MistakeTimelineItem, tag: 'all' | 'concept' | 'aim' | 'tactic'): boolean => {
+    if (tag === 'all') return true
+    const text = `${item.earliestError || ''} ${item.advice || ''} ${item.categoryPath || ''} ${item.stem || ''}`.toLowerCase()
+    if (tag === 'concept') {
+      return /概念|定理|定义|条件|极限存在|连续|可微|闭区间|保号性|收敛半径|充要|边界|前提/.test(text)
+    }
+    if (tag === 'aim') {
+      return /计算|笔误|符号|瞄准|通分|系数|展开|代数|运算|错位|移项|正负号|漏乘|约分/.test(text)
+    }
+    if (tag === 'tactic') {
+      return /方法|绕路|超时|蛮干|繁琐|待定系数|king|积分次序|泰勒|洛必达|分部|技巧|选择/.test(text)
+    }
+    return true
+  }, [])
+
+  const tagCounts = useMemo(() => {
+    let concept = 0
+    let aim = 0
+    let tactic = 0
+    for (const g of groups) {
+      for (const item of g.items) {
+        if (matchesTacticalTag(item, 'concept')) concept++
+        if (matchesTacticalTag(item, 'aim')) aim++
+        if (matchesTacticalTag(item, 'tactic')) tactic++
+      }
+    }
+    return { all: totalMistakeCount, concept, aim, tactic }
+  }, [groups, totalMistakeCount, matchesTacticalTag])
+
+  // Filtered groups by search query and tactical tag
   const filteredGroups = useMemo(() => {
     const q = searchQuery.trim().toLowerCase()
-    if (!q) return groups
 
     return groups
       .map((g) => {
         const filteredItems = g.items.filter((item) => {
+          if (!matchesTacticalTag(item, tacticalFilter)) return false
+          if (!q) return true
           return (
             String(item.questionId).includes(q) ||
             item.categoryPath.toLowerCase().includes(q) ||
@@ -81,7 +112,7 @@ export function MistakesView({
         }
       })
       .filter((g) => g.items.length > 0)
-  }, [groups, searchQuery])
+  }, [groups, searchQuery, tacticalFilter, matchesTacticalTag])
 
   // Toggle single item selection
   const toggleSelect = (questionId: number) => {
@@ -228,6 +259,40 @@ export function MistakesView({
           </button>
         </div>
       </header>
+
+      {/* 战术归因三色快速切片栏 */}
+      {groups.length > 0 && (
+        <div className="mistakes-filter-chips">
+          <button
+            type="button"
+            className={`mistakes-filter-chip ${tacticalFilter === 'all' ? 'active' : ''}`}
+            onClick={() => setTacticalFilter('all')}
+          >
+            全部错题 ({tagCounts.all})
+          </button>
+          <button
+            type="button"
+            className={`mistakes-filter-chip chip-concept ${tacticalFilter === 'concept' ? 'active' : ''}`}
+            onClick={() => setTacticalFilter('concept')}
+          >
+            🔴 概念与定理盲区 ({tagCounts.concept})
+          </button>
+          <button
+            type="button"
+            className={`mistakes-filter-chip chip-aim ${tacticalFilter === 'aim' ? 'active' : ''}`}
+            onClick={() => setTacticalFilter('aim')}
+          >
+            🟡 瞄准与计算笔误 ({tagCounts.aim})
+          </button>
+          <button
+            type="button"
+            className={`mistakes-filter-chip chip-tactic ${tacticalFilter === 'tactic' ? 'active' : ''}`}
+            onClick={() => setTacticalFilter('tactic')}
+          >
+            🔵 战术与方法绕路 ({tagCounts.tactic})
+          </button>
+        </div>
+      )}
 
       {/* Global Quick Action Bar when items exist */}
       {groups.length > 0 && (

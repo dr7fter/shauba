@@ -170,6 +170,61 @@
   box-shadow: none;
 }
 
+/* 战术归因切片栏 */
+.mistakes-filter-chips {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  padding: 2px 0;
+}
+
+.mistakes-filter-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 12px;
+  border-radius: 999px;
+  font-size: var(--fs-xs);
+  font-weight: 700;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  color: var(--muted);
+  cursor: pointer;
+  transition: all 0.15s ease;
+  user-select: none;
+}
+
+.mistakes-filter-chip:hover {
+  background: var(--sunken);
+  color: var(--ink);
+  border-color: var(--line-strong);
+}
+
+.mistakes-filter-chip.active {
+  background: var(--green-soft);
+  color: var(--green-dark);
+  border-color: var(--green);
+}
+
+.mistakes-filter-chip.chip-concept.active {
+  background: rgba(248, 81, 73, 0.15);
+  color: #f85149;
+  border-color: #f85149;
+}
+
+.mistakes-filter-chip.chip-aim.active {
+  background: rgba(240, 136, 62, 0.15);
+  color: #f0883e;
+  border-color: #f0883e;
+}
+
+.mistakes-filter-chip.chip-tactic.active {
+  background: rgba(88, 166, 255, 0.15);
+  color: #58a6ff;
+  border-color: #58a6ff;
+}
+
 /* Toolbar */
 .mistakes-toolbar {
   display: flex;

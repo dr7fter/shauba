@@ -638,21 +638,29 @@ export default function App() {
     }
   }, [todayStr, reloadDailyPlan])
 
-  // 全局快捷键 P 切换清单抽屉
+  // 全局快捷键 P 切换清单抽屉（避让高压演练与输入法）
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.isComposing) return
       const target = e.target as HTMLElement | null
       if (target && (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.isContentEditable)) {
         return
       }
       if (e.key === 'p' || e.key === 'P') {
+        // 若当前处于高压模拟模考作答状态，优先让给 TodayView 处理暂停
+        if (document.querySelector('.pressure-active-session') || document.querySelector('.pressure-panel')) {
+          return
+        }
         e.preventDefault()
         setPlanDrawerOpen((prev) => !prev)
+      } else if (e.key === 'Escape' && planDrawerOpen) {
+        e.preventDefault()
+        setPlanDrawerOpen(false)
       }
     }
     window.addEventListener('keydown', handleKeyDown)
     return () => window.removeEventListener('keydown', handleKeyDown)
-  }, [])
+  }, [planDrawerOpen])
 
   useEffect(() => {
     const root = document.documentElement

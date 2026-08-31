@@ -12,13 +12,13 @@ export type CelebrationEvent =
 export function SparkleParticles({ x, y }: { x: number; y: number }) {
   const particles = Array.from({ length: 12 }).map((_, i) => {
     const angle = (i / 12) * Math.PI * 2 + (Math.random() - 0.5) * 0.3
-    const distance = 30 + Math.random() * 35
+    const distance = 26 + Math.random() * 28
     return {
       id: i,
       tx: Math.cos(angle) * distance,
       ty: Math.sin(angle) * distance,
-      size: 4 + Math.random() * 4,
-      color: ['#4CC38A', '#FFD700', '#58A6FF', '#C297FF'][i % 4],
+      size: 4 + Math.random() * 3,
+      color: ['var(--green)', 'var(--gold)', 'var(--info)', 'var(--violet)'][i % 4],
     }
   })
 
@@ -36,15 +36,15 @@ export function SparkleParticles({ x, y }: { x: number; y: number }) {
         <motion.div
           key={p.id}
           initial={{ x: 0, y: 0, opacity: 1, scale: 0.5 }}
-          animate={{ x: p.tx, y: p.ty, opacity: 0, scale: 1.3 }}
-          transition={{ duration: 0.55, ease: 'easeOut' }}
+          animate={{ x: p.tx, y: p.ty, opacity: 0, scale: 1.2 }}
+          transition={{ duration: 0.5, ease: 'easeOut' }}
           style={{
             position: 'absolute',
             width: p.size,
             height: p.size,
             borderRadius: '50%',
             backgroundColor: p.color,
-            boxShadow: `0 0 8px ${p.color}`,
+            boxShadow: `0 0 6px ${p.color}`,
           }}
         />
       ))}
@@ -53,13 +53,13 @@ export function SparkleParticles({ x, y }: { x: number; y: number }) {
 }
 
 function ConfettiShower() {
-  const confettiPieces = Array.from({ length: 45 }).map((_, i) => ({
+  const confettiPieces = Array.from({ length: 36 }).map((_, i) => ({
     id: i,
-    left: `${(i / 45) * 100}%`,
-    delay: (i % 8) * 0.08,
-    duration: 2.2 + Math.random() * 1.5,
-    size: 8 + Math.random() * 8,
-    color: ['#FFD700', '#FF6B6B', '#4CC38A', '#58A6FF', '#C297FF', '#FFA500'][i % 6],
+    left: `${(i / 36) * 100}%`,
+    delay: (i % 6) * 0.1,
+    duration: 2.0 + Math.random() * 1.2,
+    size: 7 + Math.random() * 6,
+    color: ['var(--green)', 'var(--gold)', 'var(--info)', 'var(--violet)', 'var(--coral)'][i % 5],
     rotation: Math.random() * 360,
   }))
 
@@ -69,9 +69,9 @@ function ConfettiShower() {
         <motion.div
           key={p.id}
           className="confetti-piece"
-          initial={{ y: -40, opacity: 1, rotate: p.rotation }}
+          initial={{ y: -30, opacity: 1, rotate: p.rotation }}
           animate={{
-            y: window.innerHeight + 60,
+            y: window.innerHeight + 50,
             opacity: [1, 1, 0.8, 0],
             rotate: p.rotation + 720,
           }}
@@ -108,17 +108,17 @@ export function CelebrationEffects({
       const timer = setTimeout(() => {
         setClickPos(null)
         onDismiss()
-      }, 600)
+      }, 550)
       return () => clearTimeout(timer)
     }
 
     const duration =
       event.type === 'all_clear'
-        ? 4500
+        ? 4000
         : event.type === 'base_complete'
-        ? 3500
+        ? 3200
         : event.type === 'advanced_breakthrough'
-        ? 3000
+        ? 2800
         : 800
 
     const timer = setTimeout(onDismiss, duration)
@@ -143,21 +143,21 @@ export function CelebrationEffects({
                 <ConfettiShower />
                 <motion.div
                   className="celebration-card celebration-base"
-                  initial={{ scale: 0.7, y: 30, opacity: 0 }}
+                  initial={{ scale: 0.8, y: -20, opacity: 0 }}
                   animate={{ scale: 1, y: 0, opacity: 1 }}
-                  exit={{ scale: 0.85, opacity: 0 }}
+                  exit={{ scale: 0.9, opacity: 0 }}
                   transition={{ type: 'spring', damping: 22, stiffness: 280 }}
                 >
                   <div className="celebration-icon-glow base-glow">
-                    <ShieldCheck size={52} className="glow-icon base-icon" />
+                    <ShieldCheck size={44} className="glow-icon base-icon" />
                   </div>
                   <span className="celebration-badge base-badge">🛡️ 今日底线达成</span>
                   <h2 className="celebration-title">基础计划全部清盘！</h2>
                   <p className="celebration-desc">
                     今日考研数学基本盘已稳固锁定，坚守底线是通往 130+ 的最坚实基石！
                   </p>
-                  <button className="celebration-skip-btn" onClick={onDismiss}>
-                    <Sparkles size={15} /> 收到，继续冲刺进阶
+                  <button className="primary-button compact" onClick={onDismiss}>
+                    <Sparkles size={14} /> 收到，继续冲刺进阶
                   </button>
                 </motion.div>
               </>
@@ -166,20 +166,20 @@ export function CelebrationEffects({
             {event.type === 'advanced_breakthrough' && (
               <motion.div
                 className="celebration-card celebration-advanced"
-                initial={{ scale: 0.8, y: -20, opacity: 0 }}
+                initial={{ scale: 0.85, y: -20, opacity: 0 }}
                 animate={{ scale: 1, y: 0, opacity: 1 }}
                 exit={{ scale: 0.9, opacity: 0 }}
                 transition={{ type: 'spring', damping: 20, stiffness: 300 }}
               >
                 <div className="celebration-icon-glow advanced-glow">
-                  <Flame size={54} className="glow-icon advanced-icon" />
+                  <Flame size={44} className="glow-icon advanced-icon" />
                 </div>
                 <span className="celebration-badge advanced-badge">🔥 极限战力突破</span>
                 <h2 className="celebration-title">进阶挑战攻克！</h2>
                 <p className="celebration-desc">
                   {event.title || '斩获高光压轴题，突破认知天花板！'}
                 </p>
-                <button className="celebration-skip-btn adv-btn" onClick={onDismiss}>
+                <button className="primary-button compact" onClick={onDismiss}>
                   太棒了！
                 </button>
               </motion.div>
@@ -190,16 +190,16 @@ export function CelebrationEffects({
                 <ConfettiShower />
                 <motion.div
                   className="celebration-card celebration-allclear"
-                  initial={{ scale: 0.6, opacity: 0 }}
+                  initial={{ scale: 0.8, opacity: 0 }}
                   animate={{ scale: 1, opacity: 1 }}
-                  exit={{ scale: 0.85, opacity: 0 }}
+                  exit={{ scale: 0.9, opacity: 0 }}
                   transition={{ type: 'spring', damping: 18, stiffness: 240 }}
                 >
                   <div className="celebration-icon-glow allclear-glow">
-                    <Crown size={60} className="glow-icon allclear-icon" />
+                    <Crown size={48} className="glow-icon allclear-icon" />
                   </div>
                   <span className="celebration-badge allclear-badge">👑 ALL CLEAR · 完美大满贯</span>
-                  <h2 className="celebration-title grand-title">今日作战计划 100% 达成！</h2>
+                  <h2 className="celebration-title">今日作战计划 100% 达成！</h2>
                   <p className="celebration-desc">
                     从基础基本盘到底线难题全线拉满，今日战力已达巅峰状态！
                   </p>
@@ -209,7 +209,7 @@ export function CelebrationEffects({
                         key={i}
                         initial={{ opacity: 0, scale: 0 }}
                         animate={{ opacity: 1, scale: 1 }}
-                        transition={{ delay: 0.3 + i * 0.1 }}
+                        transition={{ delay: 0.2 + i * 0.08 }}
                       >
                         {s}
                       </motion.span>

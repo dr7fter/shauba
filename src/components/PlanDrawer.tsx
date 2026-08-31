@@ -2,8 +2,8 @@ import { motion, AnimatePresence } from 'framer-motion'
 import { useState } from 'react'
 import {
   ClipboardCheck,
-  ChevronUp,
   ChevronDown,
+  ChevronUp,
   ShieldCheck,
   Flame,
   Plus,
@@ -118,35 +118,36 @@ export function PlanDrawer({
 
   return (
     <>
-      {/* 1. 放下收起态：常驻吸底悬浮胶囊条 (Zero-Distraction Dock Pill) */}
+      {/* 1. 顶部常驻灵动药丸 (Top Island Pill) */}
       <AnimatePresence>
         {!isOpen && (
           <motion.div
-            className="plan-dock-pill"
-            key="dock-pill"
-            initial={{ y: 50, opacity: 0 }}
+            className="plan-top-pill"
+            key="top-pill"
+            initial={{ y: -50, opacity: 0 }}
             animate={{ y: 0, opacity: 1 }}
-            exit={{ y: 50, opacity: 0 }}
+            exit={{ y: -50, opacity: 0 }}
             transition={{ type: 'spring', damping: 25, stiffness: 350 }}
             onClick={onToggle}
+            title="点击下拉展开每日作战计划 (快捷键 P)"
           >
             {/* 流光反馈动画 */}
             <motion.div
-              className="plan-dock-glow"
+              className="plan-top-glow"
               key={pulseTrigger}
               initial={{ opacity: 0, scale: 0.8 }}
               animate={{ opacity: pulseTrigger > 0 ? [0, 0.8, 0] : 0, scale: [0.8, 1.2, 1] }}
               transition={{ duration: 1.2 }}
             />
 
-            {/* 向上飘出的微气泡提示 */}
+            {/* 向下弹出的微气泡提示 */}
             <AnimatePresence>
               {toastMessage && (
                 <motion.div
-                  className="plan-dock-toast"
+                  className="plan-top-toast"
                   initial={{ y: 0, opacity: 0, scale: 0.8 }}
-                  animate={{ y: -38, opacity: 1, scale: 1 }}
-                  exit={{ y: -50, opacity: 0 }}
+                  animate={{ y: 38, opacity: 1, scale: 1 }}
+                  exit={{ y: 50, opacity: 0 }}
                   transition={{ duration: 0.35 }}
                 >
                   <Sparkles size={13} /> {toastMessage}
@@ -154,114 +155,104 @@ export function PlanDrawer({
               )}
             </AnimatePresence>
 
-            <div className="dock-handle-bar">
-              <span className="dock-handle-pill" />
-            </div>
-
-            <div className="dock-content">
-              <div className="dock-title-group">
-                <ClipboardCheck size={16} className="dock-main-icon" />
-                <span className="dock-title">
-                  {isToday ? '今日作战清单' : isTomorrow ? '明日计划准备' : `${selectedDate} 清单`}
+            <div className="top-pill-content">
+              <div className="top-pill-title-group">
+                <ClipboardCheck size={15} className="top-main-icon" />
+                <span className="top-pill-title">
+                  {isToday ? '今日作战计划' : isTomorrow ? '明日计划准备' : `${selectedDate} 计划`}
                 </span>
               </div>
 
-              <div className="dock-badges">
-                <span className={`dock-badge ${baseTotal > 0 && baseCompleted === baseTotal ? 'badge-complete' : 'badge-base'}`}>
+              <div className="top-pill-badges">
+                <span className={`top-badge ${baseTotal > 0 && baseCompleted === baseTotal ? 'badge-complete' : 'badge-base'}`}>
                   🛡️ 基础 {baseCompleted}/{baseTotal}
                 </span>
-                <span className={`dock-badge ${advTotal > 0 && advCompleted === advTotal ? 'badge-complete' : 'badge-adv'}`}>
+                <span className={`top-badge ${advTotal > 0 && advCompleted === advTotal ? 'badge-complete' : 'badge-adv'}`}>
                   🔥 进阶 {advCompleted}/{advTotal}
                 </span>
               </div>
 
-              <div className="dock-pull-btn">
-                <span>展开</span>
-                <ChevronUp size={15} />
-                <span className="dock-shortcut">P</span>
+              <div className="top-pull-hint">
+                <ChevronDown size={14} />
+                <span className="top-shortcut">P</span>
               </div>
             </div>
           </motion.div>
         )}
       </AnimatePresence>
 
-      {/* 2. 拉起展开态：半屏弹性抽屉 (Bottom Sheet) */}
+      {/* 2. 顶部向下滑出弹窗 (Top Pull-Down Panel) */}
       <AnimatePresence>
         {isOpen && (
           <motion.div
-            className="plan-sheet-backdrop"
-            key="sheet-backdrop"
+            className="plan-top-overlay"
+            key="top-overlay"
             initial={{ opacity: 0 }}
             animate={{ opacity: 1 }}
             exit={{ opacity: 0 }}
             onClick={onToggle}
           >
             <motion.div
-              className="plan-sheet-modal"
-              key="sheet-modal"
-              initial={{ y: '100%' }}
-              animate={{ y: 0 }}
-              exit={{ y: '100%' }}
-              transition={{ type: 'spring', damping: 28, stiffness: 300 }}
+              className="plan-top-panel"
+              key="top-panel"
+              initial={{ y: -60, opacity: 0, scale: 0.98 }}
+              animate={{ y: 0, opacity: 1, scale: 1 }}
+              exit={{ y: -60, opacity: 0, scale: 0.98 }}
+              transition={{ type: 'spring', damping: 28, stiffness: 320 }}
               onClick={(e) => e.stopPropagation()}
             >
-              {/* 顶部拉下收起把手 */}
-              <div className="sheet-drag-handle" onClick={onToggle} title="点击或向下拉下收起 (快捷键 P)">
-                <span className="sheet-handle-bar" />
-              </div>
-
-              {/* 头部：日期切换器与快捷控制 */}
-              <div className="sheet-header">
-                <div className="sheet-date-nav">
+              {/* 头部：日期切换器与控制按钮 */}
+              <div className="top-panel-header">
+                <div className="top-panel-date-nav">
                   <button
-                    className={`date-pill ${selectedDate === yesterdayStr ? 'active' : ''}`}
+                    className={`date-nav-btn ${selectedDate === yesterdayStr ? 'active' : ''}`}
                     onClick={() => onSelectDate(yesterdayStr)}
                   >
-                    <ChevronLeft size={14} /> 昨天
+                    <ChevronLeft size={13} /> 昨天
                   </button>
                   <button
-                    className={`date-pill ${isToday ? 'active' : ''}`}
+                    className={`date-nav-btn ${isToday ? 'active' : ''}`}
                     onClick={() => onSelectDate(todayDate)}
                   >
-                    <Calendar size={14} /> 今天 ({todayDate.slice(5)})
+                    <Calendar size={13} /> 今天 ({todayDate.slice(5)})
                   </button>
                   <button
-                    className={`date-pill ${isTomorrow ? 'active' : ''}`}
+                    className={`date-nav-btn ${isTomorrow ? 'active' : ''}`}
                     onClick={() => onSelectDate(tomorrowStr)}
                   >
-                    明天 (提前规划) <ChevronRight size={14} />
+                    明天 (提前规划) <ChevronRight size={13} />
                   </button>
                 </div>
 
-                <div className="sheet-header-actions">
+                <div className="top-panel-header-actions">
                   <button
-                    className="sheet-icon-btn"
+                    className="icon-action-btn"
                     onClick={toggleSound}
                     title={soundOn ? '音效开启' : '音效静音'}
                   >
-                    {soundOn ? <Volume2 size={18} /> : <VolumeX size={18} style={{ opacity: 0.5 }} />}
+                    {soundOn ? <Volume2 size={16} /> : <VolumeX size={16} style={{ opacity: 0.5 }} />}
                   </button>
-                  <button className="sheet-icon-btn" onClick={onToggle} title="放下收起 (P)">
-                    <ChevronDown size={20} />
+                  <button className="icon-action-btn" onClick={onToggle} title="收起 (P / Esc)">
+                    <ChevronUp size={16} />
                   </button>
                 </div>
               </div>
 
               {/* 总结摘要 Slogan */}
               {currentPlan?.summary && (
-                <div className="sheet-summary-banner">
-                  <Sparkles size={16} className="summary-sparkle-icon" />
+                <div className="top-panel-summary-banner">
+                  <Sparkles size={15} className="summary-sparkle-icon" />
                   <span>{currentPlan.summary}</span>
                 </div>
               )}
 
               {/* 任务内容列表 */}
-              <div className="sheet-body">
+              <div className="top-panel-body">
                 {/* 🛡️ 基础底线计划 */}
                 <div className="quest-section">
                   <div className="quest-section-header">
                     <div className="section-title-wrap">
-                      <ShieldCheck size={18} className="base-section-icon" />
+                      <ShieldCheck size={16} className="base-icon" />
                       <span className="section-title">🛡️ 基础底线计划</span>
                       <span className="section-desc">每日基本盘 · 绝不欠账</span>
                     </div>
@@ -280,7 +271,7 @@ export function PlanDrawer({
                             className={`quest-checkbox ${q.completed ? 'checkbox-checked' : ''}`}
                             onClick={(e) => onToggleItem(q.id, !q.completed, e)}
                           >
-                            {q.completed && <Check size={14} strokeWidth={3} />}
+                            {q.completed && <Check size={13} strokeWidth={3} />}
                           </button>
 
                           <div className="quest-info">
@@ -295,7 +286,7 @@ export function PlanDrawer({
                                       onClick={() => onStartQuestion?.(qid)}
                                       title="点击立即在工作台调出该题"
                                     >
-                                      #{qid} <Play size={10} />
+                                      #{qid} <Play size={9} />
                                     </span>
                                   ))}
                                 </div>
@@ -308,7 +299,7 @@ export function PlanDrawer({
                           </div>
 
                           <button className="quest-del-btn" onClick={() => onDeleteItem(q.id)} title="删除此项">
-                            <Trash2 size={14} />
+                            <Trash2 size={13} />
                           </button>
                         </div>
                       ))
@@ -320,7 +311,7 @@ export function PlanDrawer({
                 <div className="quest-section">
                   <div className="quest-section-header">
                     <div className="section-title-wrap">
-                      <Flame size={18} className="adv-section-icon" />
+                      <Flame size={16} className="adv-icon" />
                       <span className="section-title">🔥 进阶冲刺计划</span>
                       <span className="section-desc">压轴挑战 · 突破上限</span>
                     </div>
@@ -339,7 +330,7 @@ export function PlanDrawer({
                             className={`quest-checkbox adv-checkbox ${q.completed ? 'checkbox-checked' : ''}`}
                             onClick={(e) => onToggleItem(q.id, !q.completed, e)}
                           >
-                            {q.completed && <Check size={14} strokeWidth={3} />}
+                            {q.completed && <Check size={13} strokeWidth={3} />}
                           </button>
 
                           <div className="quest-info">
@@ -360,7 +351,7 @@ export function PlanDrawer({
                                       onClick={() => onStartQuestion?.(qid)}
                                       title="点击立即开始攻坚"
                                     >
-                                      #{qid} <Play size={10} />
+                                      #{qid} <Play size={9} />
                                     </span>
                                   ))}
                                 </div>
@@ -369,7 +360,7 @@ export function PlanDrawer({
                           </div>
 
                           <button className="quest-del-btn" onClick={() => onDeleteItem(q.id)} title="删除此项">
-                            <Trash2 size={14} />
+                            <Trash2 size={13} />
                           </button>
                         </div>
                       ))
@@ -379,19 +370,19 @@ export function PlanDrawer({
               </div>
 
               {/* 底部操作工具栏 */}
-              <div className="sheet-footer">
-                <button className="sheet-action-btn btn-add" onClick={() => setShowAddModal(true)}>
-                  <Plus size={16} /> 记一条新计划
+              <div className="top-panel-footer">
+                <button className="panel-action-btn btn-add" onClick={() => setShowAddModal(true)}>
+                  <Plus size={14} /> 记一条新计划
                 </button>
 
                 {onAskCodexPlan && (
-                  <button className="sheet-action-btn btn-codex" onClick={onAskCodexPlan}>
-                    <Sparkles size={16} /> 让 Codex 辅助制定明日计划
+                  <button className="panel-action-btn btn-codex" onClick={onAskCodexPlan}>
+                    <Sparkles size={14} /> 让 Codex 辅助制定明日计划
                   </button>
                 )}
 
-                <button className="sheet-action-btn btn-collapse" onClick={onToggle}>
-                  <ChevronDown size={16} /> 放下收起 (P)
+                <button className="panel-action-btn btn-collapse" onClick={onToggle}>
+                  <ChevronUp size={14} /> 收起 (P / Esc)
                 </button>
               </div>
 
@@ -407,16 +398,16 @@ export function PlanDrawer({
                   >
                     <motion.form
                       className="add-task-modal"
-                      initial={{ scale: 0.9, opacity: 0 }}
+                      initial={{ scale: 0.95, opacity: 0 }}
                       animate={{ scale: 1, opacity: 1 }}
-                      exit={{ scale: 0.9, opacity: 0 }}
+                      exit={{ scale: 0.95, opacity: 0 }}
                       onClick={(e) => e.stopPropagation()}
                       onSubmit={handleAddSubmit}
                     >
                       <div className="modal-header">
                         <h3>➕ 新增计划项 ({selectedDate})</h3>
                         <button type="button" className="close-btn" onClick={() => setShowAddModal(false)}>
-                          <X size={18} />
+                          <X size={16} />
                         </button>
                       </div>
 
@@ -503,10 +494,10 @@ export function PlanDrawer({
                       )}
 
                       <div className="modal-actions">
-                        <button type="button" className="btn-cancel" onClick={() => setShowAddModal(false)}>
+                        <button type="button" className="secondary-button compact" onClick={() => setShowAddModal(false)}>
                           取消
                         </button>
-                        <button type="submit" className="btn-confirm">
+                        <button type="submit" className="primary-button compact">
                           确认添加
                         </button>
                       </div>

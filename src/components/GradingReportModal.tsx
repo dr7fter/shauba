@@ -18,12 +18,14 @@ import { addToCustomQueue, getQuestion, toggleFavorite } from '../api'
 import {
   CS_RATING_MAX,
   averageCsRating,
+  benchmarkSeconds,
+  clampCsRating,
   csRatingAccent,
   csRatingTier,
   csRatingTone,
-  gradeOutcomeKey,
-  gradeToCsRating,
+  deriveGradeCsRating,
   formatElapsed,
+  gradeOutcomeKey,
   predictedExamScore,
   type GradeOutcome,
 } from '../utils'
@@ -267,8 +269,26 @@ export function PressureLearningReportView({
   const reportTime = report.confirmedAt ?? report.createdAt
   const reportDate = new Date(reportTime < 1_000_000_000_000 ? reportTime * 1000 : reportTime)
   const ungradedIds = report.ungradedQuestionIds ?? []
-  const ratingForGrade = (grade: GradingReport['grades'][number]) =>
-    gradeToCsRating(grade, averageDuration)
+  const ratingForGrade = (grade: GradingReport['grades'][number]) => {
+    if (typeof grade.rating === 'number' && Number.isFinite(grade.rating)) {
+      return clampCsRating(grade.rating)
+    }
+    const q = questions[grade.questionId]
+    const bench = q ? benchmarkSeconds(q.questionType) : averageDuration
+    const diffMultiplier = q?.difficulty
+      ? 0.9 + (Math.max(1, Math.min(5, q.difficulty)) - 1) * 0.075
+      : grade.difficultyMultiplier
+    return deriveGradeCsRating({
+      rating: grade.rating,
+      outcome: gradeOutcomeKey(grade),
+      selfRating: grade.selfRating,
+      duration: grade.duration,
+      averageDuration,
+      benchmarkSeconds: bench,
+      difficultyMultiplier: diffMultiplier,
+      dimensions: grade.dimensions,
+    })
+  }
   const ratingScores = grades.map(ratingForGrade)
   const averageRatingScore = averageCsRating(ratingScores) ?? 0
   const ratingTier = csRatingTier(averageRatingScore) ?? 'D'
@@ -837,6 +857,21 @@ export function PressureLearningReportView({
 
                             <span className={`verdict-pill ${tone.key}`}>
                               {tone.label}
+                            </span>
+                            <span
+                              style={{
+                                fontSize: 11.5,
+                                fontWeight: 800,
+                                padding: '2px 8px',
+                                borderRadius: 6,
+                                background: 'var(--canvas)',
+                                border: '1px solid var(--line)',
+                                display: 'inline-flex',
+                                alignItems: 'center',
+                              }}
+                              className={`rating-${csRatingTone(ratingScores[index])}`}
+                            >
+                              Rating {ratingScores[index].toFixed(2)}
                             </span>
                             <span className="question-duration">
                               <Clock3 size={13} /> {formatElapsed(Math.max(0, grade.duration || 0) * 1000)}

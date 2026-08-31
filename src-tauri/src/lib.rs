@@ -2836,13 +2836,47 @@ fn build_pressure_grading_report(
         if let Some(advice) = attempt.advice.as_deref() {
             push_unique_nonempty(&mut suggestions, advice);
         }
+        let duration = resolved_durations.get(question_id).copied().unwrap_or(30);
+        let dims_evidence = services::rating::DimensionEvidence {
+            rigor: attempt.dimensions.get("rigor").and_then(|d| d.score),
+            computation: attempt.dimensions.get("computation").and_then(|d| d.score),
+            modeling: attempt.dimensions.get("modeling").and_then(|d| d.score),
+            method_use: attempt.dimensions.get("methodUse").and_then(|d| d.score),
+            speed: attempt.dimensions.get("speed").and_then(|d| d.score),
+            strategy_insight: attempt.dimensions.get("strategyInsight").and_then(|d| d.score),
+            technique_level: attempt
+                .dimensions
+                .get("strategyInsight")
+                .and_then(|d| d.technique_level),
+        };
+        let bench = 600;
+        let verdict_str = attempt.verdict.as_deref().unwrap_or(&attempt.result);
+        let final_rating = if let Some(value) = attempt.rating.filter(|v| (AI_RATING_MIN..=AI_RATING_MAX).contains(v)) {
+            value
+        } else if !dims_evidence.is_empty() {
+            services::rating::hltv_rating(
+                verdict_str,
+                &dims_evidence,
+                duration,
+                bench,
+                attempt.difficulty_multiplier,
+            )
+        } else {
+            services::rating::attempt_rating(
+                verdict_str,
+                attempt.self_rating,
+                duration,
+                bench,
+            )
+        };
+
         grades.push(json!({
             "questionId": attempt.question_id,
             "correct": grade_class == "correct",
             "userAnswer": "",
             "correctAnswer": "",
             "feedback": attempt.summary,
-            "duration": resolved_durations.get(question_id).copied().unwrap_or(30),
+            "duration": duration,
             "result": attempt.result,
             "verdict": attempt.verdict,
             "selfRating": attempt.self_rating,
@@ -2852,7 +2886,7 @@ fn build_pressure_grading_report(
             "advice": attempt.advice,
             "betterSolution": attempt.better_solution,
             "confidence": attempt.confidence.clamp(0.0, 1.0),
-            "rating": attempt.rating.map(|value| value.clamp(AI_RATING_MIN, AI_RATING_MAX)),
+            "rating": final_rating,
             "ratingTier": attempt.rating_tier,
             "difficultyMultiplier": attempt.difficulty_multiplier,
             "dimensions": attempt.dimensions,
@@ -10239,11 +10273,11 @@ fn build_codex_batch_report(
         total_duration += duration;
 
         // batch 回传载荷本身不含标准答案与用户作答，从库里补齐
-        let correct_answer: String = conn
+        let (correct_answer, question_type, difficulty): (String, String, i64) = conn
             .query_row(
-                "SELECT correct_answer FROM questions WHERE id=?1",
+                "SELECT correct_answer, question_type, difficulty FROM questions WHERE id=?1",
                 [question_id],
-                |row| row.get(0),
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
             )
             .unwrap_or_default();
         let user_answer: String = conn
@@ -10254,6 +10288,64 @@ fn build_codex_batch_report(
                 |row| row.get(0),
             )
             .unwrap_or_default();
+
+        let bench = services::rating::benchmark_seconds(&question_type);
+        let difficulty_multiplier = item
+            .get("difficultyMultiplier")
+            .and_then(|v| v.as_f64())
+            .or_else(|| Some(0.9 + (difficulty.clamp(1, 5) - 1) as f64 * 0.075));
+
+        let dims_evidence = if let Some(dims_obj) = item.get("dimensions").and_then(|v| v.as_object()) {
+            let get_d = |k: &str| {
+                dims_obj
+                    .get(k)
+                    .and_then(|d| d.get("score"))
+                    .and_then(|s| s.as_f64())
+            };
+            let tech = dims_obj
+                .get("strategyInsight")
+                .and_then(|d| d.get("techniqueLevel"))
+                .and_then(|t| t.as_i64())
+                .map(|t| t as i32);
+            services::rating::DimensionEvidence {
+                rigor: get_d("rigor"),
+                computation: get_d("computation"),
+                modeling: get_d("modeling"),
+                method_use: get_d("methodUse"),
+                speed: get_d("speed"),
+                strategy_insight: get_d("strategyInsight"),
+                technique_level: tech,
+            }
+        } else {
+            services::rating::DimensionEvidence::default()
+        };
+
+        let fluency = item.get("selfRating").and_then(|v| v.as_i64()).unwrap_or(2) as i32;
+
+        let db_attempt_rating: Option<f64> = conn
+            .query_row(
+                "SELECT ai_rating FROM attempts WHERE question_id=?1 AND (session_id=?2 OR session_id LIKE ?3) ORDER BY id DESC LIMIT 1",
+                params![question_id, task_id, format!("%{task_id}%")],
+                |row| row.get(0),
+            )
+            .ok()
+            .flatten();
+
+        let final_rating = if let Some(ar) = db_attempt_rating.filter(|v| (services::rating::RATING_MIN..=services::rating::RATING_MAX).contains(v)) {
+            ar
+        } else if let Some(r) = item.get("rating").and_then(|v| v.as_f64()).filter(|v| (services::rating::RATING_MIN..=services::rating::RATING_MAX).contains(v)) {
+            r
+        } else if !dims_evidence.is_empty() {
+            services::rating::hltv_rating(
+                verdict,
+                &dims_evidence,
+                duration,
+                bench,
+                difficulty_multiplier,
+            )
+        } else {
+            services::rating::attempt_rating(verdict, fluency, duration, bench)
+        };
 
         grades.push(json!({
             "questionId": question_id,
@@ -10271,7 +10363,7 @@ fn build_codex_batch_report(
             "advice": item.get("advice"),
             "betterSolution": item.get("betterSolution"),
             "confidence": item.get("confidence"),
-            "rating": item.get("rating"),
+            "rating": final_rating,
             "ratingTier": item.get("ratingTier"),
             "difficultyMultiplier": item.get("difficultyMultiplier"),
             "dimensions": item.get("dimensions"),

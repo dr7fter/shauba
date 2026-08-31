@@ -147,6 +147,8 @@ export function gradeFromPercent(value: number): CsRatingTier {
   return 'D'
 }
 
+import type { RatingDimensions } from './types'
+
 export type GradeOutcome = 'correct' | 'partial' | 'uncertain' | 'wrong'
 
 export type GradeLike = {
@@ -157,6 +159,145 @@ export type GradeLike = {
   selfRating?: number | null
   duration?: number | null
   difficultyMultiplier?: number | null
+  dimensions?: RatingDimensions | null
+  questionType?: string | null
+}
+
+/**
+ * 考研数一各题型基准耗时（单选3分 / 多选4分 / 填空5分 / 解答10分）。
+ * 与 Rust 内核 services::rating::benchmark_seconds 保持严格一致。
+ */
+export function benchmarkSeconds(questionType?: string | null): number {
+  switch (questionType) {
+    case 'single_choice':
+      return 180
+    case 'multiple_choice':
+      return 240
+    case 'fill_in':
+      return 300
+    default:
+      return 600
+  }
+}
+
+const HLTV3_W_CAST = 0.38
+const HLTV3_W_IMPACT = 0.22
+const HLTV3_W_KAST = 0.20
+const HLTV3_W_PACING = 0.20
+const HLTV3_INTERCEPT = 0.26
+const HLTV3_SLOPE = 0.0125
+const PACING_NEUTRAL = 85.0
+const PACING_MIN = 45.0
+const PACING_MAX = 135.0
+const PACING_AI_WEIGHT = 0.45
+const PACING_TIME_WEIGHT = 0.55
+const PACING_RUSH_CAP_ON_WRONG = 85.0
+const SOFT_DIFF_FLOOR = 0.92
+const SOFT_DIFF_CEIL = 1.10
+const SOFT_DIFF_CAP = 1.24
+const SOFT_DIFF_SLOPE = 0.45
+const DONK_PACING_THRESHOLD = 118.0
+const PACING_MIN_PLAUSIBLE_SECONDS = 5.0
+const PACING_MAX_PLAUSIBLE_SECONDS = 1800.0
+
+function softDiff(difficulty: number): number {
+  let compressed = difficulty
+  if (difficulty < SOFT_DIFF_FLOOR) {
+    compressed = SOFT_DIFF_FLOOR + (difficulty - SOFT_DIFF_FLOOR) * SOFT_DIFF_SLOPE
+  } else if (difficulty > SOFT_DIFF_CEIL) {
+    compressed = SOFT_DIFF_CEIL + (difficulty - SOFT_DIFF_CEIL) * SOFT_DIFF_SLOPE
+  }
+  return Math.min(compressed, SOFT_DIFF_CAP)
+}
+
+function hasDimensionEvidence(dims?: RatingDimensions | null): boolean {
+  if (!dims) return false
+  return Boolean(
+    (dims.rigor?.score != null && Number.isFinite(dims.rigor.score)) ||
+    (dims.computation?.score != null && Number.isFinite(dims.computation.score)) ||
+    (dims.modeling?.score != null && Number.isFinite(dims.modeling.score)) ||
+    (dims.methodUse?.score != null && Number.isFinite(dims.methodUse.score)) ||
+    (dims.speed?.score != null && Number.isFinite(dims.speed.score)) ||
+    (dims.strategyInsight?.score != null && Number.isFinite(dims.strategyInsight.score))
+  )
+}
+
+/**
+ * 前后端完全一致的 HLTV Rating 3.0 复合评分合成（对齐 rating.rs hltv_rating）。
+ */
+export function computeHltvRating(input: {
+  outcome: 'correct' | 'partial' | 'wrong' | 'uncertain'
+  dimensions: RatingDimensions
+  durationSeconds: number
+  benchmarkSeconds?: number | null
+  difficultyMultiplier?: number | null
+}): number {
+  const diff = softDiff(input.difficultyMultiplier ?? 1.0)
+  const dims = input.dimensions
+
+  // 1. Cast
+  const compHint = dims.computation?.score ?? 50.0
+  let cast = 10.0
+  if (input.outcome === 'correct') {
+    cast = 100.0
+  } else if (input.outcome === 'partial') {
+    cast = 38.0 + (compHint / 100.0) * 12.0
+  } else if (input.outcome === 'uncertain') {
+    cast = 30.0
+  }
+
+  // 2. Impact
+  const strategy = dims.strategyInsight?.score ?? (input.outcome === 'correct' ? 65.0 : input.outcome === 'partial' ? 45.0 : input.outcome === 'uncertain' ? 30.0 : 18.0)
+  const method = dims.methodUse?.score ?? (input.outcome === 'correct' ? 65.0 : input.outcome === 'partial' ? 45.0 : input.outcome === 'uncertain' ? 30.0 : 18.0)
+  let impact = 0.60 * strategy + 0.40 * method
+  const tech = dims.strategyInsight?.techniqueLevel ?? 0
+  if (tech >= 4) {
+    impact += 6.0
+  }
+  if (diff >= 1.06 && input.outcome !== 'wrong') {
+    impact += 6.0
+  }
+  impact = Math.max(0, Math.min(100, impact))
+
+  // 3. KAST
+  const rigor = dims.rigor?.score ?? (input.outcome === 'correct' ? 75.0 : input.outcome === 'partial' ? 48.0 : input.outcome === 'uncertain' ? 35.0 : 25.0)
+  const computation = dims.computation?.score ?? (input.outcome === 'correct' ? 75.0 : input.outcome === 'partial' ? 48.0 : input.outcome === 'uncertain' ? 35.0 : 25.0)
+  const modeling = dims.modeling?.score ?? (input.outcome === 'correct' ? 75.0 : input.outcome === 'partial' ? 48.0 : input.outcome === 'uncertain' ? 35.0 : 25.0)
+  const kast = Math.max(0, Math.min(100, 0.50 * rigor + 0.30 * computation + 0.20 * modeling))
+
+  // 4. Pacing
+  const duration = Math.max(1, input.durationSeconds)
+  const bench = Math.max(1, input.benchmarkSeconds ?? 600)
+  const timingPlausible = duration >= PACING_MIN_PLAUSIBLE_SECONDS && duration <= PACING_MAX_PLAUSIBLE_SECONDS
+  const pTime = timingPlausible ? Math.max(PACING_MIN, Math.min(PACING_MAX, (bench / duration) * PACING_NEUTRAL)) : PACING_NEUTRAL
+  let pacing = pTime
+  if (typeof dims.speed?.score === 'number' && Number.isFinite(dims.speed.score)) {
+    const pAi = PACING_MIN + (Math.max(0, Math.min(100, dims.speed.score)) / 100.0) * (PACING_MAX - PACING_MIN)
+    pacing = PACING_AI_WEIGHT * pAi + PACING_TIME_WEIGHT * pTime
+  }
+  if (input.outcome === 'wrong') {
+    pacing = Math.min(pacing, PACING_RUSH_CAP_ON_WRONG)
+  }
+
+  // 5. EcoDrag
+  let ecoDrag = 0.0
+  if (input.outcome === 'wrong') {
+    if (timingPlausible && duration > bench * 1.2) {
+      ecoDrag = Math.max(0.0, Math.min(1.5, (duration / bench) - 1.0)) * 24.0
+    } else {
+      ecoDrag = 8.0
+    }
+  }
+
+  const composite = HLTV3_W_CAST * cast + HLTV3_W_IMPACT * impact + HLTV3_W_KAST * kast + HLTV3_W_PACING * pacing - ecoDrag
+  const baseRaw = HLTV3_INTERCEPT + HLTV3_SLOPE * composite
+  let rating = baseRaw * diff
+  if (input.outcome === 'correct' && baseRaw > 1.40 && pacing >= DONK_PACING_THRESHOLD) {
+    const burst = Math.pow(baseRaw - 1.40, 0.82) * 1.55
+    rating = (1.40 + burst) * diff
+  }
+
+  return clampCsRating(rating)
 }
 
 /**
@@ -172,14 +313,16 @@ export function gradeOutcomeKey(grade: GradeLike): GradeOutcome {
 /**
  * 单条批改结果 → CS rating（洞察页 averageReportRating 与报告弹窗 ratingForGrade 的合并实现）。
  */
-export function gradeToCsRating(grade: GradeLike, averageDuration?: number | null): number {
+export function gradeToCsRating(grade: GradeLike, benchmarkOrAverageSec?: number | null): number {
   return deriveGradeCsRating({
     rating: grade.rating,
     outcome: gradeOutcomeKey(grade),
     selfRating: grade.selfRating,
     duration: grade.duration,
-    averageDuration: averageDuration ?? null,
+    averageDuration: benchmarkOrAverageSec ?? null,
+    benchmarkSeconds: benchmarkOrAverageSec ?? null,
     difficultyMultiplier: grade.difficultyMultiplier,
+    dimensions: grade.dimensions,
   })
 }
 
@@ -190,21 +333,36 @@ export function deriveGradeCsRating(input: {
   duration?: number | null
   averageDuration?: number | null
   difficultyMultiplier?: number | null
+  dimensions?: RatingDimensions | null
+  benchmarkSeconds?: number | null
 }): number {
+  // 评分回退链（前后端一致）：六维 HLTV 合成 > Codex rating > 特征曲线
+
+  // 1. 如果已有确定的 rating，直接采信并 clamp
+  if (typeof input.rating === 'number' && Number.isFinite(input.rating) && input.rating >= CS_RATING_MIN && input.rating <= CS_RATING_MAX) {
+    return clampCsRating(input.rating)
+  }
+
+  // 2. 六维 HLTV 3.0 合成
+  if (hasDimensionEvidence(input.dimensions)) {
+    return computeHltvRating({
+      outcome: input.outcome,
+      dimensions: input.dimensions!,
+      durationSeconds: input.duration || input.benchmarkSeconds || input.averageDuration || 600,
+      benchmarkSeconds: input.benchmarkSeconds || input.averageDuration || 600,
+      difficultyMultiplier: input.difficultyMultiplier,
+    })
+  }
+
+  // 3. 特征曲线兜底
   const outcomeScore = input.outcome === 'correct' ? 92 : input.outcome === 'partial' ? 62 : input.outcome === 'uncertain' ? 35 : 20
   const fluencyScore = (Math.max(1, Math.min(4, input.selfRating ?? 2)) / 4) * 100
-  const duration = Math.max(1, input.duration || input.averageDuration || 1)
-  const averageDuration = Math.max(1, input.averageDuration || duration)
-  const speedScore = Math.max(45, Math.min(115, (averageDuration / duration) * 100))
+  const duration = Math.max(1, input.duration || input.benchmarkSeconds || input.averageDuration || 1)
+  const bench = Math.max(1, input.benchmarkSeconds || input.averageDuration || duration)
+  const speedScore = Math.max(45, Math.min(115, (bench / duration) * 100))
   const performanceScore = outcomeScore * 0.55 + fluencyScore * 0.25 + speedScore * 0.2
   const difficultyMultiplier = clampDifficultyMultiplier(input.difficultyMultiplier ?? 1)
 
-  // Codex 评分直接采信（与 Rust 内核 services/rating.rs 策略一致）：
-  // 分布守门由提示词锚点 rubric 与 0-2 范围校验完成，特征值仅用于
-  // 无 AI 评分时的合成，不再对草稿评分二次压分。
-  if (typeof input.rating === 'number' && Number.isFinite(input.rating)) {
-    return clampCsRating(input.rating)
-  }
   return ratingCurve(performanceScore, difficultyMultiplier)
 }
 

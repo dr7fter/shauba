@@ -5,7 +5,7 @@ import {
   createPracticeSessionPayload,
   determineAttemptEvidence,
 } from '../src/domain/evidence.ts'
-import { compareSemver, predictedExamScore } from '../src/utils.ts'
+import { compareSemver, computeHltvRating, deriveGradeCsRating, predictedExamScore } from '../src/utils.ts'
 
 test('paper objective without a screen selection is not inferred as wrong', () => {
   assert.deepEqual(
@@ -73,4 +73,28 @@ test('predicted exam score maps realistically from rating and kast', () => {
   assert.equal(predictedExamScore(1.25, 85), 121)
   assert.equal(predictedExamScore(1.5, 95), 147)
 })
+
+test('deriveGradeCsRating trusts explicit rating if provided', () => {
+  assert.equal(deriveGradeCsRating({ rating: 1.45, outcome: 'correct' }), 1.45)
+  assert.equal(deriveGradeCsRating({ rating: 0.65, outcome: 'wrong' }), 0.65)
+})
+
+test('deriveGradeCsRating computes HLTV 3.0 from dimensions matching backend', () => {
+  const rating = computeHltvRating({
+    outcome: 'correct',
+    dimensions: {
+      rigor: { score: 80 },
+      computation: { score: 85 },
+      modeling: { score: 80 },
+      methodUse: { score: 85 },
+      speed: { score: 90 },
+      strategyInsight: { score: 85, techniqueLevel: 4 },
+    },
+    durationSeconds: 120,
+    benchmarkSeconds: 180,
+    difficultyMultiplier: 1.05,
+  })
+  assert.ok(rating > 1.2 && rating <= 2.5, `Rating ${rating} should be in high tier`)
+})
+
 

@@ -512,7 +512,11 @@ export function PressureLearningReportView({
             }}
           >
             <strong style={{ display: 'block', marginBottom: 4 }}>
-              📌 本场结论{topWeakness ? `：主要卡在「${topWeakness}」` : ''}
+              📌 本场结论{topWeakness ? (
+                <span>
+                  ：主要卡在「<MathText value={topWeakness} />」
+                </span>
+              ) : ''}
             </strong>
             <span style={{ color: 'var(--muted)' }}>
               {totalCount} 题中做错 {wrongCount} 道
@@ -871,10 +875,10 @@ export function PressureLearningReportView({
                             {(grade.userAnswer || grade.correctAnswer) && (
                               <div className="answer-comparison">
                                 <span>
-                                  你的答案：<strong>{grade.userAnswer || '纸笔作答'}</strong>
+                                  你的答案：<strong><MathText value={grade.userAnswer || '纸笔作答'} /></strong>
                                 </span>
                                 <span>
-                                  参考答案：<strong>{grade.correctAnswer || '见解析'}</strong>
+                                  参考答案：<strong><MathText value={grade.correctAnswer || '见解析'} /></strong>
                                 </span>
                               </div>
                             )}
@@ -917,12 +921,12 @@ export function PressureLearningReportView({
                                 )}
                                 {errorTags.map((tag) => (
                                   <span className="error-tag" key={`e-${tag}`}>
-                                    {tag}
+                                    <MathText value={tag} />
                                   </span>
                                 ))}
                                 {weaknessTags.map((tag) => (
                                   <span className="weakness-tag" key={`w-${tag}`}>
-                                    {tag}
+                                    <MathText value={tag} />
                                   </span>
                                 ))}
                               </div>

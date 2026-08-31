@@ -169,7 +169,7 @@ export function FriendPublicReportModal({
                     <div className="tags-wrap">
                       {report.strengths.map((t) => (
                         <span key={t} className="public-tag strength">
-                          {t}
+                          <MathText value={t} />
                         </span>
                       ))}
                     </div>
@@ -181,7 +181,7 @@ export function FriendPublicReportModal({
                     <div className="tags-wrap">
                       {report.weaknesses.map((t) => (
                         <span key={t} className="public-tag weakness">
-                          {t}
+                          <MathText value={t} />
                         </span>
                       ))}
                     </div>
@@ -249,12 +249,12 @@ export function FriendPublicReportModal({
                         <div className="q-tags-row">
                           {q.errorTags.map((tag) => (
                             <span key={tag} className="q-tag error">
-                              {tag}
+                              <MathText value={tag} />
                             </span>
                           ))}
                           {q.weaknessTags.map((tag) => (
                             <span key={tag} className="q-tag topic">
-                              {tag}
+                              <MathText value={tag} />
                             </span>
                           ))}
                         </div>

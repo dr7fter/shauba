@@ -228,12 +228,12 @@ export function HistoryView({
                             <div className="tag-line">
                               {item.aiErrorTags.map((tag) => (
                                 <span className="error-tag" key={tag}>
-                                  {tag}
+                                  <MathText value={tag} />
                                 </span>
                               ))}
                               {item.aiWeaknessTags.map((tag) => (
                                 <span className="weakness-tag" key={tag}>
-                                  {tag}
+                                  <MathText value={tag} />
                                 </span>
                               ))}
                             </div>

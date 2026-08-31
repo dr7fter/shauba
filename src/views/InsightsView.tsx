@@ -1380,7 +1380,7 @@ export function InsightsView({
                             : '开始该标签专项训练'
                         }
                       >
-                        {item.tag} × {item.count}
+                        <MathText value={item.tag} /> × {item.count}
                         {arrow && <span style={{ color: arrowColor, fontWeight: 800 }}>{arrow}</span>}
                       </button>
                     )

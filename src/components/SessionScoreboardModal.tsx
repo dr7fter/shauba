@@ -1,6 +1,7 @@
 import { motion } from 'framer-motion'
 import { Flame, Timer, Trophy, X, Zap } from 'lucide-react'
 import { csRatingTone } from '../utils'
+import { MathText } from './MathText'
 import type { SessionScoreboard } from '../types'
 
 /** CS 赛后计分板风格的战绩面板：WE 评分、MVP、连胜、秒杀与本场 ELO。 */
@@ -67,7 +68,7 @@ export function SessionScoreboardModal({
             <div key={q.questionId} style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '6px 2px', fontSize: 13 }}>
               <span style={{ width: 56, color: 'var(--muted)' }}>#{q.questionId}</span>
               <span style={{ width: 30 }}>{q.outcome === 'correct' ? '✓' : q.outcome === 'partial' ? '半' : '✗'}</span>
-              <span style={{ flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', color: 'var(--muted)' }}>{q.stem}</span>
+              <span style={{ flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', color: 'var(--muted)' }}><MathText value={q.stem} /></span>
               {q.impact !== null && <span style={{ display: 'inline-flex', gap: 3, alignItems: 'center', color: '#E87722', fontSize: 12 }}><Flame size={12} />{Math.round(q.impact)}</span>}
               <span style={{ display: 'inline-flex', gap: 3, alignItems: 'center', width: 62, justifyContent: 'flex-end', color: 'var(--muted)' }}><Timer size={12} />{Math.round(q.durationSeconds / 60)}:{String(q.durationSeconds % 60).padStart(2, '0')}</span>
               <span style={{ width: 40, textAlign: 'right', fontWeight: 700 }} className={`rating-${csRatingTone(q.rating)}`}>{q.rating.toFixed(2)}</span>

@@ -318,12 +318,12 @@ export function InboxView({
                     <div className="tag-line">
                       {item.errorTags.map((t) => (
                         <span className="error-tag" key={t}>
-                          {t}
+                          <MathText value={t} />
                         </span>
                       ))}
                       {item.weaknessTags.map((t) => (
                         <span className="weakness-tag" key={t}>
-                          {t}
+                          <MathText value={t} />
                         </span>
                       ))}
                     </div>

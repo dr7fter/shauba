@@ -242,6 +242,35 @@ curl -sL https://github.com/dr7fter/shauba/releases/latest/download/latest.json 
 
 `recommendedQuestionIds` **必须先在 app 库验证存在**（`sqlite3 "$APPDATA/com.shuaba.math/shuaba.db" "SELECT id FROM questions WHERE id IN (...)"`），无法验证就不要回传。荐题后用户在 app：Codex 收件箱 → 确认 → 题组进入今日训练。
 
+### 4. 每日作战计划（`kind: "daily_plan"`，taskId 形如 `SB-PLAN-YYYYMMDD-random`）
+
+支持提前一天制定明日或指定日期的基础与进阶作战清单：
+
+```json
+{
+  "schemaVersion": 1, "kind": "daily_plan", "taskId": "SB-PLAN-YYYYMMDD-random",
+  "planDate": "2026-09-01",
+  "summary": "明日攻坚：定积分 King 变换与多元极值高光突破",
+  "baseQuests": [
+    {
+      "id": "b1", "title": "攻克 3 道定积分真题基础题", "targetType": "count", "targetCount": 3,
+      "categoryPath": "高等数学/一元函数积分学", "questionIds": []
+    },
+    {
+      "id": "b2", "title": "复习第 5 讲张宇基础讲义笔记", "targetType": "manual", "questionIds": []
+    }
+  ],
+  "advancedQuests": [
+    {
+      "id": "a1", "title": "攻克 1 道真题多元极值压轴（Rating ≥ 1.35）", "targetType": "rating_challenge",
+      "minRating": 1.35, "questionIds": []
+    }
+  ]
+}
+```
+
+用户在收件箱一键确认后，自动落入对应日期的每日清单中。
+
 ## 八、工作方式约定
 
 - **改 UI 前先看现状**：大改先出方案确认再动手；改完必须 `npm run build` + `cargo test` 验证，视觉改动要看截图/实测

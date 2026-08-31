@@ -437,6 +437,34 @@ struct CodexPayload {
     difficulty_multiplier: Option<f64>,
     #[serde(default)]
     dimensions: HashMap<String, RatingDimension>,
+    #[serde(default)]
+    plan_date: Option<String>,
+    #[serde(default)]
+    base_quests: Vec<DailyPlanQuestPayload>,
+    #[serde(default)]
+    advanced_quests: Vec<DailyPlanQuestPayload>,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct DailyPlanQuestPayload {
+    #[serde(default)]
+    pub id: Option<String>,
+    pub title: String,
+    #[serde(default)]
+    pub target_type: Option<String>,
+    #[serde(default)]
+    pub target_count: Option<i64>,
+    #[serde(default)]
+    pub min_rating: Option<f64>,
+    #[serde(default)]
+    pub category_path: Option<String>,
+    #[serde(default)]
+    pub question_ids: Vec<i64>,
+    #[serde(default)]
+    pub completed: Option<bool>,
+    #[serde(default)]
+    pub completed_at: Option<i64>,
 }
 
 #[derive(Debug, Serialize, Default)]
@@ -954,7 +982,30 @@ fn init_schema(conn: &Connection) -> rusqlite::Result<()> {
           );
           INSERT OR IGNORE INTO settings(key,value) VALUES
             ('daily_mode','problems'),('daily_problem_target','20'),('daily_minute_target','90'),
-            ('current_chapter_id',''),('category_schema_version','0'),('last_attempt_id','');",
+            ('current_chapter_id',''),('category_schema_version','0'),('last_attempt_id','');
+          CREATE TABLE IF NOT EXISTS daily_plans (
+            plan_date TEXT PRIMARY KEY,
+            task_id TEXT,
+            summary TEXT,
+            created_at INTEGER NOT NULL,
+            updated_at INTEGER NOT NULL
+          );
+          CREATE TABLE IF NOT EXISTS daily_plan_items (
+            id TEXT PRIMARY KEY,
+            plan_date TEXT NOT NULL,
+            tier TEXT NOT NULL,
+            title TEXT NOT NULL,
+            target_type TEXT NOT NULL,
+            target_count INTEGER,
+            min_rating REAL,
+            category_path TEXT,
+            question_ids_json TEXT,
+            completed INTEGER NOT NULL DEFAULT 0,
+            completed_at INTEGER,
+            sort_order INTEGER NOT NULL DEFAULT 0,
+            FOREIGN KEY(plan_date) REFERENCES daily_plans(plan_date) ON DELETE CASCADE
+          );
+          CREATE INDEX IF NOT EXISTS idx_daily_plan_items_date ON daily_plan_items(plan_date, tier, sort_order);",
     )?;
     services::learning::init_schema(conn)
 }
@@ -9182,6 +9233,52 @@ fn confirm_inbox(
         }
         return Ok(ConfirmInboxResult::default());
     }
+    if payload.kind == "daily_plan" {
+        if apply_to_profile {
+            let plan_date = payload.plan_date.unwrap_or_else(|| chrono::Local::now().format("%Y-%m-%d").to_string());
+            let base_quests = payload.base_quests.into_iter().enumerate().map(|(i, q)| DailyPlanItemData {
+                id: q.id.unwrap_or_else(|| format!("b_{}_{}", plan_date, i)),
+                plan_date: plan_date.clone(),
+                tier: "base".into(),
+                title: q.title,
+                target_type: q.target_type.unwrap_or_else(|| if !q.question_ids.is_empty() { "question_ids".into() } else { "manual".into() }),
+                target_count: q.target_count,
+                min_rating: q.min_rating,
+                category_path: q.category_path,
+                question_ids: q.question_ids,
+                completed: q.completed.unwrap_or(false),
+                completed_at: q.completed_at,
+                sort_order: i as i64,
+            }).collect();
+            let advanced_quests = payload.advanced_quests.into_iter().enumerate().map(|(i, q)| DailyPlanItemData {
+                id: q.id.unwrap_or_else(|| format!("a_{}_{}", plan_date, i)),
+                plan_date: plan_date.clone(),
+                tier: "advanced".into(),
+                title: q.title,
+                target_type: q.target_type.unwrap_or_else(|| if q.min_rating.is_some() { "rating_challenge".into() } else if !q.question_ids.is_empty() { "question_ids".into() } else { "manual".into() }),
+                target_count: q.target_count,
+                min_rating: q.min_rating,
+                category_path: q.category_path,
+                question_ids: q.question_ids,
+                completed: q.completed.unwrap_or(false),
+                completed_at: q.completed_at,
+                sort_order: i as i64,
+            }).collect();
+            let plan = DailyPlanData {
+                plan_date,
+                task_id: Some(payload.task_id.clone()),
+                summary: Some(payload.summary.clone()),
+                base_quests,
+                advanced_quests,
+                created_at: chrono::Utc::now().timestamp_millis(),
+                updated_at: chrono::Utc::now().timestamp_millis(),
+            };
+            save_daily_plan_impl(&conn, &plan)?;
+        }
+        conn.execute("UPDATE codex_inbox SET status = ?1 WHERE id = ?2", params![if apply_to_profile { "confirmed" } else { "dismissed" }, id])
+            .map_err(|e| e.to_string())?;
+        return Ok(ConfirmInboxResult::default());
+    }
     if apply_to_profile {
         if payload.kind == "paper" {
             let tx = conn.unchecked_transaction().map_err(|e| e.to_string())?;
@@ -11676,6 +11773,436 @@ fn get_mistake_timeline(
     Ok(result)
 }
 
+#[derive(Debug, Serialize, Deserialize, Clone, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct DailyPlanItemData {
+    pub id: String,
+    pub plan_date: String,
+    pub tier: String, // "base" | "advanced"
+    pub title: String,
+    pub target_type: String, // "manual" | "count" | "question_ids" | "rating_challenge" | "pressure_session"
+    #[serde(default)]
+    pub target_count: Option<i64>,
+    #[serde(default)]
+    pub min_rating: Option<f64>,
+    #[serde(default)]
+    pub category_path: Option<String>,
+    #[serde(default)]
+    pub question_ids: Vec<i64>,
+    pub completed: bool,
+    #[serde(default)]
+    pub completed_at: Option<i64>,
+    #[serde(default)]
+    pub sort_order: i64,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct DailyPlanData {
+    pub plan_date: String,
+    #[serde(default)]
+    pub task_id: Option<String>,
+    #[serde(default)]
+    pub summary: Option<String>,
+    #[serde(default)]
+    pub base_quests: Vec<DailyPlanItemData>,
+    #[serde(default)]
+    pub advanced_quests: Vec<DailyPlanItemData>,
+    pub created_at: i64,
+    pub updated_at: i64,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct AutoCheckResult {
+    pub newly_completed_ids: Vec<String>,
+    pub base_all_completed: bool,
+    pub advanced_all_completed: bool,
+    pub all_completed: bool,
+    pub newly_completed_tier: Option<String>,
+}
+
+fn get_daily_plan_impl(conn: &Connection, plan_date: &str) -> Result<DailyPlanData, String> {
+    let plan_meta: Option<(Option<String>, Option<String>, i64, i64)> = conn
+        .query_row(
+            "SELECT task_id, summary, created_at, updated_at FROM daily_plans WHERE plan_date = ?1",
+            [plan_date],
+            |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)),
+        )
+        .optional()
+        .map_err(|e| e.to_string())?;
+
+    let mut stmt = conn
+        .prepare(
+            "SELECT id, plan_date, tier, title, target_type, target_count, min_rating, category_path, question_ids_json, completed, completed_at, sort_order
+             FROM daily_plan_items
+             WHERE plan_date = ?1
+             ORDER BY sort_order ASC, id ASC",
+        )
+        .map_err(|e| e.to_string())?;
+
+    let item_rows = stmt
+        .query_map([plan_date], |r| {
+            let qids_json: Option<String> = r.get(8)?;
+            let question_ids: Vec<i64> = qids_json
+                .and_then(|s| serde_json::from_str(&s).ok())
+                .unwrap_or_default();
+            Ok(DailyPlanItemData {
+                id: r.get(0)?,
+                plan_date: r.get(1)?,
+                tier: r.get(2)?,
+                title: r.get(3)?,
+                target_type: r.get(4)?,
+                target_count: r.get(5)?,
+                min_rating: r.get(6)?,
+                category_path: r.get(7)?,
+                question_ids,
+                completed: r.get::<_, i64>(9)? != 0,
+                completed_at: r.get(10)?,
+                sort_order: r.get(11)?,
+            })
+        })
+        .map_err(|e| e.to_string())?;
+
+    let mut base_quests = Vec::new();
+    let mut advanced_quests = Vec::new();
+
+    for item in item_rows {
+        let it = item.map_err(|e| e.to_string())?;
+        if it.tier == "base" {
+            base_quests.push(it);
+        } else {
+            advanced_quests.push(it);
+        }
+    }
+
+    let now = chrono::Utc::now().timestamp_millis();
+    let (task_id, summary, created_at, updated_at) = plan_meta.unwrap_or((None, None, now, now));
+
+    Ok(DailyPlanData {
+        plan_date: plan_date.to_string(),
+        task_id,
+        summary,
+        base_quests,
+        advanced_quests,
+        created_at,
+        updated_at,
+    })
+}
+
+fn save_daily_plan_impl(conn: &Connection, plan: &DailyPlanData) -> Result<(), String> {
+    let now = chrono::Utc::now().timestamp_millis();
+    let created_at = if plan.created_at > 0 { plan.created_at } else { now };
+    let updated_at = now;
+
+    conn.execute(
+        "INSERT INTO daily_plans (plan_date, task_id, summary, created_at, updated_at)
+         VALUES (?1, ?2, ?3, ?4, ?5)
+         ON CONFLICT(plan_date) DO UPDATE SET
+           task_id = excluded.task_id,
+           summary = excluded.summary,
+           updated_at = excluded.updated_at",
+        params![
+            plan.plan_date,
+            plan.task_id,
+            plan.summary,
+            created_at,
+            updated_at
+        ],
+    ).map_err(|e| e.to_string())?;
+
+    conn.execute("DELETE FROM daily_plan_items WHERE plan_date = ?1", [&plan.plan_date])
+        .map_err(|e| e.to_string())?;
+
+    let mut all_items = Vec::new();
+    for (idx, it) in plan.base_quests.iter().enumerate() {
+        let mut item = it.clone();
+        item.tier = "base".to_string();
+        item.sort_order = idx as i64;
+        if item.id.is_empty() {
+            item.id = format!("b_{}_{}", plan.plan_date, idx);
+        }
+        item.plan_date = plan.plan_date.clone();
+        all_items.push(item);
+    }
+    for (idx, it) in plan.advanced_quests.iter().enumerate() {
+        let mut item = it.clone();
+        item.tier = "advanced".to_string();
+        item.sort_order = idx as i64;
+        if item.id.is_empty() {
+            item.id = format!("a_{}_{}", plan.plan_date, idx);
+        }
+        item.plan_date = plan.plan_date.clone();
+        all_items.push(item);
+    }
+
+    for item in all_items {
+        let qids_json = serde_json::to_string(&item.question_ids).unwrap_or_else(|_| "[]".into());
+        conn.execute(
+            "INSERT INTO daily_plan_items (id, plan_date, tier, title, target_type, target_count, min_rating, category_path, question_ids_json, completed, completed_at, sort_order)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)",
+            params![
+                item.id,
+                item.plan_date,
+                item.tier,
+                item.title,
+                item.target_type,
+                item.target_count,
+                item.min_rating,
+                item.category_path,
+                qids_json,
+                if item.completed { 1 } else { 0 },
+                item.completed_at,
+                item.sort_order
+            ],
+        ).map_err(|e| e.to_string())?;
+    }
+
+    Ok(())
+}
+
+fn toggle_daily_plan_item_impl(conn: &Connection, item_id: &str, completed: bool) -> Result<AutoCheckResult, String> {
+    let now = chrono::Utc::now().timestamp_millis();
+    let completed_at = if completed { Some(now) } else { None };
+
+    let plan_date: String = conn
+        .query_row(
+            "SELECT plan_date FROM daily_plan_items WHERE id = ?1",
+            [item_id],
+            |r| r.get(0),
+        )
+        .map_err(|e| format!("找不到任务项 {item_id}: {e}"))?;
+
+    conn.execute(
+        "UPDATE daily_plan_items SET completed = ?1, completed_at = ?2 WHERE id = ?3",
+        params![if completed { 1 } else { 0 }, completed_at, item_id],
+    ).map_err(|e| e.to_string())?;
+
+    let plan = get_daily_plan_impl(conn, &plan_date)?;
+    let base_all = !plan.base_quests.is_empty() && plan.base_quests.iter().all(|q| q.completed);
+    let adv_all = !plan.advanced_quests.is_empty() && plan.advanced_quests.iter().all(|q| q.completed);
+    let all = base_all && (plan.advanced_quests.is_empty() || adv_all);
+
+    let newly_completed_tier = if completed {
+        let is_base = plan.base_quests.iter().any(|q| q.id == item_id);
+        if is_base { Some("base".into()) } else { Some("advanced".into()) }
+    } else {
+        None
+    };
+
+    Ok(AutoCheckResult {
+        newly_completed_ids: if completed { vec![item_id.to_string()] } else { vec![] },
+        base_all_completed: base_all,
+        advanced_all_completed: adv_all,
+        all_completed: all,
+        newly_completed_tier,
+    })
+}
+
+fn add_daily_plan_item_impl(conn: &Connection, item: &DailyPlanItemData) -> Result<(), String> {
+    let now = chrono::Utc::now().timestamp_millis();
+    conn.execute(
+        "INSERT OR IGNORE INTO daily_plans (plan_date, created_at, updated_at) VALUES (?1, ?2, ?3)",
+        params![item.plan_date, now, now],
+    ).map_err(|e| e.to_string())?;
+
+    let max_sort: i64 = conn
+        .query_row(
+            "SELECT COALESCE(MAX(sort_order), 0) + 1 FROM daily_plan_items WHERE plan_date = ?1 AND tier = ?2",
+            [&item.plan_date, &item.tier],
+            |r| r.get(0),
+        )
+        .unwrap_or(0);
+
+    let id = if item.id.is_empty() {
+        format!("{}_{}_{}", if item.tier == "base" { "b" } else { "a" }, item.plan_date, now)
+    } else {
+        item.id.clone()
+    };
+
+    let qids_json = serde_json::to_string(&item.question_ids).unwrap_or_else(|_| "[]".into());
+    conn.execute(
+        "INSERT INTO daily_plan_items (id, plan_date, tier, title, target_type, target_count, min_rating, category_path, question_ids_json, completed, completed_at, sort_order)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)",
+        params![
+            id,
+            item.plan_date,
+            item.tier,
+            item.title,
+            item.target_type,
+            item.target_count,
+            item.min_rating,
+            item.category_path,
+            qids_json,
+            if item.completed { 1 } else { 0 },
+            item.completed_at,
+            max_sort
+        ],
+    ).map_err(|e| e.to_string())?;
+
+    Ok(())
+}
+
+fn delete_daily_plan_item_impl(conn: &Connection, item_id: &str) -> Result<(), String> {
+    conn.execute("DELETE FROM daily_plan_items WHERE id = ?1", [item_id])
+        .map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+fn auto_check_daily_plan_items_impl(
+    conn: &Connection,
+    plan_date: &str,
+    question_id: i64,
+    rating: Option<f64>,
+    is_correct: bool,
+    is_pressure: bool,
+) -> Result<AutoCheckResult, String> {
+    let plan = get_daily_plan_impl(conn, plan_date)?;
+    let mut newly_completed = Vec::new();
+    let mut completed_tiers = Vec::new();
+    let now = chrono::Utc::now().timestamp_millis();
+
+    let all_quests = plan.base_quests.iter().chain(plan.advanced_quests.iter());
+    for item in all_quests {
+        if item.completed {
+            continue;
+        }
+        let mut hit = false;
+        match item.target_type.as_str() {
+            "question_ids" => {
+                if item.question_ids.contains(&question_id) && is_correct {
+                    if !item.question_ids.is_empty() {
+                        let placeholders = item.question_ids.iter().map(|_| "?").collect::<Vec<_>>().join(",");
+                        let sql = format!(
+                            "SELECT COUNT(DISTINCT question_id) FROM attempts WHERE question_id IN ({placeholders}) AND COALESCE(outcome, result) IN ('correct', 'partial')"
+                        );
+                        let mut stmt = conn.prepare(&sql).map_err(|e| e.to_string())?;
+                        let params_vec: Vec<&dyn rusqlite::ToSql> = item.question_ids.iter().map(|id| id as &dyn rusqlite::ToSql).collect();
+                        let count: i64 = stmt.query_row(rusqlite::params_from_iter(params_vec), |r| r.get(0)).unwrap_or(0);
+                        if count as usize >= item.question_ids.len() {
+                            hit = true;
+                        }
+                    }
+                }
+            }
+            "rating_challenge" => {
+                let min_r = item.min_rating.unwrap_or(1.35);
+                if let Some(r) = rating {
+                    if r >= min_r {
+                        if item.question_ids.is_empty() || item.question_ids.contains(&question_id) {
+                            hit = true;
+                        }
+                    }
+                }
+            }
+            "pressure_session" => {
+                if is_pressure {
+                    hit = true;
+                }
+            }
+            "count" => {
+                let target = item.target_count.unwrap_or(5);
+                let count: i64 = if let Some(ref cat) = item.category_path {
+                    conn.query_row(
+                        "SELECT COUNT(*) FROM attempts a JOIN questions q ON a.question_id = q.id WHERE q.category_path LIKE ?1 AND substr(a.attempted_at, 1, 10) = ?2",
+                        [format!("%{cat}%"), plan_date.to_string()],
+                        |r| r.get(0),
+                    ).unwrap_or(0)
+                } else {
+                    conn.query_row(
+                        "SELECT COUNT(*) FROM attempts WHERE substr(attempted_at, 1, 10) = ?1",
+                        [plan_date],
+                        |r| r.get(0),
+                    ).unwrap_or(0)
+                };
+                if count >= target {
+                    hit = true;
+                }
+            }
+            _ => {}
+        }
+
+        if hit {
+            conn.execute(
+                "UPDATE daily_plan_items SET completed = 1, completed_at = ?1 WHERE id = ?2",
+                params![now, item.id],
+            ).map_err(|e| e.to_string())?;
+            newly_completed.push(item.id.clone());
+            completed_tiers.push(item.tier.clone());
+        }
+    }
+
+    if newly_completed.is_empty() {
+        return Ok(AutoCheckResult::default());
+    }
+
+    let updated_plan = get_daily_plan_impl(conn, plan_date)?;
+    let base_all = !updated_plan.base_quests.is_empty() && updated_plan.base_quests.iter().all(|q| q.completed);
+    let adv_all = !updated_plan.advanced_quests.is_empty() && updated_plan.advanced_quests.iter().all(|q| q.completed);
+    let all = base_all && (updated_plan.advanced_quests.is_empty() || adv_all);
+
+    let tier_str = if completed_tiers.contains(&"base".to_string()) && completed_tiers.contains(&"advanced".to_string()) {
+        Some("both".into())
+    } else if completed_tiers.contains(&"base".to_string()) {
+        Some("base".into())
+    } else if completed_tiers.contains(&"advanced".to_string()) {
+        Some("advanced".into())
+    } else {
+        None
+    };
+
+    Ok(AutoCheckResult {
+        newly_completed_ids: newly_completed,
+        base_all_completed: base_all,
+        advanced_all_completed: adv_all,
+        all_completed: all,
+        newly_completed_tier: tier_str,
+    })
+}
+
+#[tauri::command]
+fn get_daily_plan(plan_date: String, state: State<AppState>) -> Result<DailyPlanData, String> {
+    let conn = state.db.lock().map_err(|e| e.to_string())?;
+    get_daily_plan_impl(&conn, &plan_date)
+}
+
+#[tauri::command]
+fn save_daily_plan(plan: DailyPlanData, state: State<AppState>) -> Result<(), String> {
+    let conn = state.db.lock().map_err(|e| e.to_string())?;
+    save_daily_plan_impl(&conn, &plan)
+}
+
+#[tauri::command]
+fn toggle_daily_plan_item(item_id: String, completed: bool, state: State<AppState>) -> Result<AutoCheckResult, String> {
+    let conn = state.db.lock().map_err(|e| e.to_string())?;
+    toggle_daily_plan_item_impl(&conn, &item_id, completed)
+}
+
+#[tauri::command]
+fn add_daily_plan_item(item: DailyPlanItemData, state: State<AppState>) -> Result<(), String> {
+    let conn = state.db.lock().map_err(|e| e.to_string())?;
+    add_daily_plan_item_impl(&conn, &item)
+}
+
+#[tauri::command]
+fn delete_daily_plan_item(item_id: String, state: State<AppState>) -> Result<(), String> {
+    let conn = state.db.lock().map_err(|e| e.to_string())?;
+    delete_daily_plan_item_impl(&conn, &item_id)
+}
+
+#[tauri::command]
+fn auto_check_daily_plan_items(
+    plan_date: String,
+    question_id: i64,
+    rating: Option<f64>,
+    is_correct: bool,
+    is_pressure: bool,
+    state: State<AppState>,
+) -> Result<AutoCheckResult, String> {
+    let conn = state.db.lock().map_err(|e| e.to_string())?;
+    auto_check_daily_plan_items_impl(&conn, &plan_date, question_id, rating, is_correct, is_pressure)
+}
+
 /// 日志插件装配：开发期 Info 级打终端，生产期 Warn 级落盘。
 ///
 /// 历史教训：v1.6.7 及之前日志插件只在 `cfg!(debug_assertions)` 下注册，
@@ -11855,7 +12382,13 @@ pub fn run() {
             set_user_profile,
             test_friend_sync,
             publish_friend_snapshot,
-            pull_friend_snapshots
+            pull_friend_snapshots,
+            get_daily_plan,
+            save_daily_plan,
+            toggle_daily_plan_item,
+            add_daily_plan_item,
+            delete_daily_plan_item,
+            auto_check_daily_plan_items
         ])
         .run(tauri::generate_context!())
         .expect("error while running 刷吧");
@@ -15103,5 +15636,98 @@ mod tests {
         assert_eq!(row.1.as_deref(), Some("专项修复建议"));
     }
 
+    #[test]
+    fn daily_plan_crud_and_auto_check_work() {
+        let conn = Connection::open_in_memory().unwrap();
+        init_schema(&conn).unwrap();
+
+        // 1. Create a daily plan
+        let plan = DailyPlanData {
+            plan_date: "2026-09-01".into(),
+            task_id: Some("SB-PLAN-20260901-001".into()),
+            summary: Some("攻克定积分".into()),
+            base_quests: vec![
+                DailyPlanItemData {
+                    id: "b1".into(),
+                    plan_date: "2026-09-01".into(),
+                    tier: "base".into(),
+                    title: "做 2 道题 #101, #102".into(),
+                    target_type: "question_ids".into(),
+                    target_count: None,
+                    min_rating: None,
+                    category_path: None,
+                    question_ids: vec![101, 102],
+                    completed: false,
+                    completed_at: None,
+                    sort_order: 0,
+                },
+                DailyPlanItemData {
+                    id: "b2".into(),
+                    plan_date: "2026-09-01".into(),
+                    tier: "base".into(),
+                    title: "手动复习讲义".into(),
+                    target_type: "manual".into(),
+                    target_count: None,
+                    min_rating: None,
+                    category_path: None,
+                    question_ids: vec![],
+                    completed: false,
+                    completed_at: None,
+                    sort_order: 1,
+                },
+            ],
+            advanced_quests: vec![
+                DailyPlanItemData {
+                    id: "a1".into(),
+                    plan_date: "2026-09-01".into(),
+                    tier: "advanced".into(),
+                    title: "挑战 Rating >= 1.35".into(),
+                    target_type: "rating_challenge".into(),
+                    target_count: None,
+                    min_rating: Some(1.35),
+                    category_path: None,
+                    question_ids: vec![],
+                    completed: false,
+                    completed_at: None,
+                    sort_order: 0,
+                },
+            ],
+            created_at: 1000,
+            updated_at: 1000,
+        };
+
+        save_daily_plan_impl(&conn, &plan).unwrap();
+
+        // 2. Query plan
+        let fetched = get_daily_plan_impl(&conn, "2026-09-01").unwrap();
+        assert_eq!(fetched.base_quests.len(), 2);
+        assert_eq!(fetched.advanced_quests.len(), 1);
+        assert_eq!(fetched.summary.as_deref(), Some("攻克定积分"));
+
+        // 3. Toggle manual quest b2
+        let toggle_res = toggle_daily_plan_item_impl(&conn, "b2", true).unwrap();
+        assert_eq!(toggle_res.newly_completed_ids, vec!["b2"]);
+        assert!(!toggle_res.base_all_completed);
+
+        conn.execute("INSERT INTO questions(id, stem, correct_answer, explanation, question_type, category_path, source) VALUES(101, 'q101', 'A', 'e', 'single_choice', '高数', 'test')", []).unwrap();
+        conn.execute("INSERT INTO questions(id, stem, correct_answer, explanation, question_type, category_path, source) VALUES(102, 'q102', 'B', 'e', 'single_choice', '高数', 'test')", []).unwrap();
+
+        // 4. Auto check question_ids #101
+        conn.execute("INSERT INTO attempts(id, question_id, outcome, result, attempted_at, duration_seconds, self_rating) VALUES(1, 101, 'correct', 'correct', '2026-09-01T10:00:00+08:00', 60, 3)", []).unwrap();
+        let check_res1 = auto_check_daily_plan_items_impl(&conn, "2026-09-01", 101, Some(1.2), true, false).unwrap();
+        assert!(check_res1.newly_completed_ids.is_empty(), "Need both 101 and 102 to complete b1");
+
+        // Complete 102
+        conn.execute("INSERT INTO attempts(id, question_id, outcome, result, attempted_at, duration_seconds, self_rating) VALUES(2, 102, 'correct', 'correct', '2026-09-01T10:05:00+08:00', 60, 3)", []).unwrap();
+        let check_res2 = auto_check_daily_plan_items_impl(&conn, "2026-09-01", 102, Some(1.2), true, false).unwrap();
+        assert_eq!(check_res2.newly_completed_ids, vec!["b1"]);
+        assert!(check_res2.base_all_completed, "All base quests should now be completed!");
+
+        // 5. Rating challenge
+        let check_res3 = auto_check_daily_plan_items_impl(&conn, "2026-09-01", 999, Some(1.40), true, false).unwrap();
+        assert_eq!(check_res3.newly_completed_ids, vec!["a1"]);
+        assert!(check_res3.advanced_all_completed);
+        assert!(check_res3.all_completed, "All quests across all tiers completed!");
+    }
 }
 

@@ -150,6 +150,7 @@ export function TodayView({
   onBlitzFinish,
   onOpenPressureReport,
   pressureReportLoading,
+  onQuestAutoCheck,
 }: {
   data: BootstrapData
   initialQueue: RecommendedQuestion[] | null
@@ -168,6 +169,7 @@ export function TodayView({
   onBlitzFinish: (res: BlitzExamResult) => void
   onOpenPressureReport: (sessionId: string) => Promise<boolean>
   pressureReportLoading: boolean
+  onQuestAutoCheck?: (questionId: number, rating?: number | null, isCorrect?: boolean, isPressure?: boolean) => void
 }) {
   const queue = initialQueue ?? data.recommendations
   const nonPressureBatchGradingEnabled = isFeatureEnabled('nonPressureBatchGradingV1')
@@ -779,6 +781,7 @@ export function TodayView({
         )
       }
       void triggerBackgroundSync('attempt_recorded')
+      onQuestAutoCheck?.(current.id, null, correct, false)
 
       if (correct) {
         playCorrectSound()

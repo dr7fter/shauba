@@ -49,9 +49,22 @@ import {
   refreshInbox,
   searchQuestionPage,
   startRecommendationBatch,
+  getDailyPlan,
+  toggleDailyPlanItem,
+  addDailyPlanItem,
+  deleteDailyPlanItem,
+  autoCheckDailyPlanItems,
 } from './api'
 import { BlitzExamModal } from './components/BlitzExamModal'
 import { FormulaDrawer } from './components/FormulaDrawer'
+import { PlanDrawer } from './components/PlanDrawer'
+import { CelebrationEffects, type CelebrationEvent } from './components/CelebrationEffects'
+import {
+  playCheckSound,
+  playBaseCompleteSound,
+  playAdvancedBreakthroughSound,
+  playAllClearFanfare,
+} from './utils/soundEffects'
 const FriendsLadderView = lazy(() => import('./components/FriendsLadderView').then((m) => ({ default: m.FriendsLadderView })))
 import { PressureLearningReportView } from './components/GradingReportModal'
 import { KeyboardHelpModal } from './components/KeyboardHelpModal'
@@ -71,6 +84,8 @@ import type {
   Question,
   RecommendedQuestion,
   View,
+  DailyPlan,
+  DailyPlanItem,
 } from './types'
 const InsightsView = lazy(() => import('./views/InsightsView').then((m) => ({ default: m.InsightsView })))
 const LearningCenterView = lazy(() => import('./views/LearningCenterView').then((m) => ({ default: m.LearningCenterView })))
@@ -507,6 +522,137 @@ export default function App() {
   const [pressureReportOpen, setPressureReportOpen] = useState(false)
   const [pressureReportLoading, setPressureReportLoading] = useState(false)
   const [keyboardHelpOpen, setKeyboardHelpOpen] = useState(false)
+
+  // 每日作战清单与多巴胺动效
+  const [planDrawerOpen, setPlanDrawerOpen] = useState(false)
+  const todayStr = useMemo(() => {
+    const d = new Date()
+    const year = d.getFullYear()
+    const month = String(d.getMonth() + 1).padStart(2, '0')
+    const day = String(d.getDate()).padStart(2, '0')
+    return `${year}-${month}-${day}`
+  }, [])
+  const [planDate, setPlanDate] = useState(() => {
+    const d = new Date()
+    const year = d.getFullYear()
+    const month = String(d.getMonth() + 1).padStart(2, '0')
+    const day = String(d.getDate()).padStart(2, '0')
+    return `${year}-${month}-${day}`
+  })
+  const [dailyPlan, setDailyPlan] = useState<DailyPlan | null>(null)
+  const [celebrationEvent, setCelebrationEvent] = useState<CelebrationEvent | null>(null)
+  const [planPulseTrigger, setPlanPulseTrigger] = useState(0)
+  const [planToast, setPlanToast] = useState<string | null>(null)
+
+  const reloadDailyPlan = useCallback(async (dateStr?: string) => {
+    const targetDate = dateStr || planDate
+    try {
+      const plan = await getDailyPlan(targetDate)
+      setDailyPlan(plan)
+    } catch (e) {
+      console.error('Failed to load daily plan', e)
+    }
+  }, [planDate])
+
+  useEffect(() => {
+    void reloadDailyPlan(planDate)
+  }, [planDate, reloadDailyPlan])
+
+  const handleTogglePlanItem = useCallback(async (itemId: string, completed: boolean, event?: React.MouseEvent) => {
+    try {
+      if (completed) {
+        playCheckSound()
+      }
+      const res = await toggleDailyPlanItem(itemId, completed)
+      await reloadDailyPlan()
+
+      if (completed) {
+        if (res.allCompleted) {
+          playAllClearFanfare()
+          setCelebrationEvent({ type: 'all_clear' })
+        } else if (res.baseAllCompleted && res.newlyCompletedTier === 'base') {
+          playBaseCompleteSound()
+          setCelebrationEvent({ type: 'base_complete' })
+        } else if (res.newlyCompletedTier === 'advanced') {
+          playAdvancedBreakthroughSound()
+          setCelebrationEvent({ type: 'advanced_breakthrough' })
+        } else if (event) {
+          setCelebrationEvent({ type: 'item_check', x: event.clientX, y: event.clientY })
+        }
+      }
+    } catch (e) {
+      setNotice(`更新计划失败: ${String(e)}`)
+    }
+  }, [reloadDailyPlan])
+
+  const handleAddPlanItem = useCallback(async (item: Omit<DailyPlanItem, 'id' | 'completed' | 'sortOrder'>) => {
+    try {
+      const newItem: DailyPlanItem = {
+        ...item,
+        id: `${item.tier === 'base' ? 'b' : 'a'}_${item.planDate}_${Date.now()}`,
+        completed: false,
+        sortOrder: 0,
+      }
+      await addDailyPlanItem(newItem)
+      await reloadDailyPlan()
+      setNotice(`已添加计划项「${item.title}」`)
+    } catch (e) {
+      setNotice(`添加计划失败: ${String(e)}`)
+    }
+  }, [reloadDailyPlan])
+
+  const handleDeletePlanItem = useCallback(async (itemId: string) => {
+    try {
+      await deleteDailyPlanItem(itemId)
+      await reloadDailyPlan()
+      setNotice('已删除计划项')
+    } catch (e) {
+      setNotice(`删除计划失败: ${String(e)}`)
+    }
+  }, [reloadDailyPlan])
+
+  const handleQuestAutoCheck = useCallback(async (questionId: number, rating?: number | null, isCorrect = true, isPressure = false) => {
+    try {
+      const res = await autoCheckDailyPlanItems(todayStr, questionId, rating, isCorrect, isPressure)
+      if (res.newlyCompletedIds && res.newlyCompletedIds.length > 0) {
+        await reloadDailyPlan(todayStr)
+        setPlanPulseTrigger((n) => n + 1)
+        setPlanToast(`+${res.newlyCompletedIds.length} 计划项已自动完成！`)
+        setTimeout(() => setPlanToast(null), 3500)
+
+        if (res.allCompleted) {
+          playAllClearFanfare()
+          setCelebrationEvent({ type: 'all_clear' })
+        } else if (res.baseAllCompleted && res.newlyCompletedTier === 'base') {
+          playBaseCompleteSound()
+          setCelebrationEvent({ type: 'base_complete' })
+        } else if (res.newlyCompletedTier === 'advanced') {
+          playAdvancedBreakthroughSound()
+          setCelebrationEvent({ type: 'advanced_breakthrough' })
+        } else {
+          playCheckSound()
+        }
+      }
+    } catch (e) {
+      console.error('Auto check daily plan error', e)
+    }
+  }, [todayStr, reloadDailyPlan])
+
+  // 全局快捷键 P 切换清单抽屉
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      const target = e.target as HTMLElement | null
+      if (target && (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.isContentEditable)) {
+        return
+      }
+      if (e.key === 'p' || e.key === 'P') {
+        e.preventDefault()
+        setPlanDrawerOpen((prev) => !prev)
+      }
+    }
+    window.addEventListener('keydown', handleKeyDown)
+    return () => window.removeEventListener('keydown', handleKeyDown)
+  }, [])
 
   useEffect(() => {
     const root = document.documentElement
@@ -1182,6 +1328,7 @@ export default function App() {
                 onBlitzFinish={handleBlitzFinish}
                 onOpenPressureReport={(sessionId) => openPressureReport({ sessionId })}
                 pressureReportLoading={pressureReportLoading}
+                onQuestAutoCheck={handleQuestAutoCheck}
               />
             )}
             {view === 'mistakes' && (
@@ -1522,6 +1669,58 @@ export default function App() {
           </div>
         </div>
       )}
+      <PlanDrawer
+        isOpen={planDrawerOpen}
+        onToggle={() => setPlanDrawerOpen((prev) => !prev)}
+        currentPlan={dailyPlan}
+        selectedDate={planDate}
+        todayDate={todayStr}
+        onSelectDate={(d) => setPlanDate(d)}
+        onToggleItem={handleTogglePlanItem}
+        onAddItem={handleAddPlanItem}
+        onDeleteItem={handleDeletePlanItem}
+        onStartQuestion={async (questionId) => {
+          try {
+            const q = await getQuestion(questionId)
+            if (q) {
+              setPracticeQueue([
+                {
+                  question: q,
+                  score: 100,
+                  reason: '来自每日作战清单定向攻坚',
+                  reasonCode: 'target',
+                },
+              ])
+              setPracticeStartIndex(0)
+              setAttemptMode('paper')
+              setView('today')
+              setPlanDrawerOpen(false)
+              setNotice(`已调出清单题目 #${questionId}`)
+            } else {
+              setNotice(`题目 #${questionId} 未找到`)
+            }
+          } catch (e) {
+            setNotice(`调出题目失败: ${String(e)}`)
+          }
+        }}
+        onAskCodexPlan={() => {
+          const d = new Date(todayStr)
+          d.setDate(d.getDate() + 1)
+          const year = d.getFullYear()
+          const month = String(d.getMonth() + 1).padStart(2, '0')
+          const day = String(d.getDate()).padStart(2, '0')
+          setPlanDate(`${year}-${month}-${day}`)
+          setNotice('已切换至明日计划。请在 Codex 中交流制定明日作战计划')
+        }}
+        pulseTrigger={planPulseTrigger}
+        toastMessage={planToast}
+      />
+
+      <CelebrationEffects
+        event={celebrationEvent}
+        onDismiss={() => setCelebrationEvent(null)}
+      />
+
       <AnimatePresence>
         {notice && <Toast text={notice} close={() => setNotice('')} />}
       </AnimatePresence>

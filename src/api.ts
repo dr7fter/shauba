@@ -2,7 +2,7 @@ import { invoke } from '@tauri-apps/api/core'
 import { check, type Update } from '@tauri-apps/plugin-updater'
 import { relaunch } from '@tauri-apps/plugin-process'
 import { mockBootstrap, mockCategories, mockInbox, mockMastery, mockQuestions, mockRecommendations } from './mock'
-import type { BootstrapData, CategoryNode, CodexTask, DailyLog, DailyTrendPoint, EloStatus, TagClosure, ExportResult, FailedInboxItem, InboxItem, InboxSummary, InsightPoint, MasteryChapter, MasteryNode, MistakeDayGroup, PracticeSessionState, Question, QuestionPage, RatingDistribution, RecommendationBatch, RecommendedQuestion, ReviewHistory, ReviewPlan, SeasonStatus, SessionScoreboard, UserStreak, WeaknessRadar, PressureSession, GradingReport, TacticalDashboardData, UserProfileSettings, AttemptHighlight, ConfirmInboxResult, SeasonLadder, HighlightMoment, PeriodOverview, UndoLastAttemptResult, FriendSyncConfig, FriendSyncRemoteSnapshot, LearningCenterSnapshot } from './types'
+import type { BootstrapData, CategoryNode, CodexTask, DailyLog, DailyTrendPoint, EloStatus, TagClosure, ExportResult, FailedInboxItem, InboxItem, InboxSummary, InsightPoint, MasteryChapter, MasteryNode, MistakeDayGroup, PracticeSessionState, Question, QuestionPage, RatingDistribution, RecommendationBatch, RecommendedQuestion, ReviewHistory, ReviewPlan, SeasonStatus, SessionScoreboard, UserStreak, WeaknessRadar, PressureSession, GradingReport, TacticalDashboardData, UserProfileSettings, AttemptHighlight, ConfirmInboxResult, SeasonLadder, HighlightMoment, PeriodOverview, UndoLastAttemptResult, FriendSyncConfig, FriendSyncRemoteSnapshot, LearningCenterSnapshot, DailyPlan, DailyPlanItem, AutoCheckPlanResult } from './types'
 import { createPracticeSessionPayload } from './domain/evidence'
 
 const isTauri = () => '__TAURI_INTERNALS__' in window
@@ -686,4 +686,97 @@ export async function getMistakeTimeline(limitDays = 90): Promise<MistakeDayGrou
   if (!isTauri()) return []
   return invoke('get_mistake_timeline', { limitDays })
 }
+
+export async function getDailyPlan(planDate: string): Promise<DailyPlan> {
+  if (!isTauri()) {
+    return {
+      planDate,
+      taskId: null,
+      summary: '今日作战计划（预览）',
+      baseQuests: [
+        {
+          id: 'mock_b1',
+          planDate,
+          tier: 'base',
+          title: '完成 3 道高等数学定积分基础题',
+          targetType: 'count',
+          targetCount: 3,
+          categoryPath: '高等数学/一元函数积分学',
+          questionIds: [],
+          completed: false,
+          sortOrder: 0,
+        },
+      ],
+      advancedQuests: [
+        {
+          id: 'mock_a1',
+          planDate,
+          tier: 'advanced',
+          title: '攻克 1 道真题多元极值压轴（Rating ≥ 1.35）',
+          targetType: 'rating_challenge',
+          minRating: 1.35,
+          questionIds: [],
+          completed: false,
+          sortOrder: 0,
+        },
+      ],
+      createdAt: Date.now(),
+      updatedAt: Date.now(),
+    }
+  }
+  return invoke('get_daily_plan', { planDate })
+}
+
+export async function saveDailyPlan(plan: DailyPlan): Promise<void> {
+  if (!isTauri()) return
+  return invoke('save_daily_plan', { plan })
+}
+
+export async function toggleDailyPlanItem(itemId: string, completed: boolean): Promise<AutoCheckPlanResult> {
+  if (!isTauri()) {
+    return {
+      newlyCompletedIds: completed ? [itemId] : [],
+      baseAllCompleted: false,
+      advancedAllCompleted: false,
+      allCompleted: false,
+      newlyCompletedTier: completed ? 'base' : null,
+    }
+  }
+  return invoke('toggle_daily_plan_item', { itemId, completed })
+}
+
+export async function addDailyPlanItem(item: DailyPlanItem): Promise<void> {
+  if (!isTauri()) return
+  return invoke('add_daily_plan_item', { item })
+}
+
+export async function deleteDailyPlanItem(itemId: string): Promise<void> {
+  if (!isTauri()) return
+  return invoke('delete_daily_plan_item', { itemId })
+}
+
+export async function autoCheckDailyPlanItems(
+  planDate: string,
+  questionId: number,
+  rating?: number | null,
+  isCorrect = true,
+  isPressure = false,
+): Promise<AutoCheckPlanResult> {
+  if (!isTauri()) {
+    return {
+      newlyCompletedIds: [],
+      baseAllCompleted: false,
+      advancedAllCompleted: false,
+      allCompleted: false,
+    }
+  }
+  return invoke('auto_check_daily_plan_items', {
+    planDate,
+    questionId,
+    rating: rating ?? null,
+    isCorrect,
+    isPressure,
+  })
+}
+
 

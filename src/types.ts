@@ -1323,3 +1323,40 @@ export type FriendSyncResult = {
   unrecognizedFiles: number
   failedFiles: string[]
 }
+
+export type PlanQuestTier = 'base' | 'advanced'
+export type PlanTargetType = 'manual' | 'count' | 'question_ids' | 'rating_challenge' | 'pressure_session'
+
+export type DailyPlanItem = {
+  id: string
+  planDate: string
+  tier: PlanQuestTier
+  title: string
+  targetType: PlanTargetType
+  targetCount?: number | null
+  minRating?: number | null
+  categoryPath?: string | null
+  questionIds: number[]
+  completed: boolean
+  completedAt?: number | null
+  sortOrder: number
+}
+
+export type DailyPlan = {
+  planDate: string
+  taskId?: string | null
+  summary?: string | null
+  baseQuests: DailyPlanItem[]
+  advancedQuests: DailyPlanItem[]
+  createdAt: number
+  updatedAt: number
+}
+
+export type AutoCheckPlanResult = {
+  newlyCompletedIds: string[]
+  baseAllCompleted: boolean
+  advancedAllCompleted: boolean
+  allCompleted: boolean
+  newlyCompletedTier?: 'base' | 'advanced' | 'both' | null
+}
+

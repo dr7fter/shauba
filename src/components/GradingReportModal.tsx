@@ -19,7 +19,6 @@ import {
   CS_RATING_MAX,
   averageCsRating,
   benchmarkSeconds,
-  clampCsRating,
   csRatingAccent,
   csRatingTier,
   csRatingTone,
@@ -270,9 +269,6 @@ export function PressureLearningReportView({
   const reportDate = new Date(reportTime < 1_000_000_000_000 ? reportTime * 1000 : reportTime)
   const ungradedIds = report.ungradedQuestionIds ?? []
   const ratingForGrade = (grade: GradingReport['grades'][number]) => {
-    if (typeof grade.rating === 'number' && Number.isFinite(grade.rating)) {
-      return clampCsRating(grade.rating)
-    }
     const q = questions[grade.questionId]
     const bench = q ? benchmarkSeconds(q.questionType) : averageDuration
     const diffMultiplier = q?.difficulty

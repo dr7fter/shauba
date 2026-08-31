@@ -336,14 +336,9 @@ export function deriveGradeCsRating(input: {
   dimensions?: RatingDimensions | null
   benchmarkSeconds?: number | null
 }): number {
-  // 评分回退链（前后端一致）：六维 HLTV 合成 > Codex rating > 特征曲线
+  // 评分回退链（前后端与 AGENTS.md 契约严格一致）：六维 HLTV 3.0 合成 > Codex rating > 特征曲线
 
-  // 1. 如果已有确定的 rating，直接采信并 clamp
-  if (typeof input.rating === 'number' && Number.isFinite(input.rating) && input.rating >= CS_RATING_MIN && input.rating <= CS_RATING_MAX) {
-    return clampCsRating(input.rating)
-  }
-
-  // 2. 六维 HLTV 3.0 合成
+  // 1. 六维 HLTV 3.0 合成（任一维非空即走此链，由确定性内核当裁判）
   if (hasDimensionEvidence(input.dimensions)) {
     return computeHltvRating({
       outcome: input.outcome,
@@ -352,6 +347,11 @@ export function deriveGradeCsRating(input: {
       benchmarkSeconds: input.benchmarkSeconds || input.averageDuration || 600,
       difficultyMultiplier: input.difficultyMultiplier,
     })
+  }
+
+  // 2. 如果无六维证据，采信 Codex 指定 rating
+  if (typeof input.rating === 'number' && Number.isFinite(input.rating) && input.rating >= CS_RATING_MIN && input.rating <= CS_RATING_MAX) {
+    return clampCsRating(input.rating)
   }
 
   // 3. 特征曲线兜底

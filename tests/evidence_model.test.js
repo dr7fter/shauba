@@ -79,22 +79,23 @@ test('deriveGradeCsRating trusts explicit rating if provided', () => {
   assert.equal(deriveGradeCsRating({ rating: 0.65, outcome: 'wrong' }), 0.65)
 })
 
-test('deriveGradeCsRating computes HLTV 3.0 from dimensions matching backend', () => {
-  const rating = computeHltvRating({
+test('deriveGradeCsRating prioritizes six dimensions over raw rating', () => {
+  const result = deriveGradeCsRating({
+    rating: 1.0,
     outcome: 'correct',
     dimensions: {
-      rigor: { score: 80 },
-      computation: { score: 85 },
-      modeling: { score: 80 },
-      methodUse: { score: 85 },
-      speed: { score: 90 },
-      strategyInsight: { score: 85, techniqueLevel: 4 },
+      rigor: { score: 95 },
+      computation: { score: 95 },
+      modeling: { score: 95 },
+      methodUse: { score: 95 },
+      speed: { score: 95 },
+      strategyInsight: { score: 95, techniqueLevel: 4 },
     },
-    durationSeconds: 120,
+    duration: 100,
     benchmarkSeconds: 180,
-    difficultyMultiplier: 1.05,
   })
-  assert.ok(rating > 1.2 && rating <= 2.5, `Rating ${rating} should be in high tier`)
+  assert.ok(result > 1.4, `Dimensions HLTV should compute high score, got ${result}`)
 })
+
 
 

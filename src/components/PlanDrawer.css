@@ -3,91 +3,57 @@
    严格遵循 tokens.css 规范，天然融入浅色/深色主题
    ========================================================= */
 
-/* 1. 顶部常驻灵动药丸 (Top Island Pill) */
-.plan-top-pill {
-  position: fixed;
-  top: 8px;
-  left: 50%;
-  transform: translateX(-50%);
-  z-index: 120;
-  display: flex;
+/* 1. 顶部栏左侧常驻灵动胶囊按钮 */
+.topbar-plan-pill-container {
+  position: relative;
+  display: inline-flex;
   align-items: center;
-  padding: 4px 14px;
+}
+
+.topbar-plan-pill {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  height: 36px;
+  padding: 0 12px;
   background: var(--surface);
   border: 1px solid var(--line);
-  border-radius: 999px;
-  box-shadow: var(--shadow-2);
+  border-radius: var(--r-md);
+  color: var(--ink);
+  font-size: var(--fs-xs);
+  font-weight: 600;
   cursor: pointer;
   user-select: none;
-  transition: all 0.2s cubic-bezier(0.16, 1, 0.3, 1);
+  transition: all 120ms ease;
 }
 
-.plan-top-pill:hover {
+.topbar-plan-pill:hover {
   background: var(--sunken);
   border-color: var(--line-strong);
-  transform: translateX(-50%) translateY(2px);
-  box-shadow: var(--shadow-3);
 }
 
-.plan-top-glow {
-  position: absolute;
-  inset: -3px;
-  border-radius: 999px;
-  background: radial-gradient(circle, var(--green-soft) 0%, transparent 75%);
-  pointer-events: none;
-  z-index: -1;
+.topbar-plan-pill.active {
+  background: var(--green-soft);
+  border-color: var(--green);
+  color: var(--green-dark);
 }
 
-.plan-top-toast {
-  position: absolute;
-  top: 32px;
-  left: 50%;
-  transform: translateX(-50%);
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  padding: 3px 12px;
-  background: var(--green);
-  color: var(--on-color);
-  font-size: var(--fs-xs);
-  font-weight: 700;
-  border-radius: 999px;
-  box-shadow: var(--shadow-2);
-  white-space: nowrap;
-  pointer-events: none;
-}
-
-.top-pill-content {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-}
-
-.top-pill-title-group {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  color: var(--ink);
-  font-size: var(--fs-sm);
-  font-weight: 700;
-}
-
-.top-main-icon {
+.plan-pill-icon {
   color: var(--green);
 }
 
-.top-pill-badges {
-  display: flex;
-  align-items: center;
-  gap: 6px;
+.plan-pill-title {
+  font-weight: 700;
+  color: var(--ink);
 }
 
-.top-badge {
-  font-size: var(--fs-xs);
+.plan-pill-badge {
+  font-size: 11px;
   font-weight: 700;
-  padding: 1px 8px;
+  padding: 1px 7px;
   border-radius: 999px;
-  letter-spacing: 0.3px;
+  letter-spacing: 0.2px;
 }
 
 .badge-base {
@@ -108,22 +74,41 @@
   border: 1px solid var(--line-success);
 }
 
-.top-pull-hint {
-  display: flex;
-  align-items: center;
-  gap: 2px;
-  font-size: var(--fs-xs);
+.plan-pill-arrow {
   color: var(--muted);
+  transition: transform 140ms ease;
 }
 
-.top-shortcut {
-  font-size: 10px;
-  padding: 0 4px;
-  border-radius: var(--r-xs);
-  background: var(--sunken);
-  color: var(--muted);
-  border: 1px solid var(--line);
-  font-family: var(--font-mono);
+.plan-pill-arrow.arrow-up {
+  transform: rotate(180deg);
+}
+
+.topbar-plan-glow {
+  position: absolute;
+  inset: -2px;
+  border-radius: var(--r-md);
+  background: radial-gradient(circle, var(--green-soft) 0%, transparent 80%);
+  pointer-events: none;
+}
+
+.topbar-plan-toast {
+  position: absolute;
+  top: 100%;
+  left: 0;
+  margin-top: 6px;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 4px 10px;
+  background: var(--green);
+  color: var(--on-color);
+  font-size: 11px;
+  font-weight: 700;
+  border-radius: var(--r-sm);
+  box-shadow: var(--shadow-2);
+  white-space: nowrap;
+  pointer-events: none;
+  z-index: 100;
 }
 
 /* 2. 顶部滑出下拉面板 (Top Pull-Down Panel) */

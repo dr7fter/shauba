@@ -57,7 +57,7 @@ import {
 } from './api'
 import { BlitzExamModal } from './components/BlitzExamModal'
 import { FormulaDrawer } from './components/FormulaDrawer'
-import { PlanDrawer } from './components/PlanDrawer'
+import { PlanDrawer, PlanTopPill } from './components/PlanDrawer'
 import { CelebrationEffects, type CelebrationEvent } from './components/CelebrationEffects'
 import {
   playCheckSound,
@@ -272,6 +272,13 @@ function Topbar({
   streak,
   isZenMode,
   onToggleZen,
+  onTogglePlan,
+  isPlanOpen = false,
+  currentPlan = null,
+  selectedPlanDate = '',
+  todayDate = '',
+  pulseTrigger = 0,
+  toastMessage = null,
 }: {
   view: View
   onRefresh: () => void
@@ -281,6 +288,13 @@ function Topbar({
   streak?: { currentStreak: number; bestStreak: number } | null
   isZenMode?: boolean
   onToggleZen?: () => void
+  onTogglePlan?: () => void
+  isPlanOpen?: boolean
+  currentPlan?: DailyPlan | null
+  selectedPlanDate?: string
+  todayDate?: string
+  pulseTrigger?: number
+  toastMessage?: string | null
 }) {
   const current = navItems.find((item) => item.id === view)
   const [now, setNow] = useState(() => Date.now())
@@ -329,6 +343,17 @@ function Topbar({
     <header className="topbar">
       <div className="topbar-left">
         <h1>{current?.label ?? '设置'}</h1>
+        {onTogglePlan && (
+          <PlanTopPill
+            isOpen={isPlanOpen}
+            onToggle={onTogglePlan}
+            currentPlan={currentPlan}
+            selectedDate={selectedPlanDate}
+            todayDate={todayDate}
+            pulseTrigger={pulseTrigger}
+            toastMessage={toastMessage}
+          />
+        )}
       </div>
       <div className="topbar-meta">
         {onToggleZen && (
@@ -1196,6 +1221,13 @@ export default function App() {
           streak={streak}
           isZenMode={isZenMode}
           onToggleZen={() => setIsZenMode((prev) => !prev)}
+          onTogglePlan={() => setPlanDrawerOpen((prev) => !prev)}
+          isPlanOpen={planDrawerOpen}
+          currentPlan={dailyPlan}
+          selectedPlanDate={planDate}
+          todayDate={todayStr}
+          pulseTrigger={planPulseTrigger}
+          toastMessage={planToast}
         />
         <AnimatePresence mode="wait">
           <motion.div

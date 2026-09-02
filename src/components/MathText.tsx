@@ -32,7 +32,11 @@ const LATEX_COMMANDS = [
   'chi', 'psi', 'omega', 'Gamma', 'Delta', 'Theta', 'Lambda', 'Xi', 'Pi', 'Sigma',
   'Upsilon', 'Phi', 'Psi', 'Omega', 'partial', 'nabla', 'circ', 'degree', 'lfloor',
   'rfloor', 'lceil', 'rceil', 'left', 'right', 'quad', 'qquad', 'text', 'overline', 'underline',
-  'begin', 'end', 'cases', 'aligned', 'array', 'matrix', 'pmatrix', 'bmatrix'
+  'begin', 'end', 'cases', 'aligned', 'array', 'matrix', 'pmatrix', 'bmatrix', 'vmatrix', 'Vmatrix',
+  'operatorname', 'det', 'dim', 'ker', 'diag', 'rank', 'tr', 'trace', 'span',
+  'max', 'min', 'sup', 'inf', 'vec', 'hat', 'bar', 'tilde', 'dot', 'ddot', 'prime',
+  'Rightarrow', 'Leftarrow', 'Leftrightarrow', 'implies', 'iff', 'rightarrow', 'leftarrow',
+  'parallel', 'perp', 'Vert', 'vert'
 ].join('|')
 
 // Strictly match standalone LaTeX macros or symbols without eating surrounding prose
@@ -40,7 +44,7 @@ const NAKED_LATEX_REGEX = new RegExp(
   `(?:\\\\(?:frac|dfrac|cfrac)\\{(?:[^{}]|\\{[^{}]*\\})*\\}\\{(?:[^{}]|\\{[^{}]*\\})*\\}` +
   `|\\\\sqrt(?:\\[[^\\]]*\\])?\\{(?:[^{}]|\\{[^{}]*\\})*\\}` +
   `|\\\\(?:int|iint|iiint|oint|sum|prod|lim)(?:_\\{[^{}]*\\}|_[a-zA-Z0-9\\\\]+)?(?:\\^\\{[^{}]*\\}|\\^[a-zA-Z0-9\\\\]+)?` +
-  `|\\\\(?:text|mathrm|mathbf|mathbb|mathcal)\\{[^{}]*\\}` +
+  `|\\\\(?:text|mathrm|mathbf|mathbb|mathcal|operatorname)\\{[^{}]*\\}` +
   `|\\\\(?:${LATEX_COMMANDS}))`,
   'g'
 )
@@ -54,7 +58,7 @@ function fixCasesAndLinebreaks(latex: string): string {
   let s = latex
 
   // Fix single backslash intended as line break inside multiline environments
-  s = s.replace(/(\\begin\{(?:cases|aligned|array|matrix|pmatrix|bmatrix)\}[\s\S]*?\\end\{(?:cases|aligned|array|matrix|pmatrix|bmatrix)\})/g, (env) => {
+  s = s.replace(/(\\begin\{(?:cases|aligned|array|matrix|pmatrix|bmatrix|vmatrix|Vmatrix)\}[\s\S]*?\\end\{(?:cases|aligned|array|matrix|pmatrix|bmatrix|vmatrix|Vmatrix)\})/g, (env) => {
     return env
       .replace(/([^\\])\\(?=[a-zA-Z]\s*=|[a-zA-Z]\s*&|[a-zA-Z]\s*\\le|[a-zA-Z]\s*\\ge|\d+\s*&)/g, '$1\\\\ ')
       .replace(/([^\\])\\(?!\\|[a-zA-Z]+)([\s]*[a-zA-Z0-9_\(\)\+\-\=])/g, '$1\\\\ $2')

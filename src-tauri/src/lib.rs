@@ -2389,7 +2389,7 @@ fn validate_batch_attempt_result_verdict(attempt: &BatchAttempt) -> Result<(), S
 fn insert_codex_payload(conn: &Connection, payload: &CodexPayload) -> Result<(), String> {
     if !matches!(
         payload.kind.as_str(),
-        "analysis" | "recommendation" | "paper" | "batch"
+        "analysis" | "recommendation" | "paper" | "batch" | "daily_plan"
     ) {
         return Err("不支持的 Codex 回传类型".into());
     }

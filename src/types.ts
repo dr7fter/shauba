@@ -686,6 +686,10 @@ export type GradingSummary = {
   averageDuration?: number
 }
 
+export type GradingReportOrigin =
+  | { kind: 'pressure-session'; sessionId: string }
+  | { kind: 'codex-batch'; taskId: string }
+
 export type GradingReport = {
   sessionId: string
   sourceTaskId?: string | null

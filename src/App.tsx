@@ -78,6 +78,7 @@ import type {
   BootstrapData,
   FriendPublicMatch,
   GradingReport,
+  GradingReportOrigin,
   MasteryChapter,
   PracticeSessionState,
   PressureSession,
@@ -541,6 +542,8 @@ export default function App() {
   const [pressureReport, setPressureReport] = useState<GradingReport | null>(null)
   const [pressureReportSession, setPressureReportSession] =
     useState<PressureSession | null>(null)
+  const [pressureReportOrigin, setPressureReportOrigin] =
+    useState<GradingReportOrigin | null>(null)
   const [pressureReportQuestions, setPressureReportQuestions] = useState<
     Record<number, Question>
   >({})
@@ -806,7 +809,7 @@ export default function App() {
             }
           })
         )
-        setPressureReportQuestions(
+            setPressureReportQuestions(
           Object.fromEntries(
             loaded
               .filter((question): question is Question => Boolean(question))
@@ -824,6 +827,7 @@ export default function App() {
           if (report) {
             await loadReportQuestions(report)
             setPressureReportSession(null)
+            setPressureReportOrigin({ kind: 'codex-batch', taskId })
             setPressureReport(report)
             setPressureReportOpen(true)
             return true
@@ -850,6 +854,7 @@ export default function App() {
         }
         await loadReportQuestions(report, session.questionIds ?? [])
         setPressureReportSession(session)
+        setPressureReportOrigin({ kind: 'pressure-session', sessionId: session.sessionId })
         setPressureReport(report)
         setPressureReportOpen(true)
 
@@ -1609,18 +1614,27 @@ export default function App() {
         onClose={() => setKeyboardHelpOpen(false)}
       />
 
-      {pressureReportOpen && pressureReport && (
+      {pressureReportOpen && pressureReport && pressureReportOrigin && (
         <PressureLearningReportView
           report={pressureReport}
+          reportOrigin={pressureReportOrigin}
           session={pressureReportSession}
           questions={pressureReportQuestions}
           loading={pressureReportLoading}
-          onRefresh={() =>
-            void openPressureReport({ sessionId: pressureReport.sessionId })
-          }
-          onClose={() => setPressureReportOpen(false)}
+          onRefresh={() => {
+            if (pressureReportOrigin.kind === 'codex-batch') {
+              void openPressureReport({ taskId: pressureReportOrigin.taskId })
+            } else {
+              void openPressureReport({ sessionId: pressureReportOrigin.sessionId })
+            }
+          }}
+          onClose={() => {
+            setPressureReportOpen(false)
+            setPressureReportOrigin(null)
+          }}
           onStartVariant={(questionId) => {
             setPressureReportOpen(false)
+            setPressureReportOrigin(null)
             void startVariantPractice(questionId)
           }}
         />

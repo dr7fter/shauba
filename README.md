@@ -33,4 +33,7 @@ npm run dev -- --port 1420
 - 刷吧数据库：系统应用数据目录中的 `shuaba.db`
 - Codex 回传：系统应用数据目录中的 `codex-inbox`
 
-Codex 回传协议见 `AGENTS.md`。
+## AI Agent 入口
+
+**任何 AI Agent 在本仓库工作，从 `AGENTS.md` 开始**——它只有红线 + 铁律 + 路由表（≤6KB），
+具体规格按任务路由到 `.agent/` 分册，不要全读文档。

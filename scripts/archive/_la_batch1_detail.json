@@ -1,0 +1,64 @@
+{
+  "taskId": "SB-REC-20260831-6794",
+  "batch": 1,
+  "name": "B1 · 矩阵 E-016 收口（先化简，再动笔）",
+  "kind": "修复卷",
+  "estimatedMinutes": 30,
+  "items": [
+    {
+      "id": 148,
+      "role": "diagnosis",
+      "intent": "$A^{-1}+B^{-1}$：先通分再取逆，禁止分别求逆",
+      "path": "线性代数 / 矩阵 / 逆 / 抽象逆相关",
+      "difficulty": 1,
+      "type": "subjective",
+      "source": "25 版 880 矩阵基础解答 7",
+      "stem": "已知方阵 $A,B,A+B$ 均可逆，求 $(A^{-1}+B^{-1})^{-1}$。",
+      "answer": "$B(A+B)^{-1}A$"
+    },
+    {
+      "id": 149,
+      "role": "consolidate",
+      "intent": "$A^3=A^2+A$ 求 $(A^2+A+E)^{-1}$：待定系数降次，禁止凑",
+      "path": "线性代数 / 矩阵 / 逆 / 抽象逆相关",
+      "difficulty": 2,
+      "type": "subjective",
+      "source": "900 题数二第二章 B 类 8",
+      "stem": "设 $n$ 阶矩阵 $A$ 满足方程 $A^3=A^2+A$，则 $(A^2+A+E)^{-1}=$ ______。",
+      "answer": "$E-\\frac{1}{2}A$"
+    },
+    {
+      "id": 145,
+      "role": "transfer",
+      "intent": "$[E-(E-A)^{-1}]B=A$：把 $E$ 写成 $(E-A)^{-1}(E-A)$ 提公因式",
+      "path": "线性代数 / 矩阵 / 逆 / 抽象逆相关",
+      "difficulty": 2,
+      "type": "subjective",
+      "source": "2022数一",
+      "stem": "已知矩阵 $A$ 和 $E-A$ 可逆，其中 $E$ 为单位矩阵，若矩阵 $B$ 满足 \n$$\n\\left[E-(E-A)^{-1}\\right]B=A,\n$$\n 则 $B-A=\\underline{\\hspace{2cm}}$。",
+      "answer": "$-E$"
+    },
+    {
+      "id": 135,
+      "role": "review",
+      "intent": "$B=(E+A)^{-1}(E-A)$ 具体 4 阶：先化 $E+B=2(E+A)^{-1}$，禁止硬算",
+      "path": "线性代数 / 矩阵 / 逆 / 抽象逆相关",
+      "difficulty": 2,
+      "type": "subjective",
+      "source": "2000数二",
+      "stem": "设 $A=\\begin{pmatrix}1&0&0&0\\\\-2&3&0&0\\\\0&-4&5&0\\\\0&0&-6&7\\end{pmatrix}$，$E$ 为 $4$ 阶单位矩阵，且 $B=(E+A)^{-1}(E-A)$，则 $(E+B)^{-1}=$ ______。",
+      "answer": "$\\frac12(E+A)=\\begin{pmatrix}1&0&0&0\\\\-1&2&0&0\\\\0&-2&3&0\\\\0&0&-3&4\\end{pmatrix}$"
+    },
+    {
+      "id": 278,
+      "role": "challenge",
+      "intent": "$A^2-AB=E$：由 $A(A-B)=E$ 直接读 $A$ 可逆且 $AB=BA$",
+      "path": "线性代数 / 矩阵 / AB=口 / AB = E",
+      "difficulty": 3,
+      "type": "subjective",
+      "source": "🫚强化例题",
+      "stem": "设 $n$ 阶矩阵 $A,B$ 满足 $A^2-AB=E$，则 $r(AB-BA+2A)=$ ___。",
+      "answer": "$n$"
+    }
+  ]
+}

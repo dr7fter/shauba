@@ -1,3 +1,0 @@
-
-> shuaba@0.7.0 lint
-> oxlint

@@ -35,3 +35,12 @@ photo/
 releases/
 *.exe
 shuaba-friends/
+
+# Python 缓存与临时分析产物
+__pycache__/
+*.pyc
+.workbuddy/tmp/
+.workbuddy/backup-*/
+
+# Agent 会话记忆（本机状态，不进仓库）
+.workbuddy/memory/

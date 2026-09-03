@@ -177,8 +177,8 @@ export function PressureLearningReportView({
   const [planAdded, setPlanAdded] = useState<Record<number, boolean>>({})
   const [railFilter, setRailFilter] = useState<'all' | 'needs-attention'>('needs-attention')
   const [attemptHistory, setAttemptHistory] = useState<AttemptHistoryEntry[]>([])
-  /** 第 04 步「正确入口」的呈现方式：推导式 / E2 左右对照式 */
-  const [solutionView, setSolutionView] = useState<'derive' | 'fork'>('fork')
+  /** 第 04 步「正确解法与入口」的呈现方式：标准解法 / 考场秒杀 / 路径对照 */
+  const [solutionView, setSolutionView] = useState<'std' | 'fast' | 'fork'>('std')
   /** 正确入口默认遮罩，逼自己先推一遍，避免"看懂了 = 会了" */
   const [solutionRevealed, setSolutionRevealed] = useState(false)
   const [copyPanelOpen, setCopyPanelOpen] = useState(false)
@@ -934,20 +934,14 @@ export function PressureLearningReportView({
               
               {/* ============ LEFT: 成绩卡与题目索引 ============ */}
               <aside className="col">
-                <div className="bp-summary">
-                  <div className="bp-ring">
-                    <b className="num">{breakpointGroups.length}</b>
+                <div className="score-card">
+                  <div>
+                    <span className="score-num">{accuracy != null ? accuracy : 0}%</span>
+                    <span className="score-label">正确率</span>
                   </div>
-                  <div className="bp-summary-txt">
-                    <div className="a">本轮断点</div>
-                    <div className="b">
-                      {relapseCount > 0 ? `${relapseCount} 个复发 · ` : ''}
-                      {breakpointGroups.filter((group) => !group.errorCode).length > 0
-                        ? `${breakpointGroups.filter((group) => !group.errorCode).length} 个未编码`
-                        : '全部已编码'}
-                      <br />
-                      总耗时 {formatElapsed(totalDuration * 1000)} · 均题 {formatElapsed(averageDuration * 1000)}
-                    </div>
+                  <div className="score-stat">
+                    <span>{correctCount} 对</span> / {wrongCount} 错<br />
+                    均题 <span>{formatElapsed(averageDuration * 1000)}</span>
                   </div>
                 </div>
 
@@ -1165,109 +1159,155 @@ export function PressureLearningReportView({
                                 </section>
                               ) : null}
 
-                              {/* 04 正确入口：路径对照 / 推导 双视图 + 延迟揭示 */}
-                              {activeFlow?.fork?.standardPath || activeGrade?.betterSolution ? (
+                              {/* 04 官方标准解法与考场秒杀妙手 */}
+                              {(activeQuestion?.explanation || activeGrade?.betterSolution || activeFlow?.fork?.standardPath) ? (
                                 <section className="bp-step">
                                   <div className="bp-step-n" data-n={String(++stepNum).padStart(2, '0')} />
                                   <div className="bp-step-body">
-                                    <div className="bp-step-t">
-                                      正确解法与入口
-                                      <span className="bp-viewswitch">
-                                        <button
-                                          type="button"
-                                          className={solutionView === 'fork' ? 'on' : ''}
-                                          onClick={() => setSolutionView('fork')}
-                                        >
-                                          路径对照
-                                        </button>
-                                        <button
-                                          type="button"
-                                          className={solutionView === 'derive' ? 'on' : ''}
-                                          onClick={() => setSolutionView('derive')}
-                                        >
-                                          推导
-                                        </button>
-                                      </span>
-                                    </div>
+                                    <div className="solution-panel">
+                                      <div className="solution-tabs">
+                                        <div className="tab-btns">
+                                          <button
+                                            type="button"
+                                            className={`sol-tab-btn ${solutionView === 'std' ? 'active' : ''}`}
+                                            onClick={() => setSolutionView('std')}
+                                          >
+                                            <span>📘 官方标准解法 (严谨采分步骤)</span>
+                                            <span className="tab-pill">大题基准</span>
+                                          </button>
+                                          {(activeGrade?.betterSolution || activeGrade?.advice) ? (
+                                            <button
+                                              type="button"
+                                              className={`sol-tab-btn ${solutionView === 'fast' ? 'active' : ''}`}
+                                              onClick={() => setSolutionView('fast')}
+                                            >
+                                              <span>⚡ 考场秒杀妙手 (速算技巧)</span>
+                                              <span className="tab-pill">选填秒杀</span>
+                                            </button>
+                                          ) : null}
+                                          {activeFlow?.fork?.standardPath ? (
+                                            <button
+                                              type="button"
+                                              className={`sol-tab-btn ${solutionView === 'fork' ? 'active' : ''}`}
+                                              onClick={() => setSolutionView('fork')}
+                                            >
+                                              <span>⤬ 路径分歧对照</span>
+                                            </button>
+                                          ) : null}
+                                        </div>
+                                        <div className="sol-tab-meta">考研数学一标准步骤</div>
+                                      </div>
 
-                                    <div className={`bp-soln ${solutionRevealed ? 'unlocked' : 'locked'}`}>
-                                      {solutionView === 'fork' ? (
-                                        <div className="bp-fork">
-                                          <div className="bp-fork-hd">
-                                            <span className="mine">我的考场演进</span>
-                                            <span className="gap" />
-                                            <span className="std">标准解法入口</span>
-                                          </div>
-                                          <div className="bp-fork-row fork">
-                                            <div className="cell">
-                                              <span className="sn">
-                                                第 {activeFlow?.fork?.step ?? 1} 步 ·{' '}
-                                                {activeFlow?.fork?.label ?? '路径分歧'}
-                                              </span>
-                                              <span className="kill">
-                                                {activeFlow?.fork?.myPath &&
-                                                activeFlow.fork.myPath.trim() !== activeFlow?.killLine?.trim() ? (
-                                                  <MathText value={activeFlow.fork.myPath} />
-                                                ) : (
-                                                  <span className="bp-dup-note">
-                                                    考场演算在此受阻中断，未能完成最终化简与代入（详见上方断点）。
-                                                  </span>
-                                                )}
-                                              </span>
-                                            </div>
-                                            <div className="mid">
-                                              <span className="dot">⤬</span>
-                                            </div>
-                                            <div className="cell">
-                                              <span className="sn">正解入口</span>
+                                      <div className={`bp-soln ${solutionRevealed ? 'unlocked' : 'locked'}`}>
+                                        {solutionView === 'std' ? (
+                                          <div className="sol-content">
+                                            <div className="sol-std-body">
                                               <MathText
                                                 value={
-                                                  activeFlow?.fork?.standardPath ||
+                                                  activeQuestion?.explanation ||
                                                   activeGrade?.betterSolution ||
+                                                  activeFlow?.fork?.standardPath ||
+                                                  ''
+                                                }
+                                              />
+                                            </div>
+                                            {activeFlow?.whyDeadEnd ? (
+                                              <div className="error-inline-note">
+                                                ⚠️ 考场病灶：{activeFlow.whyDeadEnd}
+                                              </div>
+                                            ) : null}
+                                            {(activeGrade?.betterSolution || activeGrade?.advice) ? (
+                                              <div className="shortcut-banner">
+                                                <div className="shortcut-header">
+                                                  <span>💡 考场秒杀提示：若为选填题，可切换至上方「⚡ 考场秒杀妙手」速算技巧</span>
+                                                </div>
+                                              </div>
+                                            ) : null}
+                                          </div>
+                                        ) : solutionView === 'fast' ? (
+                                          <div className="sol-content">
+                                            <div className="sol-fast-body">
+                                              <div className="fast-kicker">
+                                                ⚡ 考场提速秒杀视点（选填与验算）：
+                                              </div>
+                                              <MathText
+                                                value={
+                                                  activeGrade?.betterSolution ||
+                                                  activeGrade?.advice ||
+                                                  activeFlow?.rule?.positive ||
                                                   ''
                                                 }
                                               />
                                             </div>
                                           </div>
-                                          {activeFlow?.fork?.consequence ? (
-                                            <div className="bp-fork-cons">
-                                              走错之后：{activeFlow.fork.consequence}
+                                        ) : (
+                                          <div className="bp-fork">
+                                            <div className="bp-fork-hd">
+                                              <span className="mine">我的考场演进</span>
+                                              <span className="gap" />
+                                              <span className="std">标准解法入口</span>
                                             </div>
-                                          ) : null}
-                                        </div>
-                                      ) : (
-                                        <div className="bp-derive">
-                                          <MathText
-                                            value={
-                                              activeGrade?.betterSolution ||
-                                              activeFlow?.fork?.standardPath ||
-                                              ''
-                                            }
-                                          />
-                                        </div>
-                                      )}
-
-                                      {!solutionRevealed ? (
-                                        <div className="bp-veil">
-                                          <div className="vt">先回想这一步该做什么，推不出来再展开。</div>
-                                          <div className="vb">
-                                            <button
-                                              type="button"
-                                              className="mini pri"
-                                              onClick={() => setSolutionRevealed(true)}
-                                            >
-                                              我推过了，看解法
-                                            </button>
-                                            <button
-                                              type="button"
-                                              className="mini"
-                                              onClick={() => setSolutionRevealed(true)}
-                                            >
-                                              直接看
-                                            </button>
+                                            <div className="bp-fork-row fork">
+                                              <div className="cell">
+                                                <span className="sn">
+                                                  第 {activeFlow?.fork?.step ?? 1} 步 ·{' '}
+                                                  {activeFlow?.fork?.label ?? '路径分歧'}
+                                                </span>
+                                                <span className="kill">
+                                                  {activeFlow?.fork?.myPath &&
+                                                  activeFlow.fork.myPath.trim() !== activeFlow?.killLine?.trim() ? (
+                                                    <MathText value={activeFlow.fork.myPath} />
+                                                  ) : (
+                                                    <span className="bp-dup-note">
+                                                      考场演算在此受阻中断，未能完成最终化简与代入（详见上方断点）。
+                                                    </span>
+                                                  )}
+                                                </span>
+                                              </div>
+                                              <div className="mid">
+                                                <span className="dot">⤬</span>
+                                              </div>
+                                              <div className="cell">
+                                                <span className="sn">正解入口</span>
+                                                <MathText
+                                                  value={
+                                                    activeFlow?.fork?.standardPath ||
+                                                    activeGrade?.betterSolution ||
+                                                    ''
+                                                  }
+                                                />
+                                              </div>
+                                            </div>
+                                            {activeFlow?.fork?.consequence ? (
+                                              <div className="bp-fork-cons">
+                                                走错之后：{activeFlow.fork.consequence}
+                                              </div>
+                                            ) : null}
                                           </div>
-                                        </div>
-                                      ) : null}
+                                        )}
+
+                                        {!solutionRevealed ? (
+                                          <div className="bp-veil">
+                                            <div className="vt">先回想这一步该做什么，推不出来再展开。</div>
+                                            <div className="vb">
+                                              <button
+                                                type="button"
+                                                className="mini pri"
+                                                onClick={() => setSolutionRevealed(true)}
+                                              >
+                                                我推过了，看解法
+                                              </button>
+                                              <button
+                                                type="button"
+                                                className="mini"
+                                                onClick={() => setSolutionRevealed(true)}
+                                              >
+                                                直接看
+                                              </button>
+                                            </div>
+                                          </div>
+                                        ) : null}
+                                      </div>
                                     </div>
                                   </div>
                                 </section>

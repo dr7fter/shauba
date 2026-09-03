@@ -9457,14 +9457,24 @@ fn create_codex_task(question_id: i64, state: State<AppState>) -> Result<CodexTa
 4. 考场极速秒杀思路 (betterSolution)：
    - 严禁搬运繁琐教材长证明！必须提供考场极速解题技巧（Taylor展开、King变换、特征多项式、待定系数、几何投影等 30 秒秒解）；若原解法已最优填 null。
 5. 可执行修复动作 (advice)：给出一条明天即可落地刻意练习的专项战术动作。
-6. 公式排版绝对要求：所有数学符号、变量、公式、计算式必须严格使用 $...$ 或 $$...$$ 包裹，严禁裸文本数学式。
-7. 学员微观画像与报告反馈：批改完成后，请依据草稿表现同步更新根目录 characteristic.md 中的微观断点追踪状态（追加新错误或升级已固化）；并在最终回复给学员的文字报告中，专门呈现【🌟 本轮战力突破 / 成功改正】与【⚠️ 本轮新增微观断点与补丁】。
+6. 断点诊断块 (diagnosis)：报告按「我的入口 → 断点 → 为什么是死路 → 识别规则 → 正确入口」的认知动线呈现，你必须逐项填实，严禁留空或复述题干：
+   - myEntry：学员落笔时的第一个动作（原话式一句，含 $LaTeX$），要描述他做了什么，不是他错在哪；
+   - whyDeadEnd：讲清这条路径为什么走不通——讲结构特征与原理，严禁复述计算步骤，严禁写成"应该这样做"；
+   - rule：先 negation 后 positive；negation 必须是「看到什么特征 → 禁止做什么」的硬约束句式（肯定式会被旧习惯覆盖，否定式才拦得住）；
+   - fork：step 填分叉发生在第几步（落笔即错填 1），myPath 与 standardPath 对照填写，consequence 写清走错之后会发生什么（如"越算越繁，不存在算到底也能对的可能"）；
+   - acceptance：一条可判定的验收判据（如「根号池 13 题零覆盖」），禁止"多做练习""加强理解"这类无法判定的空话；
+   - errorCode：该断点若在 characteristic.md 中已有编号（如 E-027）则回填，尚未编码的填 null；
+   - title / severity：断点名与 L1 致命 / L2 战术 / L3 精度分级；
+   - nextAction：明天就能做的一条动作，需能在 10 分钟内完成；
+   - verdict 为 correct 的题，diagnosis 整块填 null。
+7. 公式排版绝对要求：所有数学符号、变量、公式、计算式必须严格使用 $...$ 或 $$...$$ 包裹，严禁裸文本数学式。
+8. 学员微观画像与报告反馈：批改完成后，请依据草稿表现同步更新根目录 characteristic.md 中的微观断点追踪状态（追加新错误或升级已固化）；并在最终回复给学员的文字报告中，专门呈现【🌟 本轮战力突破 / 成功改正】与【⚠️ 本轮新增微观断点与补丁】。
 
 完成后请将结果写入这个绝对路径：
 {output}
 
 JSON 必须符合（UTF-8，公式用标准单个反斜杠 LaTeX）。结果必须包含 rating、ratingTier、difficultyMultiplier 和六维 dimensions；无法由草稿确认的维度使用 score:null、confidence:0，并明确写 uncertain：
-{{"schemaVersion":1,"kind":"analysis","taskId":"{task_id}","questionId":{question_id},"summary":"战术诊断摘要（含 $LaTeX$ 公式）","verdict":"correct|partial|incorrect|uncertain","earliestError":"最早断点行与数学式（含 $LaTeX$）或 null","errorTags":["计算笔误" | "概念边界" | "方法绕路"],"weaknessTags":["薄弱知识点"],"advice":"下一步修复动作（含 $LaTeX$ 公式）","betterSolution":"考场极速秒杀思路（含 $LaTeX$ 公式）或 null","confidence":0.95,"rating":1.00,"ratingTier":"S|A|B|C|D","difficultyMultiplier":1.0,"dimensions":{{"rigor":{{"score":88,"confidence":0.9,"evidence":"依据草稿步骤（含 $LaTeX$）","advice":"改进动作（含 $LaTeX$）"}},"computation":{{"score":72,"confidence":0.9,"evidence":"依据草稿步骤（含 $LaTeX$）"}},"modeling":{{"score":65,"confidence":0.9,"evidence":"依据草稿步骤（含 $LaTeX$）"}},"methodUse":{{"score":80,"confidence":0.9,"evidence":"依据草稿步骤（含 $LaTeX$）"}},"speed":{{"score":90,"confidence":0.9,"evidence":"基于实际耗时"}},"strategyInsight":{{"score":58,"confidence":0.8,"evidence":"依据结构识别（含 $LaTeX$）","techniqueLevel":3,"independentDiscovery":"uncertain"}}}},"recommendedQuestionIds":[],"recommendationReason":null}}
+{{"schemaVersion":1,"kind":"analysis","taskId":"{task_id}","questionId":{question_id},"summary":"战术诊断摘要（含 $LaTeX$ 公式）","verdict":"correct|partial|incorrect|uncertain","earliestError":"最早断点行与数学式（含 $LaTeX$）或 null","errorTags":["计算笔误" | "概念边界" | "方法绕路"],"weaknessTags":["薄弱知识点"],"advice":"下一步修复动作（含 $LaTeX$ 公式）","betterSolution":"考场极速秒杀思路（含 $LaTeX$ 公式）或 null","confidence":0.95,"rating":1.00,"ratingTier":"S|A|B|C|D","difficultyMultiplier":1.0,"dimensions":{{"rigor":{{"score":88,"confidence":0.9,"evidence":"依据草稿步骤（含 $LaTeX$）","advice":"改进动作（含 $LaTeX$）"}},"computation":{{"score":72,"confidence":0.9,"evidence":"依据草稿步骤（含 $LaTeX$）"}},"modeling":{{"score":65,"confidence":0.9,"evidence":"依据草稿步骤（含 $LaTeX$）"}},"methodUse":{{"score":80,"confidence":0.9,"evidence":"依据草稿步骤（含 $LaTeX$）"}},"speed":{{"score":90,"confidence":0.9,"evidence":"基于实际耗时"}},"strategyInsight":{{"score":58,"confidence":0.8,"evidence":"依据结构识别（含 $LaTeX$）","techniqueLevel":3,"independentDiscovery":"uncertain"}}}},"diagnosis":{{"errorCode":"E-027 或 null","title":"根式换元入口缺失","severity":"L1|L2|L3","myEntry":"学员落笔时的第一个动作（含 $LaTeX$）","whyDeadEnd":"这条路径为什么走不通（讲原理，不讲步骤，含 $LaTeX$）","rule":{{"negation":"看到什么特征时禁止做什么","positive":"该做什么"}},"fork":{{"step":1,"label":"换元选择","myPath":"学员实际走的路径（含 $LaTeX$）","standardPath":"正确路径（含 $LaTeX$）","consequence":"走错之后的后果"}},"acceptance":"一条可判定的验收判据","nextAction":"明天就能做的一条动作"}},"recommendedQuestionIds":[],"recommendationReason":null}}
 strategyInsight 还必须包含 techniqueLevel（1–5）和 independentDiscovery（confirmed|uncertain|prompted）。不要输出 batchAttempts，单题只输出上面的 analysis 对象。
 不要修改题库源文件。"#,
         stem = q.stem,
@@ -9570,14 +9580,23 @@ fn build_codex_batch_task_prompt(
 5. 考场极速秒杀思路 (betterSolution)：
    - 严禁搬运繁琐教材长证明！必须提供考场极速解题技巧（Taylor展开、King变换、特征多项式、待定系数、几何投影等 30 秒秒解）；若原解法已最优填 null。
 6. 可执行修复动作 (advice)：每道题给出一条可落地执行的专项修复动作。
-7. 公式排版绝对要求：所有数学符号、变量、公式、计算式必须严格使用 $...$ 或 $$...$$ 包裹，严禁裸文本数学式。
-8. 学员微观画像与报告反馈：批改完成后，请依据草稿表现同步更新根目录 characteristic.md 中的微观断点追踪状态（追加新错误或升级已固化）；并在最终回复给学员的文字报告中，专门呈现【🌟 本轮战力突破 / 成功改正】与【⚠️ 本轮新增微观断点与补丁】。
+7. 断点诊断块 (diagnosis)：每题必填（correct 的题整块填 null）。报告按「我的入口 → 断点 → 为什么是死路 → 识别规则 → 正确入口」的认知动线呈现，逐项填实，严禁留空或复述题干：
+   - myEntry：学员落笔时的第一个动作（原话式一句，含 $LaTeX$），描述他做了什么，不是他错在哪；
+   - whyDeadEnd：讲清这条路径为什么走不通——讲结构特征与原理，严禁复述计算步骤，严禁写成"应该这样做"；
+   - rule：先 negation 后 positive；negation 必须是「看到什么特征 → 禁止做什么」的硬约束句式（肯定式会被旧习惯覆盖，否定式才拦得住）；
+   - fork：step 填分叉发生在第几步（落笔即错填 1），myPath 与 standardPath 对照填写，consequence 写清走错之后会发生什么；
+   - acceptance：一条可判定的验收判据（如「根号池 13 题零覆盖」），禁止"多做练习""加强理解"这类无法判定的空话；
+   - errorCode：该断点若在 characteristic.md 中已有编号（如 E-027）则回填，尚未编码的填 null；同一入口导致的题填同一个 errorCode，便于统计复发；
+   - title / severity：断点名与 L1 致命 / L2 战术 / L3 精度分级；
+   - nextAction：明天就能做的一条动作，需能在 10 分钟内完成。
+8. 公式排版绝对要求：所有数学符号、变量、公式、计算式必须严格使用 $...$ 或 $$...$$ 包裹，严禁裸文本数学式。
+9. 学员微观画像与报告反馈：批改完成后，请依据草稿表现同步更新根目录 characteristic.md 中的微观断点追踪状态（追加新错误或升级已固化）；并在最终回复给学员的文字报告中，专门呈现【🌟 本轮战力突破 / 成功改正】与【⚠️ 本轮新增微观断点与补丁】。
 
 完成后请将结果写入这个绝对路径：
 {output}
 
 JSON 必须符合（UTF-8，公式用标准单个反斜杠 LaTeX）。每个 batchAttempt 还必须包含 rating、ratingTier、difficultyMultiplier 和六维 dimensions；无法由草稿确认的维度使用 score:null、confidence:0，并明确写 uncertain：
-{{"schemaVersion":1,"kind":"batch","taskId":"{task_id}","summary":"整组批改摘要（含 $LaTeX$ 公式）","errorTags":["错误类型"],"weaknessTags":["薄弱知识"],"confidence":0.9,"recommendedQuestionIds":[],"batchAttempts":[{{"questionId":155,"result":"correct|wrong|uncertain","selfRating":2,"durationSeconds":120,"summary":"简要诊断（含 $LaTeX$ 公式）","verdict":"correct|partial|incorrect|uncertain","earliestError":"最早断点行与数学式（含 $LaTeX$）或 null","errorTags":["计算笔误" | "概念边界" | "方法绕路"],"weaknessTags":["薄弱知识"],"advice":"下一步修复动作（含 $LaTeX$ 公式）","betterSolution":"考场极速秒杀思路（含 $LaTeX$ 公式）或 null","confidence":0.95,"rating":1.00,"ratingTier":"S|A|B|C|D","difficultyMultiplier":1.0,"dimensions":{{"rigor":{{"score":88,"confidence":0.9,"evidence":"依据草稿步骤（含 $LaTeX$）","advice":"改进动作（含 $LaTeX$）"}},"computation":{{"score":72,"confidence":0.9,"evidence":"依据草稿步骤（含 $LaTeX$）"}},"modeling":{{"score":65,"confidence":0.9,"evidence":"依据草稿步骤（含 $LaTeX$）"}},"methodUse":{{"score":80,"confidence":0.9,"evidence":"依据草稿步骤（含 $LaTeX$）"}},"speed":{{"score":90,"confidence":0.9,"evidence":"基于实际耗时"}},"strategyInsight":{{"score":58,"confidence":0.8,"evidence":"依据结构识别（含 $LaTeX$）","techniqueLevel":3,"independentDiscovery":"uncertain"}}}}}}]}}
+{{"schemaVersion":1,"kind":"batch","taskId":"{task_id}","summary":"整组批改摘要（含 $LaTeX$ 公式）","errorTags":["错误类型"],"weaknessTags":["薄弱知识"],"confidence":0.9,"recommendedQuestionIds":[],"batchAttempts":[{{"questionId":155,"result":"correct|wrong|uncertain","selfRating":2,"durationSeconds":120,"summary":"简要诊断（含 $LaTeX$ 公式）","verdict":"correct|partial|incorrect|uncertain","earliestError":"最早断点行与数学式（含 $LaTeX$）或 null","errorTags":["计算笔误" | "概念边界" | "方法绕路"],"weaknessTags":["薄弱知识"],"advice":"下一步修复动作（含 $LaTeX$ 公式）","betterSolution":"考场极速秒杀思路（含 $LaTeX$ 公式）或 null","confidence":0.95,"rating":1.00,"ratingTier":"S|A|B|C|D","difficultyMultiplier":1.0,"dimensions":{{"rigor":{{"score":88,"confidence":0.9,"evidence":"依据草稿步骤（含 $LaTeX$）","advice":"改进动作（含 $LaTeX$）"}},"computation":{{"score":72,"confidence":0.9,"evidence":"依据草稿步骤（含 $LaTeX$）"}},"modeling":{{"score":65,"confidence":0.9,"evidence":"依据草稿步骤（含 $LaTeX$）"}},"methodUse":{{"score":80,"confidence":0.9,"evidence":"依据草稿步骤（含 $LaTeX$）"}},"speed":{{"score":90,"confidence":0.9,"evidence":"基于实际耗时"}},"strategyInsight":{{"score":58,"confidence":0.8,"evidence":"依据结构识别（含 $LaTeX$）","techniqueLevel":3,"independentDiscovery":"uncertain"}}}},"diagnosis":{{"errorCode":"E-027 或 null","title":"断点名","severity":"L1|L2|L3","myEntry":"学员落笔时的第一个动作（含 $LaTeX$）","whyDeadEnd":"这条路径为什么走不通（讲原理，不讲步骤）","rule":{{"negation":"看到什么特征时禁止做什么","positive":"该做什么"}},"fork":{{"step":1,"label":"换元选择","myPath":"学员实际走的路径（含 $LaTeX$）","standardPath":"正确路径（含 $LaTeX$）","consequence":"走错之后的后果"}},"acceptance":"一条可判定的验收判据","nextAction":"明天就能做的一条动作"}}}}]}}
 示例中的分数仅用于展示字段类型，不要照抄。不要修改题库源文件。"#,
         count = questions.len(),
         numbered = numbered.join("\n\n"),
@@ -10464,6 +10483,7 @@ fn build_codex_batch_report(
             "ratingTier": item.get("ratingTier"),
             "difficultyMultiplier": item.get("difficultyMultiplier"),
             "dimensions": item.get("dimensions"),
+            "diagnosis": item.get("diagnosis"),
         }));
     }
 
@@ -11773,6 +11793,91 @@ fn get_mistake_timeline(
     Ok(result)
 }
 
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AttemptHistoryEntry {
+    pub question_id: i64,
+    pub attempted_at: String,
+    pub duration_seconds: i64,
+    pub outcome: String,
+    pub verdict: Option<String>,
+    pub earliest_error: Option<String>,
+    pub error_code: Option<String>,
+}
+
+/// 只读查询：取若干题的历次作答记录，供批改报告的「断点档案」时间线使用。
+/// 诊断字段（verdict / earliestError / errorCode）从 codex_inbox 的历史 payload 中取最新一条。
+#[tauri::command]
+fn get_question_attempt_history(
+    question_ids: Vec<i64>,
+    state: State<AppState>,
+) -> Result<Vec<AttemptHistoryEntry>, String> {
+    let ids: Vec<i64> = question_ids.into_iter().take(200).collect();
+    if ids.is_empty() {
+        return Ok(Vec::new());
+    }
+    let placeholders = ids.iter().map(|_| "?").collect::<Vec<_>>().join(",");
+    let conn = state.db.lock().map_err(|e| e.to_string())?;
+    let sql = format!(
+        "SELECT a.question_id,
+                a.attempted_at,
+                a.duration_seconds,
+                COALESCE(a.outcome, a.result) AS outcome,
+                d.verdict,
+                d.earliest_error,
+                d.error_code
+         FROM attempts a
+         LEFT JOIN (
+             SELECT question_id, verdict, earliest_error, error_code FROM (
+                 SELECT question_id, verdict, earliest_error, error_code,
+                        ROW_NUMBER() OVER (PARTITION BY question_id ORDER BY src_id DESC) AS rn
+                 FROM (
+                     SELECT CAST(json_extract(payload_json, '$.questionId') AS INTEGER) AS question_id,
+                            id AS src_id,
+                            json_extract(payload_json, '$.verdict') AS verdict,
+                            json_extract(payload_json, '$.earliestError') AS earliest_error,
+                            json_extract(payload_json, '$.diagnosis.errorCode') AS error_code
+                     FROM codex_inbox
+                     WHERE kind = 'analysis'
+                       AND json_extract(payload_json, '$.questionId') IS NOT NULL
+
+                     UNION ALL
+
+                     SELECT CAST(json_extract(b.value, '$.questionId') AS INTEGER) AS question_id,
+                            i.id AS src_id,
+                            json_extract(b.value, '$.verdict') AS verdict,
+                            json_extract(b.value, '$.earliestError') AS earliest_error,
+                            json_extract(b.value, '$.diagnosis.errorCode') AS error_code
+                     FROM codex_inbox i, json_each(json_extract(i.payload_json, '$.batchAttempts')) b
+                     WHERE i.kind = 'batch'
+                 )
+             ) WHERE rn = 1
+         ) d ON d.question_id = a.question_id
+         WHERE a.question_id IN ({placeholders})
+         ORDER BY a.attempted_at DESC, a.id DESC"
+    );
+    let mut stmt = conn.prepare(&sql).map_err(|e| e.to_string())?;
+    let rows = stmt
+        .query_map(rusqlite::params_from_iter(ids.iter()), |row| {
+            Ok(AttemptHistoryEntry {
+                question_id: row.get(0)?,
+                attempted_at: row.get(1)?,
+                duration_seconds: row.get(2)?,
+                outcome: row.get(3)?,
+                verdict: row.get(4)?,
+                earliest_error: row.get(5)?,
+                error_code: row.get(6)?,
+            })
+        })
+        .map_err(|e| e.to_string())?;
+
+    let mut entries = Vec::new();
+    for row in rows {
+        entries.push(row.map_err(|e| e.to_string())?);
+    }
+    Ok(entries)
+}
+
 #[derive(Debug, Serialize, Deserialize, Clone, Default)]
 #[serde(rename_all = "camelCase")]
 pub struct DailyPlanItemData {
@@ -12376,6 +12481,7 @@ pub fn run() {
             list_pressure_sessions,
             get_today_attempted_questions,
             get_mistake_timeline,
+            get_question_attempt_history,
             get_app_version,
             get_system_proxy,
             get_user_profile,

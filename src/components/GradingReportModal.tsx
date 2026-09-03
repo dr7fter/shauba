@@ -8,7 +8,14 @@ import {
 } from 'lucide-react'
 import { AnimatePresence } from 'framer-motion'
 import { useEffect, useRef, useState, useMemo, useCallback } from 'react'
-import { addDailyPlanItem, addToCustomQueue, getQuestion, saveNote, toggleFavorite } from '../api'
+import {
+  addDailyPlanItem,
+  addToCustomQueue,
+  getQuestion,
+  getQuestionAttemptHistory,
+  saveNote,
+  toggleFavorite,
+} from '../api'
 import {
   CS_RATING_MAX,
   benchmarkSeconds,
@@ -19,8 +26,15 @@ import {
   type GradeOutcome,
 } from '../utils'
 import {
+  baselineDimensionValues,
+  breakpointHeadline,
+  buildBreakpointGroups,
+  buildGradeFlow,
   buildReportViewModel,
+  dimensionInsight,
   filterReportEntries,
+  gradeDimensionRows,
+  type BreakpointSeverity,
 } from '../domain/reportViewModel'
 import { MathText } from './MathText'
 import { EmptyState } from './EmptyState'
@@ -29,6 +43,7 @@ import { Radar } from './ui/Radar'
 import { RatingBadge } from './ui/RatingBadge'
 import { MetricBar } from './ui/MetricBar'
 import type {
+  AttemptHistoryEntry,
   DailyPlanItem,
   GradingReport,
   GradingReportOrigin,
@@ -120,6 +135,21 @@ function getTomorrowDateString(): string {
   return `${year}-${month}-${day}`
 }
 
+/** L1 致命 / L2 战术 / L3 精度——只在断点清单与档案里用，不参与评分 */
+const SEVERITY_LABEL: Record<BreakpointSeverity, string> = {
+  L1: 'L1 致命',
+  L2: 'L2 战术',
+  L3: 'L3 精度',
+}
+
+function outcomeMark(raw?: string | null): { text: string; cls: string } {
+  const s = (raw ?? '').toLowerCase()
+  if (s === 'correct') return { text: '对', cls: 'ok' }
+  if (s === 'partial') return { text: '半', cls: 'mid' }
+  if (s === 'wrong' || s === 'incorrect') return { text: '错', cls: 'bad' }
+  return { text: '·', cls: '' }
+}
+
 export function PressureLearningReportView({
   report,
   reportOrigin,
@@ -144,13 +174,19 @@ export function PressureLearningReportView({
   const [toastMsg, setToastMsg] = useState<string | null>(null)
   const [questionFilter, setQuestionFilter] = useState<'needs-attention' | 'all' | 'correct'>('needs-attention')
   const [ratingEvidenceOpen, setRatingEvidenceOpen] = useState(false)
-  const [inspectorTab, setInspectorTab] = useState<'audit' | 'taxonomy' | 'notes'>('audit')
   const [userNotes, setUserNotes] = useState<Record<number, string>>({})
   const [noteSaving, setNoteSaving] = useState<Record<number, boolean>>({})
   const [noteSavedNotice, setNoteSavedNotice] = useState<Record<number, boolean>>({})
   const [planAdded, setPlanAdded] = useState<Record<number, boolean>>({})
   const [viewMode, setViewMode] = useState<'workbench' | 'overview'>('workbench')
   const [railFilter, setRailFilter] = useState<'all' | 'needs-attention'>('needs-attention')
+  const [attemptHistory, setAttemptHistory] = useState<AttemptHistoryEntry[]>([])
+  /** 第 04 步「正确入口」的呈现方式：推导式 / E2 左右对照式 */
+  const [solutionView, setSolutionView] = useState<'derive' | 'fork'>('fork')
+  /** 正确入口默认遮罩，逼自己先推一遍，避免"看懂了 = 会了" */
+  const [solutionRevealed, setSolutionRevealed] = useState(false)
+  const [copyPanelOpen, setCopyPanelOpen] = useState(false)
+  const [copied, setCopied] = useState(false)
 
   const onCloseRef = useRef(onClose)
   onCloseRef.current = onClose
@@ -424,6 +460,142 @@ export function PressureLearningReportView({
     return parts.join(' / ') || '高数'
   }, [grades, questions])
 
+  // ---- E1 断点工单派生数据 ----
+  const gradeQuestionIds = useMemo(() => grades.map((grade) => grade.questionId), [grades])
+
+  useEffect(() => {
+    let cancelled = false
+    if (gradeQuestionIds.length === 0) {
+      setAttemptHistory([])
+      return
+    }
+    getQuestionAttemptHistory(gradeQuestionIds)
+      .then((rows) => {
+        if (!cancelled) setAttemptHistory(Array.isArray(rows) ? rows : [])
+      })
+      .catch(() => {
+        if (!cancelled) setAttemptHistory([])
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [gradeQuestionIds])
+
+  const breakpointGroups = useMemo(
+    () => buildBreakpointGroups(grades, attemptHistory),
+    [grades, attemptHistory],
+  )
+  const headline = useMemo(() => breakpointHeadline(breakpointGroups), [breakpointGroups])
+  const baselineDims = useMemo(() => baselineDimensionValues(grades), [grades])
+  const relapseCount = breakpointGroups.filter((group) => group.state === 'relapse').length
+
+  const activeFlow = activeGrade ? buildGradeFlow(activeGrade) : null
+  const activeDimRows = activeGrade ? gradeDimensionRows(activeGrade, baselineDims) : []
+  const activeInsight = activeDimRows.length > 0 ? dimensionInsight(activeDimRows) : null
+  const activeHistory = useMemo(
+    () => (activeGrade ? attemptHistory.filter((row) => row.questionId === activeGrade.questionId) : []),
+    [attemptHistory, activeGrade],
+  )
+  // activeHistory 按时间倒序，末条即首次作答
+  const firstDuration = activeHistory.length > 1 ? activeHistory[activeHistory.length - 1].durationSeconds : null
+  const compression =
+    firstDuration && firstDuration > 0 && activeGrade && activeGrade.duration > 0
+      ? Math.round((activeGrade.duration / firstDuration) * 100)
+      : null
+
+  /**
+   * 验收判据的三道闸。只认真实数据：
+   * 没有重做记录就是 pending，绝不因为"看起来懂了"记成 pass。
+   */
+  const gateRows = useMemo(() => {
+    const rows: { key: string; label: string; value: string; state: 'pass' | 'fail' | 'pending' }[] = []
+    if (activeGrade) {
+      rows.push({
+        key: 'result',
+        label: '本次结果正确',
+        value: activeTone?.label ?? '—',
+        state: activeTone?.key === 'correct' ? 'pass' : 'fail',
+      })
+    }
+    rows.push({
+      key: 'speed',
+      label: '用时压到首次 1/3',
+      value: compression != null ? `${compression}%` : '无重做记录',
+      state: compression == null ? 'pending' : compression <= 33 ? 'pass' : 'fail',
+    })
+    rows.push({
+      key: 'rule',
+      label: '否定式规则能默写',
+      value: activeFlow?.rule?.negation ? '待你自测' : '无规则',
+      state: 'pending',
+    })
+    return rows
+  }, [activeGrade, activeTone, compression, activeFlow])
+
+  const gatePassed = gateRows.filter((row) => row.state === 'pass').length
+  const gateProgress = gateRows.length > 0 ? Math.round((gatePassed / gateRows.length) * 100) : 0
+
+  const buildAiPrompt = useCallback(() => {
+    if (!activeGrade) return ''
+    const question = questions[activeGrade.questionId]
+    const lines: string[] = []
+    lines.push(`【刷吧 · 求详解】#${activeGrade.questionId}`)
+    lines.push(`考点：${question?.categoryPath ?? '未分类'}`)
+    if (activeFlow?.errorCode || activeFlow?.title) {
+      lines.push(`断点：${[activeFlow?.errorCode, activeFlow?.title].filter(Boolean).join(' ')}`)
+    }
+    lines.push(`判定：${activeTone?.label ?? ''}${activeHistory.length > 1 ? ` · 第 ${activeHistory.length} 次作答` : ''}`)
+    lines.push('')
+    if (question?.stem) {
+      lines.push('【题目】')
+      lines.push(question.stem)
+      lines.push('')
+    }
+    if (activeFlow?.myEntry) {
+      lines.push('【我当时的入口】')
+      lines.push(activeFlow.myEntry)
+      lines.push('')
+    }
+    if (activeFlow?.killLine) {
+      lines.push('【批改判定的断点】')
+      lines.push(activeFlow.killLine)
+      lines.push('')
+    }
+    if (activeGrade.betterSolution) {
+      lines.push('【我已看过的解法】← 这段已看过，请不要重复讲')
+      lines.push(activeGrade.betterSolution)
+      lines.push('')
+    }
+    lines.push('【我还卡在哪】')
+    lines.push(activeFlow?.whyDeadEnd ?? '我知道答案怎么来的，但考场上看到这类结构仍会走回老路。')
+    lines.push('我需要的是「识别规则」，不是计算过程。')
+    lines.push('')
+    lines.push('【请你这样帮我】')
+    lines.push('1. 讲清认知根源：为什么我选的入口是死路（讲原理，不列步骤）')
+    lines.push('2. 给一条可背诵的否定式识别规则：看到什么特征 → 禁止做什么')
+    lines.push('3. 举 2 个只有入口不同、其余几乎一样的对照题让我练眼')
+    lines.push('4. 我会在本题上持续追问，请保留上述全部上下文')
+    return lines.join('\n')
+  }, [activeGrade, activeFlow, activeTone, activeHistory, questions])
+
+  const handleCopyAi = useCallback(async () => {
+    const text = buildAiPrompt()
+    if (!text) return
+    try {
+      await navigator.clipboard.writeText(text)
+      setCopied(true)
+      setToastMsg('⧉ 追问上下文已复制，直接粘贴给 AI')
+      setTimeout(() => {
+        setCopied(false)
+        setToastMsg(null)
+      }, 2400)
+    } catch {
+      setCopyPanelOpen(true)
+      setToastMsg('剪贴板不可用，请手动复制下方文本')
+      setTimeout(() => setToastMsg(null), 2400)
+    }
+  }, [buildAiPrompt])
+
   return (
     <div
       className="ui-overlay pressure-report-overlay plan-d-overlay"
@@ -493,6 +665,43 @@ export function PressureLearningReportView({
               </button>
             </div>
           </div>
+
+          {/* 本轮结论：先说清"要修什么"，正确率退到右侧指标 */}
+          {headline && (
+            <div className="bp-verdict">
+              <div className="bp-verdict-main">
+                <div className="bp-kick">本轮结论 · 先读这一条</div>
+                <h2>{headline}</h2>
+                <p>
+                  共 {breakpointGroups.length} 个断点
+                  {relapseCount > 0 ? ` · 其中 ${relapseCount} 个是复发` : ''}
+                  {breakpointGroups.some((group) => !group.errorCode)
+                    ? ' · 有断点尚未编码，批改回传时可补 errorCode'
+                    : ''}
+                </p>
+              </div>
+              <div className="bp-verdict-stats">
+                <div>
+                  <span className="k">断点</span>
+                  <span className="v num bad">{breakpointGroups.length}</span>
+                </div>
+                <div>
+                  <span className="k">复发</span>
+                  <span className="v num bad">{relapseCount}</span>
+                </div>
+                <div>
+                  <span className="k">真掌握</span>
+                  <span className="v num ok">{correctCount}</span>
+                </div>
+                <div>
+                  <span className="k">对 / 半 / 错</span>
+                  <span className="v num">
+                    {correctCount} / {partialCount} / {wrongCount}
+                  </span>
+                </div>
+              </div>
+            </div>
+          )}
 
           {/* 六维证据抽屉 */}
           {ratingEvidenceOpen && (
@@ -611,86 +820,94 @@ export function PressureLearningReportView({
               
               {/* ============ LEFT: 成绩卡与题目索引 ============ */}
               <aside className="col">
-                <div className="scorecard">
-                  <div className="scorekicker">本次训练 · {totalCount} 题</div>
-                  <div className="scorenum num">
-                    {accuracy != null ? accuracy : 100}
-                    <small>%</small>
+                <div className="bp-summary">
+                  <div className="bp-ring">
+                    <b className="num">{breakpointGroups.length}</b>
                   </div>
-                  <div className="scoreline">
-                    正确率（{correctCount} / {totalCount}）· <span className="mono" style={{ color: 'var(--t3)' }}>均题 {formatElapsed(averageDuration * 1000)}</span>
-                  </div>
-                  <div className="kastrow">
-                    证据覆盖 <b>{evidenceCoverage} / {totalCount}</b> 题具备维度数据
-                  </div>
-                  <div className="miniStats">
-                    <div className="m">
-                      <div className="k">对 / 半 / 错</div>
-                      <div className="v num">{correctCount} / {partialCount} / {wrongCount}</div>
-                    </div>
-                    <div className="m">
-                      <div className="k">总耗时</div>
-                      <div className="v num">{formatElapsed(totalDuration * 1000)}</div>
-                    </div>
-                    <div className="m">
-                      <div className="k">真掌握</div>
-                      <div className="v num ok">{correctCount} 题</div>
-                    </div>
-                    <div className="m">
-                      <div className="k">待攻坚</div>
-                      <div className="v num bad">{wrongCount + partialCount} 题</div>
+                  <div className="bp-summary-txt">
+                    <div className="a">本轮断点</div>
+                    <div className="b">
+                      {relapseCount > 0 ? `${relapseCount} 个复发 · ` : ''}
+                      {breakpointGroups.filter((group) => !group.errorCode).length > 0
+                        ? `${breakpointGroups.filter((group) => !group.errorCode).length} 个未编码`
+                        : '全部已编码'}
+                      <br />
+                      总耗时 {formatElapsed(totalDuration * 1000)} · 均题 {formatElapsed(averageDuration * 1000)}
                     </div>
                   </div>
                 </div>
 
-                <div className="probhd">
-                  <span className="title">
-                    题目索引<small>J / K</small>
-                  </span>
-                  <div className="pfilter">
-                    <button
-                      type="button"
-                      className={`f ${railFilter === 'needs-attention' ? 'active' : ''}`}
-                      onClick={() => setRailFilter('needs-attention')}
-                    >
-                      待攻坚 {attentionEntries.length}
-                    </button>
-                    <button
-                      type="button"
-                      className={`f ${railFilter === 'all' ? 'active' : ''}`}
-                      onClick={() => setRailFilter('all')}
-                    >
-                      全部 {grades.length}
-                    </button>
-                  </div>
+                <div className="bp-hd">
+                  <h2>断点清单</h2>
+                  <span className="hint mono">J / K</span>
                 </div>
 
-                <div className="problist">
+                <div className="bp-list">
+                  {breakpointGroups.map((group) => {
+                    const isActive = group.indices.includes(selectedGradeIndex)
+                    return (
+                      <div
+                        key={group.key}
+                        className={`bp-item ${isActive ? 'on' : ''}`}
+                        onClick={() => setSelectedGradeIndex(group.indices[0])}
+                      >
+                        <div className="bp-r1">
+                          {group.errorCode ? (
+                            <span className="bp-code">{group.errorCode}</span>
+                          ) : (
+                            <span className="bp-code none">未编码</span>
+                          )}
+                          {group.severity ? (
+                            <span className={`bp-lv ${group.severity.toLowerCase()}`}>{group.severity}</span>
+                          ) : null}
+                          <span className={`bp-st ${group.state === 'relapse' ? 'relapse' : 'new'}`}>
+                            {group.state === 'relapse' ? '复发' : '新增'}
+                          </span>
+                        </div>
+                        <div className="bp-nm">{group.title}</div>
+                        <div className="bp-qs">
+                          {group.questionIds.map((id) => `#${id}`).join(' · ')}
+                          {group.historyTotal > 1
+                            ? ` · 历史 ${group.historyWrong}/${group.historyTotal} 错`
+                            : ''}
+                        </div>
+                      </div>
+                    )
+                  })}
+                  {breakpointGroups.length === 0 && (
+                    <div className="bp-empty">本轮没有需要修复的断点，全部通过。</div>
+                  )}
+                </div>
+
+                <div className="bp-split">
+                  <span>全部 {grades.length} 题</span>
+                  <button
+                    type="button"
+                    className="bp-toggle"
+                    onClick={() => setRailFilter(railFilter === 'all' ? 'needs-attention' : 'all')}
+                  >
+                    {railFilter === 'all' ? '只看待攻坚' : '显示全部'}
+                  </button>
+                </div>
+
+                <div className="bp-mini-list">
                   {railEntries.map(({ grade, index }) => {
                     const q = questions[grade.questionId]
                     const tone = gradeTone(grade)
                     const isBad = tone.key === 'wrong'
                     const isActive = index === selectedGradeIndex
                     const dur = getQuestionDurationInfo(grade)
-                    const catShort = q?.categoryPath?.split('/').pop()?.trim() || '考点'
 
                     return (
                       <div
-                        key={`${grade.questionId}-${index}`}
-                        className={`prob ${isBad ? 'is-bad' : ''} ${isActive ? 'active' : ''}`}
+                        key={`mini-${grade.questionId}-${index}`}
+                        className={`bp-mini ${isActive ? 'on' : ''}`}
                         onClick={() => setSelectedGradeIndex(index)}
                       >
-                        <div className="ord">§ {index + 1}</div>
-                        <div className="meta">
-                          <div className="qid num">#{grade.questionId}</div>
-                          <div className="qcat" title={q?.categoryPath || catShort}>{catShort}</div>
-                        </div>
-                        <div className="qtime num">
-                          <b>{formatElapsed(dur.duration * 1000)}</b>
-                          <span className={`cm ${isBad ? 'fix' : 'good'}`}>
-                            {isBad ? '仍错' : dur.isOvertime ? '超时' : '达标'}
-                          </span>
-                        </div>
+                        <i className={`d ${isBad ? 'bad' : 'ok'}`} />
+                        <span className="qid num">#{grade.questionId}</span>
+                        <span className="cat">{q?.categoryPath?.split('/').pop()?.trim() || '考点'}</span>
+                        <span className="t num">{formatElapsed(dur.duration * 1000)}</span>
                       </div>
                     )
                   })}
@@ -733,56 +950,258 @@ export function PressureLearningReportView({
                         </div>
                       )}
 
-                      {/* 真实维度小条 */}
-                      <div className="dimstrip">
-                        {ratingDimensions.slice(0, 4).map((d) => {
-                          const val = d.value != null ? Number(d.value) : 0
-                          const pct = Math.min(100, Math.max(0, val * 10))
-                          return (
-                            <div className="d" key={d.key}>
-                              <div className="n">{d.label}</div>
-                              <div className="bar"><i style={{ width: `${pct}%` }}></i></div>
-                              <div className="v num">
-                                <span>{d.value != null ? val.toFixed(1) : '—'}</span>
-                                <span className="na">/ 10</span>
-                              </div>
-                            </div>
-                          )
-                        })}
-                      </div>
-
-                      {/* 朱批：earliestError 最早断点 */}
-                      {(activeGrade.earliestError || activeGrade.feedback) && (
-                        <div className="redmark">
-                          <div className="lbl">
-                            <span className="ttl">⚠ 最早断点</span>
-                            <span className="src">codex · 批改输出</span>
+                      {/* 本题维度 vs 本组基线：取 grade.dimensions，不再用全组均值冒充单题 */}
+                      {activeDimRows.some((row) => row.value != null) && (
+                        <div className="bp-dims">
+                          <div className="bp-dims-hd">
+                            <span>本题 / 本组基线</span>
+                            {activeInsight ? <b>{activeInsight}</b> : null}
                           </div>
-                          <p>
-                            <SafeClampedText value={activeGrade.earliestError || activeGrade.feedback || ''} />
-                          </p>
+                          <div className="bp-dims-grid">
+                            {activeDimRows.map((row) => (
+                              <div className="bp-dim" key={row.key}>
+                                <div className="bp-dim-top">
+                                  <span className="lb">{row.label}</span>
+                                  <span
+                                    className={`vv ${
+                                      row.delta != null && row.delta < 0
+                                        ? 'down'
+                                        : row.delta != null && row.delta > 0
+                                          ? 'up'
+                                          : ''
+                                    }`}
+                                  >
+                                    {row.value != null ? Math.round(row.value) : '—'}
+                                    {row.delta != null && row.delta !== 0
+                                      ? ` (${row.delta > 0 ? '+' : ''}${row.delta})`
+                                      : ''}
+                                  </span>
+                                </div>
+                                <div className="bp-dim-bar">
+                                  <i className="base" style={{ width: `${row.base ?? 0}%` }} />
+                                  <i
+                                    className={`cur ${row.delta != null && row.delta < 0 ? 'down' : ''}`}
+                                    style={{ width: `${row.value ?? 0}%` }}
+                                  />
+                                </div>
+                              </div>
+                            ))}
+                          </div>
                         </div>
                       )}
 
-                      {/* betterSolution 标准解法折叠 */}
-                      {activeGrade.betterSolution && (
-                        <details className="fold" open>
-                          <summary>标准解法（codex 推荐路径）</summary>
-                          <div className="fb">
-                            <MathText value={activeGrade.betterSolution} />
-                          </div>
-                        </details>
-                      )}
+                      <div className="bp-flow">
+                        {/* 01 你当时的入口 */}
+                        {activeFlow?.myEntry ? (
+                          <section className="bp-step">
+                            <div className="bp-step-n" data-n="01" />
+                            <div className="bp-step-body">
+                              <div className="bp-step-t">
+                                你当时的入口
+                                {compression != null && activeDurInfo ? (
+                                  <span className="bp-cmp">
+                                    首次 {formatElapsed((firstDuration ?? 0) * 1000)} → 本次{' '}
+                                    <b>{formatElapsed(activeDurInfo.duration * 1000)}</b>（{compression}%）
+                                  </span>
+                                ) : null}
+                              </div>
+                              <div className="bp-mine">
+                                <MathText value={activeFlow.myEntry} />
+                              </div>
+                            </div>
+                          </section>
+                        ) : null}
 
-                      {/* advice 考场专项抢救指令折叠 */}
-                      {activeGrade.advice && (
-                        <details className="fold">
-                          <summary>考场专项抢救指令</summary>
-                          <div className="fb">
-                            <SafeClampedText value={activeGrade.advice} />
-                          </div>
-                        </details>
-                      )}
+                        {/* 02 断点一句话 */}
+                        {activeFlow?.killLine ? (
+                          <section className="bp-step kill">
+                            <div className="bp-step-n" data-n="02" />
+                            <div className="bp-step-body">
+                              <div className="bp-step-t">断点 · 一句话</div>
+                              <div className="bp-kill">
+                                <SafeClampedText value={activeFlow.killLine} />
+                                {activeGrade && typeof activeGrade.confidence === 'number' ? (
+                                  <div className="bp-src mono">
+                                    codex 批改 · 置信 {Math.round(activeGrade.confidence * 100)}%
+                                    {activeFlow.errorCode ? ` · ${activeFlow.errorCode}` : ''}
+                                  </div>
+                                ) : null}
+                              </div>
+                            </div>
+                          </section>
+                        ) : null}
+
+                        {/* 03 为什么这条是死路 */}
+                        {activeFlow?.whyDeadEnd ? (
+                          <section className="bp-step">
+                            <div className="bp-step-n" data-n="03" />
+                            <div className="bp-step-body">
+                              <div className="bp-step-t">为什么这条是死路 · 讲原理，不讲步骤</div>
+                              <div className="bp-why">
+                                <SafeClampedText value={activeFlow.whyDeadEnd} />
+                              </div>
+                            </div>
+                          </section>
+                        ) : null}
+
+                        {/* 04 正确入口：路径对照 / 推导 双视图 + 延迟揭示 */}
+                        {activeFlow?.fork?.standardPath || activeGrade?.betterSolution ? (
+                          <section className="bp-step">
+                            <div className="bp-step-n" data-n="04" />
+                            <div className="bp-step-body">
+                              <div className="bp-step-t">
+                                正确入口
+                                <span className="bp-viewswitch">
+                                  <button
+                                    type="button"
+                                    className={solutionView === 'fork' ? 'on' : ''}
+                                    onClick={() => setSolutionView('fork')}
+                                  >
+                                    路径对照
+                                  </button>
+                                  <button
+                                    type="button"
+                                    className={solutionView === 'derive' ? 'on' : ''}
+                                    onClick={() => setSolutionView('derive')}
+                                  >
+                                    推导
+                                  </button>
+                                </span>
+                              </div>
+
+                              <div className={`bp-soln ${solutionRevealed ? 'unlocked' : 'locked'}`}>
+                                {solutionView === 'fork' ? (
+                                  <div className="bp-fork">
+                                    <div className="bp-fork-hd">
+                                      <span className="mine">我的路径</span>
+                                      <span className="gap" />
+                                      <span className="std">标准路径</span>
+                                    </div>
+                                    <div className="bp-fork-row fork">
+                                      <div className="cell">
+                                        <span className="sn">
+                                          第 {activeFlow?.fork?.step ?? 1} 步 ·{' '}
+                                          {activeFlow?.fork?.label ?? '路径选择'}
+                                        </span>
+                                        <span className="kill">
+                                          {activeFlow?.fork?.myPath ? (
+                                            <MathText value={activeFlow.fork.myPath} />
+                                          ) : (
+                                            '未记录'
+                                          )}
+                                        </span>
+                                      </div>
+                                      <div className="mid">
+                                        <span className="dot">⤬</span>
+                                      </div>
+                                      <div className="cell">
+                                        <span className="sn">正解入口</span>
+                                        <MathText
+                                          value={
+                                            activeFlow?.fork?.standardPath ||
+                                            activeGrade?.betterSolution ||
+                                            ''
+                                          }
+                                        />
+                                      </div>
+                                    </div>
+                                    {activeFlow?.fork?.consequence ? (
+                                      <div className="bp-fork-cons">
+                                        走错之后：{activeFlow.fork.consequence}
+                                      </div>
+                                    ) : null}
+                                  </div>
+                                ) : (
+                                  <div className="bp-derive">
+                                    <MathText
+                                      value={
+                                        activeGrade?.betterSolution ||
+                                        activeFlow?.fork?.standardPath ||
+                                        ''
+                                      }
+                                    />
+                                  </div>
+                                )}
+
+                                {!solutionRevealed ? (
+                                  <div className="bp-veil">
+                                    <div className="vt">先回想这一步该做什么，推不出来再展开。</div>
+                                    <div className="vb">
+                                      <button
+                                        type="button"
+                                        className="mini pri"
+                                        onClick={() => setSolutionRevealed(true)}
+                                      >
+                                        我推过了，看解法
+                                      </button>
+                                      <button
+                                        type="button"
+                                        className="mini"
+                                        onClick={() => setSolutionRevealed(true)}
+                                      >
+                                        直接看
+                                      </button>
+                                    </div>
+                                  </div>
+                                ) : null}
+                              </div>
+                            </div>
+                          </section>
+                        ) : null}
+
+                        {/* 05 否定式识别规则 */}
+                        {activeFlow?.rule ? (
+                          <section className="bp-step rule">
+                            <div className="bp-step-n" data-n="05" />
+                            <div className="bp-step-body">
+                              <div className="bp-step-t">
+                                识别规则 · 动笔前 30 秒口述<span className="bp-say">否定式在前</span>
+                              </div>
+                              <div className="bp-rule">
+                                {activeFlow.rule.negation ? (
+                                  <div className="bp-rule-row">
+                                    <span className="s no">禁止</span>
+                                    <div className="txt">
+                                      <MathText value={activeFlow.rule.negation} />
+                                    </div>
+                                  </div>
+                                ) : null}
+                                {activeFlow.rule.positive ? (
+                                  <div className="bp-rule-row">
+                                    <span className="s yes">该做</span>
+                                    <div className="txt">
+                                      <MathText value={activeFlow.rule.positive} />
+                                    </div>
+                                  </div>
+                                ) : null}
+                              </div>
+                            </div>
+                          </section>
+                        ) : null}
+
+                        {/* 06 明日动作 */}
+                        {activeFlow?.nextAction ? (
+                          <section className="bp-step act">
+                            <div className="bp-step-n" data-n="06" />
+                            <div className="bp-step-body">
+                              <div className="bp-step-t">明日动作</div>
+                              <label className="bp-todo">
+                                <input type="checkbox" />
+                                <div>
+                                  <div className="t1">
+                                    <SafeClampedText value={activeFlow.nextAction} />
+                                  </div>
+                                  <div className="t2">
+                                    {activeFlow.acceptance
+                                      ? `验收：${activeFlow.acceptance}`
+                                      : '完成后回到左栏断点清单复查'}
+                                  </div>
+                                </div>
+                              </label>
+                            </div>
+                          </section>
+                        ) : null}
+                      </div>
                     </div>
 
                     {/* 底部行动条 */}
@@ -830,45 +1249,35 @@ export function PressureLearningReportView({
                 )}
               </main>
 
-              {/* ============ RIGHT: 审计与便笺 ============ */}
+              {/* ============ RIGHT: 断点档案 ============ */}
               <aside className="col">
                 <div className="audhd">
                   <div className="colhd" style={{ padding: 0, background: 'transparent', border: 'none' }}>
-                    <h2>本题审计</h2>
-                    <span className="hint mono">audit</span>
+                    <h2>断点档案</h2>
+                    <span className="hint mono">dossier</span>
                   </div>
-                </div>
-
-                <div className="tabs2">
-                  <button
-                    type="button"
-                    className={inspectorTab === 'audit' ? 'active' : ''}
-                    onClick={() => setInspectorTab('audit')}
-                  >
-                    断点旁注
-                  </button>
-                  <button
-                    type="button"
-                    className={inspectorTab === 'taxonomy' ? 'active' : ''}
-                    onClick={() => setInspectorTab('taxonomy')}
-                  >
-                    同源错题
-                  </button>
-                  <button
-                    type="button"
-                    className={inspectorTab === 'notes' ? 'active' : ''}
-                    onClick={() => setInspectorTab('notes')}
-                  >
-                    自省便笺
-                  </button>
                 </div>
 
                 {activeGrade && (
                   <>
-                    <div className="audsec">
-                      <h3>
-                        错误标签 <small>来自 codex 标签</small>
-                      </h3>
+                    {/* --- 断点编码条 --- */}
+                    <div className="bp-dos">
+                      <div className="bp-codebar">
+                        <span className={`bp-code ${activeFlow?.errorCode ? '' : 'none'}`}>
+                          {activeFlow?.errorCode ?? '未编码'}
+                        </span>
+                        <div className="bp-codebar-t">
+                          <b>{activeFlow?.title ?? '未命名断点'}</b>
+                          <small>
+                            {activeFlow?.severity ? SEVERITY_LABEL[activeFlow.severity] : '未分级'}
+                            {activeHistory.length > 1
+                              ? ` · 第 ${activeHistory.length} 次作答`
+                              : ' · 首次作答'}
+                            {activeFlow?.errorCode ? null : ' · 旧报告无诊断块'}
+                          </small>
+                        </div>
+                      </div>
+
                       <div className="errorchips">
                         {activeGrade.errorTags && activeGrade.errorTags.length > 0 ? (
                           activeGrade.errorTags.map((tag) => (
@@ -883,33 +1292,116 @@ export function PressureLearningReportView({
                           <span className="chip weak" key={`weak-${w}`}>{w}</span>
                         ))}
                       </div>
+                    </div>
 
-                      <h3 style={{ marginTop: 16 }}>
-                        本题扣分明细 <small>基于已采集的 + / -</small>
+                    {/* --- 修复时间线（真实作答记录，缺数据就是缺，不编） --- */}
+                    <div className="bp-sec">
+                      <h3>
+                        修复时间线 <small>来自历史作答</small>
                       </h3>
-                      <div className="audempty">
-                        <b>考场切片评分</b><br />
-                        {activeTone?.key === 'correct'
-                          ? '步骤推导完整严谨，未触发扣分断点。'
-                          : '推导过程中触发概念边界或计算失误断点，扣除相应分值。'}
+                      {activeHistory.length > 0 ? (
+                        <div className="bp-tl">
+                          {(() => {
+                            const maxDur = Math.max(
+                              1,
+                              ...activeHistory.map((row) => row.durationSeconds || 0),
+                            )
+                            return activeHistory.map((row, i) => {
+                              const mark = outcomeMark(row.verdict ?? row.outcome)
+                              return (
+                                <div className="bp-tl-row" key={`tl-${row.attemptedAt}-${i}`}>
+                                  <div className="bp-tl-d">
+                                    <span className="num">{row.attemptedAt.slice(5, 10)}</span>
+                                    <span className={`bp-tl-m ${mark.cls}`}>{mark.text}</span>
+                                  </div>
+                                  <div className="bp-tl-bar">
+                                    <i
+                                      className={mark.cls}
+                                      style={{
+                                        width: `${Math.max(
+                                          6,
+                                          Math.round(((row.durationSeconds || 0) / maxDur) * 100),
+                                        )}%`,
+                                      }}
+                                    />
+                                    <span className="num">{formatElapsed((row.durationSeconds || 0) * 1000)}</span>
+                                  </div>
+                                </div>
+                              )
+                            })
+                          })()}
+                          {firstDuration != null && compression != null && activeGrade.duration > 0 && (
+                            <div className="bp-tl-note">
+                              用时压缩到首次的 <b className="num">{compression}%</b>
+                              {compression <= 33 ? ' · 已达「真掌握」门槛' : ' · 未达 1/3，仍算没自动化'}
+                            </div>
+                          )}
+                        </div>
+                      ) : (
+                        <div className="bp-empty">本题暂无历史作答记录，这是第一次。</div>
+                      )}
+                    </div>
+
+                    {/* --- 验收判据 --- */}
+                    <div className="bp-sec">
+                      <h3>
+                        验收判据 <small>下次怎么算真会</small>
+                      </h3>
+                      <div className="bp-gate-txt">
+                        {activeFlow?.acceptance ?? (
+                          <>
+                            合上报告，独立重做本题：不翻解法、不用提示，
+                            用时压到首次的 1/3 以内且结果正确——才算这条断点闭合。
+                          </>
+                        )}
                       </div>
-
-                      <h3 style={{ marginTop: 16 }}>
-                        同考点历史作答 <small>{activeQuestion?.categoryPath?.split('/').pop() || '相关题'}</small>
-                      </h3>
-                      <div className="peerrow">
-                        <div className={`b ${activeTone?.key === 'correct' ? 'ok' : ''}`}>
-                          #{activeGrade.questionId}
-                        </div>
-                        <div className="t">
-                          <div className="id num">本次 · {formatElapsed((activeDurInfo?.duration || 0) * 1000)}</div>
-                          <div className="desc">{activeTone?.label} · {activeSev?.badge || '作答记录'}</div>
-                        </div>
-                        <div className="cnt">{activeTone?.key === 'correct' ? '真掌握' : '待攻坚'}</div>
+                      <div className="bp-gate">
+                        {gateRows.map((row) => (
+                          <div className={`bp-gate-row ${row.state}`} key={`gate-${row.key}`}>
+                            <span className="bp-gate-i">
+                              {row.state === 'pass' ? '✓' : row.state === 'fail' ? '✕' : '○'}
+                            </span>
+                            <span className="bp-gate-l">{row.label}</span>
+                            <span className="bp-gate-v num">{row.value}</span>
+                          </div>
+                        ))}
+                      </div>
+                      <div className="bp-gate-bar">
+                        <i style={{ width: `${gateProgress}%` }} />
+                      </div>
+                      <div className="bp-gate-foot">
+                        {gatePassed} / {gateRows.length} 项达成
+                        {gatePassed === gateRows.length ? ' · 可申请封盘' : ' · 不得封盘'}
                       </div>
                     </div>
 
-                    <div className="audsec" style={{ borderTop: '1px solid var(--line-soft)', background: 'var(--paper)' }}>
+                    {/* --- 复制给 AI --- */}
+                    <div className="bp-sec">
+                      <h3>
+                        继续追问 <small>把上下文整包带走</small>
+                      </h3>
+                      <button
+                        type="button"
+                        className={`bp-ai-btn ${copied ? 'done' : ''}`}
+                        onClick={() => void handleCopyAi()}
+                      >
+                        {copied ? '✓ 已复制' : '⧉ 复制追问上下文'}
+                      </button>
+                      <div className="bp-ai-hint">
+                        含题面 / 我的入口 / 断点 / 已看过的解法（标注勿重复讲）/ 我要的识别规则
+                      </div>
+                      {copyPanelOpen && (
+                        <textarea
+                          className="bp-ai-txt"
+                          readOnly
+                          value={buildAiPrompt()}
+                          onFocus={(e) => e.currentTarget.select()}
+                        />
+                      )}
+                    </div>
+
+                    {/* --- 考场亲笔自省（保留原有写入题本的能力） --- */}
+                    <div className="bp-sec">
                       <h3>
                         考场亲笔自省 <small>支持 LaTeX</small>
                       </h3>

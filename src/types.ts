@@ -191,6 +191,7 @@ export type BatchAttempt = {
   ratingTier?: string | null
   difficultyMultiplier?: number | null
   dimensions?: RatingDimensions | null
+  diagnosis?: GradingDiagnosis | null
 }
 
 export type RatingDimension = {
@@ -206,6 +207,42 @@ export type RatingDimensions = Partial<Record<
   'rigor' | 'computation' | 'modeling' | 'methodUse' | 'speed' | 'strategyInsight',
   RatingDimension
 >>
+
+/**
+ * 断点诊断块（E1 报告动线的数据源）。
+ * 由 codex 批改时随 diagnosis 一并返回；全部字段可选，
+ * 缺失时 reportViewModel 会从 earliestError / advice / betterSolution 降级派生，
+ * 保证历史报告不会出现空白区块。
+ */
+export type GradingDiagnosis = {
+  /** 画像错误码，如 E-027；未编码时为 null */
+  errorCode?: string | null
+  /** 断点标题，如「根式换元入口缺失」 */
+  title?: string | null
+  /** L1 致命 / L2 战术 / L3 精度 */
+  severity?: 'L1' | 'L2' | 'L3' | null
+  /** 学员当时的入口动作（原话式一句） */
+  myEntry?: string | null
+  /** 为什么这条是死路：讲原理，不讲步骤 */
+  whyDeadEnd?: string | null
+  /** 否定式识别规则，否定在前 */
+  rule?: {
+    negation?: string | null
+    positive?: string | null
+  } | null
+  /** 路径分叉：我的路径 vs 标准路径（E2 对照视图） */
+  fork?: {
+    step?: number | null
+    label?: string | null
+    myPath?: string | null
+    standardPath?: string | null
+    consequence?: string | null
+  } | null
+  /** 验收判据，如「根号池 13 题零覆盖」 */
+  acceptance?: string | null
+  /** 明日动作（一条可执行） */
+  nextAction?: string | null
+}
 
 export type EloHistoryPoint = {
   date: string
@@ -669,6 +706,7 @@ export type QuestionGrade = {
   ratingTier?: string | null
   difficultyMultiplier?: number | null
   dimensions?: RatingDimensions | null
+  diagnosis?: GradingDiagnosis | null
 }
 
 export type GradingSummary = {
@@ -1047,6 +1085,17 @@ export type MistakeDayGroup = {
   displayDate: string
   totalCount: number
   items: MistakeTimelineItem[]
+}
+
+/** 单题历次作答（断点档案时间线的真实数据源，只读查询） */
+export type AttemptHistoryEntry = {
+  questionId: number
+  attemptedAt: string
+  durationSeconds: number
+  outcome: string
+  verdict?: string | null
+  earliestError?: string | null
+  errorCode?: string | null
 }
 
 export type TodayAttemptItem = {

@@ -2,7 +2,7 @@ import { invoke } from '@tauri-apps/api/core'
 import { check, type Update } from '@tauri-apps/plugin-updater'
 import { relaunch } from '@tauri-apps/plugin-process'
 import { mockBootstrap, mockCategories, mockInbox, mockMastery, mockQuestions, mockRecommendations } from './mock'
-import type { BootstrapData, CategoryNode, CodexTask, DailyLog, DailyTrendPoint, EloStatus, TagClosure, ExportResult, FailedInboxItem, InboxItem, InboxSummary, InsightPoint, MasteryChapter, MasteryNode, MistakeDayGroup, PracticeSessionState, Question, QuestionPage, RatingDistribution, RecommendationBatch, RecommendedQuestion, ReviewHistory, ReviewPlan, SeasonStatus, SessionScoreboard, UserStreak, WeaknessRadar, PressureSession, GradingReport, TacticalDashboardData, UserProfileSettings, AttemptHighlight, ConfirmInboxResult, SeasonLadder, HighlightMoment, PeriodOverview, UndoLastAttemptResult, FriendSyncConfig, FriendSyncRemoteSnapshot, LearningCenterSnapshot, DailyPlan, DailyPlanItem, AutoCheckPlanResult } from './types'
+import type { BootstrapData, CategoryNode, CodexTask, DailyLog, DailyTrendPoint, EloStatus, TagClosure, ExportResult, FailedInboxItem, InboxItem, InboxSummary, InsightPoint, MasteryChapter, MasteryNode, MistakeDayGroup, PracticeSessionState, Question, QuestionPage, RatingDistribution, RecommendationBatch, RecommendedQuestion, ReviewHistory, ReviewPlan, SeasonStatus, SessionScoreboard, UserStreak, WeaknessRadar, PressureSession, GradingReport, TacticalDashboardData, UserProfileSettings, AttemptHighlight, ConfirmInboxResult, SeasonLadder, HighlightMoment, PeriodOverview, UndoLastAttemptResult, FriendSyncConfig, FriendSyncRemoteSnapshot, LearningCenterSnapshot, DailyPlan, DailyPlanItem, AutoCheckPlanResult, AttemptHistoryEntry } from './types'
 import { createPracticeSessionPayload } from './domain/evidence'
 
 const isTauri = () => '__TAURI_INTERNALS__' in window
@@ -685,6 +685,13 @@ export async function createLearningTask(input: import('./types').LearningTaskIn
 export async function getMistakeTimeline(limitDays = 90): Promise<MistakeDayGroup[]> {
   if (!isTauri()) return []
   return invoke('get_mistake_timeline', { limitDays })
+}
+
+export async function getQuestionAttemptHistory(
+  questionIds: number[],
+): Promise<AttemptHistoryEntry[]> {
+  if (questionIds.length === 0) return []
+  return invoke('get_question_attempt_history', { questionIds })
 }
 
 export async function getDailyPlan(planDate: string): Promise<DailyPlan> {

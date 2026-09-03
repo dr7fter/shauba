@@ -13502,3 +13502,1065 @@
   font-size: 10.5px;
   color: var(--t2);
 }
+
+
+/* ==========================================================================
+   批改报告 · E1 断点工单（+ E2 分叉对照）
+   配色一律走 tokens.css，本块不出现任何硬编码 hex。
+   ========================================================================== */
+
+/* ---------- 顶部结论条：先说「要修什么」，正确率退为右侧指标 ---------- */
+.plan-d-shell .bp-verdict {
+  display: flex;
+  align-items: stretch;
+  gap: var(--sp-5);
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-left: 3px solid var(--danger);
+  border-radius: var(--r-lg);
+  padding: var(--sp-4) var(--sp-5);
+  margin-bottom: 12px;
+  box-shadow: var(--shadow-1);
+}
+
+.plan-d-shell .bp-verdict-main {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.plan-d-shell .bp-kick {
+  font-size: var(--fs-xs);
+  letter-spacing: .12em;
+  color: var(--danger);
+  font-weight: 700;
+  margin-bottom: 4px;
+}
+
+.plan-d-shell .bp-verdict-main h2 {
+  margin: 0;
+  font-size: var(--fs-xl);
+  line-height: 1.45;
+  font-weight: 700;
+  color: var(--ink);
+  letter-spacing: .01em;
+}
+
+.plan-d-shell .bp-verdict-main p {
+  margin: 6px 0 0;
+  font-size: var(--fs-sm);
+  color: var(--muted);
+}
+
+.plan-d-shell .bp-verdict-stats {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  gap: var(--sp-5);
+  padding-left: var(--sp-5);
+  border-left: 1px solid var(--line);
+}
+
+.plan-d-shell .bp-verdict-stats > div {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 54px;
+}
+
+.plan-d-shell .bp-verdict-stats .k {
+  font-size: var(--fs-xs);
+  color: var(--quiet);
+  white-space: nowrap;
+}
+
+.plan-d-shell .bp-verdict-stats .v {
+  font-size: var(--fs-lg);
+  font-weight: 700;
+  line-height: 1.1;
+  color: var(--ink);
+}
+
+.plan-d-shell .bp-verdict-stats .v.bad { color: var(--danger); }
+.plan-d-shell .bp-verdict-stats .v.ok { color: var(--success); }
+
+/* ---------- 左栏：本轮断点小结 + 断点清单 ---------- */
+.plan-d-shell .bp-summary {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-3);
+  padding: var(--sp-4);
+  border-bottom: 1px solid var(--line);
+  background: var(--sunken);
+}
+
+.plan-d-shell .bp-ring {
+  flex: 0 0 auto;
+  width: 46px;
+  height: 46px;
+  border-radius: 50%;
+  border: 2px solid var(--danger);
+  color: var(--danger);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--danger-soft);
+}
+
+.plan-d-shell .bp-ring b {
+  font-size: var(--fs-xl);
+  font-weight: 700;
+  line-height: 1;
+}
+
+.plan-d-shell .bp-summary-txt { min-width: 0; }
+
+.plan-d-shell .bp-summary-txt .a {
+  font-size: var(--fs-sm);
+  font-weight: 700;
+  color: var(--ink);
+}
+
+.plan-d-shell .bp-summary-txt .b {
+  font-size: var(--fs-xs);
+  color: var(--muted);
+  line-height: 1.55;
+  margin-top: 2px;
+}
+
+.plan-d-shell .bp-hd {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  padding: 10px var(--sp-4) 6px;
+}
+
+.plan-d-shell .bp-hd h2 {
+  margin: 0;
+  font-size: var(--fs-base);
+  font-weight: 700;
+  letter-spacing: .04em;
+  color: var(--ink);
+}
+
+.plan-d-shell .bp-hd .hint {
+  font-size: var(--fs-xs);
+  color: var(--quiet);
+}
+
+.plan-d-shell .bp-list {
+  max-height: 320px;
+  overflow-y: auto;
+  padding: 0 var(--sp-3) var(--sp-2);
+}
+
+.plan-d-shell .bp-item {
+  border: 1px solid var(--line);
+  border-radius: var(--r-md);
+  padding: 8px 10px;
+  margin-bottom: 6px;
+  cursor: pointer;
+  background: var(--surface);
+  transition: border-color var(--dur-1) ease, background var(--dur-1) ease;
+}
+
+.plan-d-shell .bp-item:hover { border-color: var(--line-strong); }
+
+.plan-d-shell .bp-item.on {
+  border-color: var(--danger);
+  background: var(--danger-soft);
+  box-shadow: inset 0 0 0 1px var(--danger);
+}
+
+.plan-d-shell .bp-r1 {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  flex-wrap: wrap;
+}
+
+.plan-d-shell .bp-code {
+  font-family: var(--font-mono);
+  font-size: var(--fs-xs);
+  letter-spacing: .04em;
+  padding: 1px 6px;
+  border-radius: var(--r-xs);
+  background: var(--violet-soft);
+  color: var(--violet);
+  border: 1px solid var(--line-violet);
+  white-space: nowrap;
+}
+
+.plan-d-shell .bp-code.none {
+  background: var(--sunken);
+  color: var(--quiet);
+  border-color: var(--line);
+}
+
+.plan-d-shell .bp-lv {
+  font-family: var(--font-mono);
+  font-size: var(--fs-xs);
+  font-weight: 700;
+  padding: 1px 5px;
+  border-radius: var(--r-xs);
+}
+
+.plan-d-shell .bp-lv.l1 { color: var(--danger); background: var(--danger-soft); }
+.plan-d-shell .bp-lv.l2 { color: var(--warn); background: var(--warn-soft); }
+.plan-d-shell .bp-lv.l3 { color: var(--info); background: var(--info-soft); }
+
+.plan-d-shell .bp-st {
+  font-size: var(--fs-xs);
+  padding: 1px 5px;
+  border-radius: var(--r-full);
+  white-space: nowrap;
+}
+
+.plan-d-shell .bp-st.relapse {
+  color: var(--on-color);
+  background: var(--danger);
+  font-weight: 700;
+}
+
+.plan-d-shell .bp-st.new {
+  color: var(--muted);
+  background: var(--sunken);
+  border: 1px solid var(--line);
+}
+
+.plan-d-shell .bp-nm {
+  margin-top: 5px;
+  font-size: var(--fs-sm);
+  font-weight: 600;
+  line-height: 1.5;
+  color: var(--ink);
+}
+
+.plan-d-shell .bp-qs {
+  margin-top: 3px;
+  font-size: var(--fs-xs);
+  color: var(--quiet);
+  font-family: var(--font-mono);
+  letter-spacing: .02em;
+}
+
+.plan-d-shell .bp-empty {
+  padding: var(--sp-4);
+  font-size: var(--fs-sm);
+  color: var(--quiet);
+  text-align: center;
+  line-height: 1.6;
+}
+
+.plan-d-shell .bp-split {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 8px var(--sp-4);
+  border-top: 1px solid var(--line);
+  border-bottom: 1px solid var(--line);
+  background: var(--sunken);
+  font-size: var(--fs-xs);
+  color: var(--muted);
+}
+
+.plan-d-shell .bp-toggle {
+  border: 1px solid var(--line);
+  background: var(--surface);
+  color: var(--muted);
+  border-radius: var(--r-sm);
+  padding: 2px 8px;
+  font-size: var(--fs-xs);
+  cursor: pointer;
+  font-family: inherit;
+}
+
+.plan-d-shell .bp-toggle:hover {
+  color: var(--ink);
+  border-color: var(--line-strong);
+}
+
+.plan-d-shell .bp-mini-list {
+  max-height: 240px;
+  overflow-y: auto;
+  padding: 6px var(--sp-3) var(--sp-3);
+}
+
+.plan-d-shell .bp-mini {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 6px;
+  border-radius: var(--r-sm);
+  cursor: pointer;
+  font-size: var(--fs-xs);
+  color: var(--muted);
+}
+
+.plan-d-shell .bp-mini:hover { background: var(--sunken); }
+
+.plan-d-shell .bp-mini.on {
+  background: var(--green-soft);
+  color: var(--ink);
+  font-weight: 600;
+}
+
+.plan-d-shell .bp-mini .d {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  flex: 0 0 auto;
+}
+
+.plan-d-shell .bp-mini .d.bad { background: var(--danger); }
+.plan-d-shell .bp-mini .d.ok { background: var(--success); }
+
+.plan-d-shell .bp-mini .qid { color: var(--quiet); flex: 0 0 auto; }
+
+.plan-d-shell .bp-mini .cat {
+  flex: 1 1 auto;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.plan-d-shell .bp-mini .t {
+  color: var(--quiet);
+  font-family: var(--font-mono);
+  flex: 0 0 auto;
+}
+
+/* ---------- 中栏：本题维度 vs 本组基线 ---------- */
+.plan-d-shell .bp-dims {
+  border: 1px solid var(--line);
+  border-radius: var(--r-md);
+  padding: var(--sp-3);
+  margin-bottom: var(--sp-4);
+  background: var(--sunken);
+}
+
+.plan-d-shell .bp-dims-hd {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--sp-3);
+  font-size: var(--fs-xs);
+  color: var(--quiet);
+  margin-bottom: 8px;
+}
+
+.plan-d-shell .bp-dims-hd b {
+  color: var(--warn-strong);
+  font-size: var(--fs-sm);
+}
+
+.plan-d-shell .bp-dims-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px var(--sp-4);
+}
+
+.plan-d-shell .bp-dim-top {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 4px;
+  font-size: var(--fs-xs);
+}
+
+.plan-d-shell .bp-dim-top .lb { color: var(--muted); }
+
+.plan-d-shell .bp-dim-top .vv {
+  font-family: var(--font-mono);
+  font-weight: 700;
+  color: var(--ink);
+}
+
+.plan-d-shell .bp-dim-top .vv.down { color: var(--danger); }
+.plan-d-shell .bp-dim-top .vv.up { color: var(--success); }
+
+.plan-d-shell .bp-dim-bar {
+  position: relative;
+  height: 6px;
+  border-radius: var(--r-full);
+  background: var(--line);
+  margin-top: 4px;
+  overflow: hidden;
+}
+
+.plan-d-shell .bp-dim-bar i {
+  position: absolute;
+  left: 0;
+  top: 0;
+  bottom: 0;
+  border-radius: var(--r-full);
+  display: block;
+}
+
+.plan-d-shell .bp-dim-bar i.base { background: var(--line-strong); }
+.plan-d-shell .bp-dim-bar i.cur { background: var(--green); height: 3px; top: 0; bottom: auto; }
+.plan-d-shell .bp-dim-bar i.cur.down { background: var(--danger); }
+
+/* ---------- 中栏：认知动线六段 ---------- */
+.plan-d-shell .bp-flow {
+  display: flex;
+  flex-direction: column;
+}
+
+.plan-d-shell .bp-step {
+  display: flex;
+  gap: var(--sp-3);
+  padding: 0 0 var(--sp-4);
+}
+
+.plan-d-shell .bp-step-n {
+  flex: 0 0 auto;
+  width: 30px;
+  height: 30px;
+  border-radius: var(--r-sm);
+  background: var(--sunken);
+  border: 1px solid var(--line);
+  color: var(--quiet);
+  font-family: var(--font-mono);
+  font-size: var(--fs-sm);
+  font-weight: 700;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  position: relative;
+}
+
+.plan-d-shell .bp-step-n::before {
+  content: attr(data-n);
+}
+
+/* 竖向连接线：让「入口 → 断点 → 死路 → 正解 → 规则 → 动作」读成一条动线 */
+.plan-d-shell .bp-step-n::after {
+  content: "";
+  position: absolute;
+  left: 50%;
+  top: 100%;
+  width: 1px;
+  height: var(--sp-4);
+  background: var(--line);
+  transform: translateX(-50%);
+}
+
+.plan-d-shell .bp-step:last-child .bp-step-n::after { display: none; }
+
+.plan-d-shell .bp-step.kill .bp-step-n {
+  background: var(--danger-soft);
+  border-color: var(--line-danger);
+  color: var(--danger);
+}
+
+.plan-d-shell .bp-step.rule .bp-step-n {
+  background: var(--violet-soft);
+  border-color: var(--line-violet);
+  color: var(--violet);
+}
+
+.plan-d-shell .bp-step.act .bp-step-n {
+  background: var(--green-soft);
+  border-color: var(--line-success);
+  color: var(--success);
+}
+
+.plan-d-shell .bp-step-body { flex: 1 1 auto; min-width: 0; }
+
+.plan-d-shell .bp-step-t {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-3);
+  flex-wrap: wrap;
+  font-size: var(--fs-sm);
+  font-weight: 700;
+  letter-spacing: .02em;
+  color: var(--ink);
+  margin-bottom: 6px;
+}
+
+.plan-d-shell .bp-cmp {
+  font-size: var(--fs-xs);
+  font-weight: 400;
+  color: var(--muted);
+  font-family: var(--font-mono);
+}
+
+.plan-d-shell .bp-cmp b { color: var(--ink); }
+
+.plan-d-shell .bp-mine {
+  border: 1px dashed var(--line-strong);
+  border-radius: var(--r-md);
+  padding: 10px var(--sp-3);
+  background: var(--surface);
+  font-size: var(--fs-base);
+  line-height: 1.75;
+  color: var(--ink);
+}
+
+.plan-d-shell .bp-kill {
+  border: 1px solid var(--line-danger);
+  border-left: 3px solid var(--danger);
+  border-radius: var(--r-md);
+  padding: 10px var(--sp-3);
+  background: var(--danger-soft);
+  font-size: var(--fs-base);
+  line-height: 1.75;
+  color: var(--danger-strong);
+}
+
+.plan-d-shell .bp-src {
+  margin-top: 6px;
+  font-size: var(--fs-xs);
+  color: var(--muted);
+}
+
+.plan-d-shell .bp-why {
+  border: 1px solid var(--line);
+  border-left: 3px solid var(--line-strong);
+  border-radius: var(--r-md);
+  padding: 10px var(--sp-3);
+  background: var(--surface);
+  font-size: var(--fs-base);
+  line-height: 1.8;
+  color: var(--ink);
+}
+
+/* 双视图开关 */
+.plan-d-shell .bp-viewswitch {
+  display: inline-flex;
+  border: 1px solid var(--line);
+  border-radius: var(--r-sm);
+  overflow: hidden;
+  background: var(--sunken);
+}
+
+.plan-d-shell .bp-viewswitch button {
+  border: none;
+  background: transparent;
+  color: var(--muted);
+  font-family: inherit;
+  font-size: var(--fs-xs);
+  padding: 2px 9px;
+  cursor: pointer;
+}
+
+.plan-d-shell .bp-viewswitch button.on {
+  background: var(--green);
+  color: var(--on-color);
+  font-weight: 600;
+}
+
+/* 解法容器 + 延迟揭示遮罩 */
+.plan-d-shell .bp-soln {
+  position: relative;
+  border: 1px solid var(--line-success);
+  border-radius: var(--r-md);
+  background: var(--success-soft);
+  overflow: hidden;
+}
+
+.plan-d-shell .bp-soln.locked .bp-fork,
+.plan-d-shell .bp-soln.locked .bp-derive {
+  filter: blur(6px);
+  opacity: .55;
+  user-select: none;
+  pointer-events: none;
+}
+
+.plan-d-shell .bp-veil {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: var(--sp-3);
+  background: var(--surface);
+  border-radius: var(--r-md);
+  padding: var(--sp-4);
+  text-align: center;
+}
+
+.plan-d-shell .bp-veil .vt {
+  font-size: var(--fs-sm);
+  color: var(--muted);
+  line-height: 1.6;
+  max-width: 34ch;
+}
+
+.plan-d-shell .bp-veil .vb { display: flex; gap: var(--sp-2); }
+
+.plan-d-shell .bp-veil .mini {
+  border: 1px solid var(--line);
+  background: var(--surface);
+  color: var(--muted);
+  border-radius: var(--r-sm);
+  padding: 4px 12px;
+  font-size: var(--fs-xs);
+  font-family: inherit;
+  cursor: pointer;
+}
+
+.plan-d-shell .bp-veil .mini.pri {
+  background: var(--green);
+  border-color: var(--green-dark);
+  color: var(--on-color);
+  font-weight: 600;
+}
+
+/* E2 分叉对照 */
+.plan-d-shell .bp-fork { padding: var(--sp-3); }
+
+.plan-d-shell .bp-fork-hd {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
+  font-size: var(--fs-xs);
+  font-weight: 700;
+  letter-spacing: .04em;
+  margin-bottom: 8px;
+}
+
+.plan-d-shell .bp-fork-hd .mine { color: var(--danger); }
+.plan-d-shell .bp-fork-hd .gap { flex: 1 1 auto; }
+.plan-d-shell .bp-fork-hd .std { color: var(--success); }
+
+.plan-d-shell .bp-fork-row {
+  display: grid;
+  grid-template-columns: 1fr 34px 1fr;
+  align-items: start;
+  gap: var(--sp-2);
+  padding: 8px 0;
+  border-top: 1px solid var(--line);
+}
+
+.plan-d-shell .bp-fork-row.fork { border-top-color: var(--line-danger); }
+
+.plan-d-shell .bp-fork-row .cell {
+  min-width: 0;
+  font-size: var(--fs-sm);
+  line-height: 1.7;
+  color: var(--ink);
+}
+
+.plan-d-shell .bp-fork-row .cell .sn {
+  display: block;
+  font-size: var(--fs-xs);
+  color: var(--quiet);
+  margin-bottom: 3px;
+  font-family: var(--font-mono);
+}
+
+.plan-d-shell .bp-fork-row .cell .kill { color: var(--danger-strong); }
+
+.plan-d-shell .bp-fork-row .mid {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding-top: 18px;
+}
+
+.plan-d-shell .bp-fork-row .mid .dot {
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  border: 1px solid var(--line-danger);
+  background: var(--danger-soft);
+  color: var(--danger);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: var(--fs-sm);
+  font-weight: 700;
+}
+
+.plan-d-shell .bp-fork-cons {
+  margin-top: 8px;
+  padding-top: 8px;
+  border-top: 1px dashed var(--line-strong);
+  font-size: var(--fs-xs);
+  color: var(--warn-strong);
+  line-height: 1.6;
+}
+
+.plan-d-shell .bp-derive {
+  padding: var(--sp-3) var(--sp-4);
+  font-size: var(--fs-base);
+  line-height: 1.85;
+  color: var(--ink);
+}
+
+/* 05 否定式识别规则 */
+.plan-d-shell .bp-say {
+  font-size: var(--fs-xs);
+  font-weight: 400;
+  color: var(--violet);
+  border: 1px solid var(--line-violet);
+  background: var(--violet-soft);
+  border-radius: var(--r-full);
+  padding: 1px 8px;
+}
+
+.plan-d-shell .bp-rule {
+  border: 1px solid var(--line-violet);
+  border-left: 3px solid var(--violet);
+  border-radius: var(--r-md);
+  background: var(--violet-soft);
+  padding: var(--sp-3);
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.plan-d-shell .bp-rule-row {
+  display: flex;
+  gap: var(--sp-3);
+  align-items: flex-start;
+}
+
+.plan-d-shell .bp-rule-row .s {
+  flex: 0 0 auto;
+  font-size: var(--fs-xs);
+  font-weight: 700;
+  padding: 2px 8px;
+  border-radius: var(--r-sm);
+  letter-spacing: .04em;
+}
+
+.plan-d-shell .bp-rule-row .s.no { background: var(--danger); color: var(--on-color); }
+.plan-d-shell .bp-rule-row .s.yes { background: var(--success); color: var(--on-color); }
+
+.plan-d-shell .bp-rule-row .txt {
+  flex: 1 1 auto;
+  min-width: 0;
+  font-size: var(--fs-base);
+  line-height: 1.75;
+  color: var(--ink);
+}
+
+/* 06 明日动作 */
+.plan-d-shell .bp-todo {
+  display: flex;
+  gap: var(--sp-3);
+  align-items: flex-start;
+  border: 1px solid var(--line-success);
+  border-radius: var(--r-md);
+  background: var(--success-soft);
+  padding: var(--sp-3);
+  cursor: pointer;
+}
+
+.plan-d-shell .bp-todo input {
+  margin-top: 4px;
+  width: 15px;
+  height: 15px;
+  accent-color: var(--success);
+  flex: 0 0 auto;
+}
+
+.plan-d-shell .bp-todo .t1 {
+  font-size: var(--fs-base);
+  line-height: 1.7;
+  color: var(--ink);
+}
+
+.plan-d-shell .bp-todo .t2 {
+  margin-top: 4px;
+  font-size: var(--fs-xs);
+  color: var(--muted);
+  line-height: 1.55;
+}
+
+/* ---------- 右栏：断点档案 ---------- */
+.plan-d-shell .bp-dos {
+  padding: var(--sp-3) var(--sp-4);
+  border-bottom: 1px solid var(--line);
+}
+
+.plan-d-shell .bp-codebar {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-3);
+  margin-bottom: 10px;
+}
+
+.plan-d-shell .bp-codebar-t { min-width: 0; }
+
+.plan-d-shell .bp-codebar-t b {
+  display: block;
+  font-size: var(--fs-base);
+  font-weight: 700;
+  line-height: 1.45;
+  color: var(--ink);
+}
+
+.plan-d-shell .bp-codebar-t small {
+  display: block;
+  margin-top: 2px;
+  font-size: var(--fs-xs);
+  color: var(--muted);
+}
+
+.plan-d-shell .bp-sec {
+  padding: var(--sp-3) var(--sp-4);
+  border-bottom: 1px solid var(--line);
+}
+
+.plan-d-shell .bp-sec:last-child { border-bottom: none; }
+
+.plan-d-shell .bp-sec h3 {
+  margin: 0 0 8px;
+  font-size: var(--fs-sm);
+  font-weight: 700;
+  letter-spacing: .03em;
+  color: var(--ink);
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+}
+
+.plan-d-shell .bp-sec h3 small {
+  font-size: var(--fs-xs);
+  font-weight: 400;
+  color: var(--quiet);
+}
+
+/* 修复时间线 */
+.plan-d-shell .bp-tl {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.plan-d-shell .bp-tl-row {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
+}
+
+.plan-d-shell .bp-tl-d {
+  flex: 0 0 auto;
+  width: 76px;
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  font-size: var(--fs-xs);
+  color: var(--muted);
+  font-family: var(--font-mono);
+}
+
+.plan-d-shell .bp-tl-m {
+  width: 16px;
+  height: 16px;
+  border-radius: var(--r-xs);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: var(--fs-xs);
+  font-weight: 700;
+  color: var(--muted);
+  background: var(--sunken);
+  border: 1px solid var(--line);
+}
+
+.plan-d-shell .bp-tl-m.ok {
+  color: var(--success);
+  border-color: var(--line-success);
+  background: var(--success-soft);
+}
+
+.plan-d-shell .bp-tl-m.mid {
+  color: var(--warn);
+  border-color: var(--line-warn);
+  background: var(--warn-soft);
+}
+
+.plan-d-shell .bp-tl-m.bad {
+  color: var(--danger);
+  border-color: var(--line-danger);
+  background: var(--danger-soft);
+}
+
+.plan-d-shell .bp-tl-bar {
+  flex: 1 1 auto;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.plan-d-shell .bp-tl-bar i {
+  height: 8px;
+  border-radius: var(--r-full);
+  background: var(--line-strong);
+  display: block;
+}
+
+.plan-d-shell .bp-tl-bar i.ok { background: var(--success); }
+.plan-d-shell .bp-tl-bar i.mid { background: var(--warn); }
+.plan-d-shell .bp-tl-bar i.bad { background: var(--danger); }
+
+.plan-d-shell .bp-tl-bar span {
+  font-size: var(--fs-xs);
+  color: var(--quiet);
+}
+
+.plan-d-shell .bp-tl-note {
+  margin-top: 6px;
+  padding-top: 6px;
+  border-top: 1px dashed var(--line);
+  font-size: var(--fs-xs);
+  color: var(--muted);
+  line-height: 1.6;
+}
+
+.plan-d-shell .bp-tl-note b {
+  color: var(--ink);
+  font-size: var(--fs-sm);
+}
+
+/* 验收判据 */
+.plan-d-shell .bp-gate-txt {
+  font-size: var(--fs-sm);
+  line-height: 1.7;
+  color: var(--ink);
+  border-left: 3px solid var(--line-strong);
+  padding-left: var(--sp-3);
+  margin-bottom: 10px;
+}
+
+.plan-d-shell .bp-gate {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.plan-d-shell .bp-gate-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: var(--fs-xs);
+  padding: 3px 0;
+}
+
+.plan-d-shell .bp-gate-i {
+  flex: 0 0 auto;
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 10px;
+  font-weight: 700;
+  border: 1px solid var(--line);
+  color: var(--quiet);
+  background: var(--sunken);
+}
+
+.plan-d-shell .bp-gate-row.pass .bp-gate-i {
+  background: var(--success);
+  border-color: var(--success);
+  color: var(--on-color);
+}
+
+.plan-d-shell .bp-gate-row.fail .bp-gate-i {
+  background: var(--danger-soft);
+  border-color: var(--line-danger);
+  color: var(--danger);
+}
+
+.plan-d-shell .bp-gate-l { flex: 1 1 auto; color: var(--muted); }
+.plan-d-shell .bp-gate-row.pass .bp-gate-l { color: var(--ink); }
+.plan-d-shell .bp-gate-v { font-family: var(--font-mono); color: var(--quiet); }
+
+.plan-d-shell .bp-gate-bar {
+  margin-top: 10px;
+  height: 6px;
+  border-radius: var(--r-full);
+  background: var(--line);
+  overflow: hidden;
+}
+
+.plan-d-shell .bp-gate-bar i {
+  display: block;
+  height: 100%;
+  border-radius: var(--r-full);
+  background: var(--success);
+  transition: width var(--dur-2) ease;
+}
+
+.plan-d-shell .bp-gate-foot {
+  margin-top: 5px;
+  font-size: var(--fs-xs);
+  color: var(--quiet);
+  text-align: right;
+}
+
+/* 复制给 AI */
+.plan-d-shell .bp-ai-btn {
+  width: 100%;
+  border: 1px solid var(--line-strong);
+  background: var(--surface);
+  color: var(--ink);
+  border-radius: var(--r-sm);
+  padding: 7px 10px;
+  font-size: var(--fs-sm);
+  font-family: inherit;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background var(--dur-1) ease, color var(--dur-1) ease;
+}
+
+.plan-d-shell .bp-ai-btn:hover {
+  background: var(--green-soft);
+  border-color: var(--green);
+}
+
+.plan-d-shell .bp-ai-btn.done {
+  background: var(--success);
+  border-color: var(--success-strong);
+  color: var(--on-color);
+}
+
+.plan-d-shell .bp-ai-hint {
+  margin-top: 6px;
+  font-size: var(--fs-xs);
+  color: var(--quiet);
+  line-height: 1.6;
+}
+
+.plan-d-shell .bp-ai-txt {
+  margin-top: 8px;
+  width: 100%;
+  min-height: 180px;
+  resize: vertical;
+  border: 1px solid var(--line);
+  border-radius: var(--r-sm);
+  background: var(--sunken);
+  padding: var(--sp-2);
+  font-family: var(--font-mono);
+  font-size: var(--fs-xs);
+  line-height: 1.6;
+  color: var(--ink);
+  outline: none;
+}
+
+/* 窄屏：三栏降为两栏 + 档案落到最下方 */
+@media (max-width: 1180px) {
+  .plan-d-shell .grid { grid-template-columns: 232px minmax(0, 1fr); }
+  .plan-d-shell .grid > aside.col:last-of-type { grid-column: 1 / -1; }
+  .plan-d-shell .bp-dims-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+
+@media (max-width: 860px) {
+  .plan-d-shell .grid { grid-template-columns: minmax(0, 1fr); }
+  .plan-d-shell .bp-verdict { flex-direction: column; gap: var(--sp-3); }
+  .plan-d-shell .bp-verdict-stats {
+    padding-left: 0;
+    border-left: none;
+    border-top: 1px solid var(--line);
+    padding-top: var(--sp-3);
+    flex-wrap: wrap;
+  }
+}

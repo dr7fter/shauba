@@ -1,4 +1,5 @@
 import type {
+  AttemptHistoryEntry,
   GradingReport,
   GradingReportOrigin,
   PressureSession,
@@ -321,4 +322,237 @@ export function buildReportViewModel(
     verdictText,
     priorityEntries: attentionEntries.slice(0, 3),
   }
+}
+
+// ============ E1 断点工单 · 派生层 ============
+
+export type BreakpointSeverity = 'L1' | 'L2' | 'L3'
+
+/**
+ * 单题的认知动线内容。
+ * 契约：diagnosis 缺什么就给 null，由 UI 决定该段是否渲染——绝不拿题干或结论编造内容。
+ */
+export type GradeFlow = {
+  errorCode: string | null
+  title: string | null
+  severity: BreakpointSeverity | null
+  /** 断点一句话：最早断点，来自 earliestError */
+  killLine: string | null
+  /** 学员落笔时的第一个动作 */
+  myEntry: string | null
+  /** 为什么这条路径走不通（讲原理） */
+  whyDeadEnd: string | null
+  rule: { negation: string; positive: string } | null
+  fork: {
+    step: number
+    label: string
+    myPath: string | null
+    standardPath: string | null
+    consequence: string | null
+  } | null
+  acceptance: string | null
+  nextAction: string | null
+}
+
+const FATAL_TAGS = ['概念盲区', '概念边界', '充要混淆', '定理记错']
+const SLIP_TAGS = ['瞄准失误', '计算笔误', '负号抄错']
+
+function inferSeverity(grade: QuestionGrade): BreakpointSeverity | null {
+  const tags = grade.errorTags ?? []
+  if (tags.some((tag) => FATAL_TAGS.includes(tag))) return 'L1'
+  if (tags.some((tag) => SLIP_TAGS.includes(tag))) return 'L3'
+  return tags.length > 0 ? 'L2' : null
+}
+
+export function buildGradeFlow(grade: QuestionGrade): GradeFlow {
+  const diagnosis = grade.diagnosis ?? null
+  const killLine = grade.earliestError || grade.feedback || null
+  const rawRule = diagnosis?.rule
+  const rule: { negation: string; positive: string } | null =
+    rawRule && (rawRule.negation || rawRule.positive)
+      ? { negation: rawRule.negation ?? '', positive: rawRule.positive ?? '' }
+      : null
+
+  // 老报告没有 fork 时，用已有的 earliestError / betterSolution 重排成左右对照，
+  // 只是换个呈现方式，不新增任何内容。
+  const rawFork = diagnosis?.fork
+  const fork = rawFork
+    ? {
+        step: rawFork.step ?? 1,
+        label: rawFork.label ?? '路径选择',
+        myPath: rawFork.myPath ?? null,
+        standardPath: rawFork.standardPath ?? grade.betterSolution ?? null,
+        consequence: rawFork.consequence ?? null,
+      }
+    : killLine || grade.betterSolution
+      ? {
+          step: 1,
+          label: '路径选择',
+          myPath: killLine,
+          standardPath: grade.betterSolution ?? null,
+          consequence: null,
+        }
+      : null
+
+  return {
+    errorCode: diagnosis?.errorCode ?? null,
+    title: diagnosis?.title ?? grade.errorTags?.[0] ?? grade.weaknessTags?.[0] ?? null,
+    severity: diagnosis?.severity ?? inferSeverity(grade),
+    killLine,
+    myEntry: diagnosis?.myEntry ?? null,
+    whyDeadEnd: diagnosis?.whyDeadEnd ?? null,
+    rule,
+    fork,
+    acceptance: diagnosis?.acceptance ?? null,
+    nextAction: diagnosis?.nextAction ?? grade.advice ?? null,
+  }
+}
+
+export type BreakpointGroup = {
+  key: string
+  errorCode: string | null
+  title: string
+  severity: BreakpointSeverity | null
+  acceptance: string | null
+  questionIds: number[]
+  indices: number[]
+  /** relapse：历史错 ≥2 次，或同一断点在本组出现 ≥2 次 */
+  state: 'relapse' | 'new'
+  historyWrong: number
+  historyTotal: number
+}
+
+export function buildBreakpointGroups(
+  grades: QuestionGrade[],
+  history: AttemptHistoryEntry[] = [],
+): BreakpointGroup[] {
+  const wrongHistory = new Map<number, { total: number; wrong: number }>()
+  for (const entry of history) {
+    const current = wrongHistory.get(entry.questionId) ?? { total: 0, wrong: 0 }
+    current.total += 1
+    const outcome = (entry.verdict ?? entry.outcome ?? '').toLowerCase()
+    if (outcome === 'wrong' || outcome === 'incorrect') current.wrong += 1
+    wrongHistory.set(entry.questionId, current)
+  }
+
+  const groups = new Map<string, BreakpointGroup>()
+  grades.forEach((grade, index) => {
+    if (gradeOutcomeKey(grade) === 'correct') return
+    const flow = buildGradeFlow(grade)
+    const key = flow.errorCode
+      ? `code:${flow.errorCode}`
+      : flow.title
+        ? `tag:${flow.title}`
+        : `q:${grade.questionId}`
+    const historyStat = wrongHistory.get(grade.questionId) ?? { total: 0, wrong: 0 }
+    const existing = groups.get(key)
+    if (existing) {
+      existing.questionIds.push(grade.questionId)
+      existing.indices.push(index)
+      existing.historyWrong += historyStat.wrong
+      existing.historyTotal += historyStat.total
+      existing.state =
+        existing.state === 'relapse' || historyStat.wrong >= 2 || existing.indices.length >= 2
+          ? 'relapse'
+          : 'new'
+      if (!existing.acceptance && flow.acceptance) existing.acceptance = flow.acceptance
+      return
+    }
+    groups.set(key, {
+      key,
+      errorCode: flow.errorCode,
+      title: flow.title ?? `题目 #${grade.questionId}`,
+      severity: flow.severity,
+      acceptance: flow.acceptance,
+      questionIds: [grade.questionId],
+      indices: [index],
+      state: historyStat.wrong >= 2 ? 'relapse' : 'new',
+      historyWrong: historyStat.wrong,
+      historyTotal: historyStat.total,
+    })
+  })
+
+  return [...groups.values()].sort((a, b) => {
+    if (a.state !== b.state) return a.state === 'relapse' ? -1 : 1
+    return b.questionIds.length - a.questionIds.length || a.indices[0] - b.indices[0]
+  })
+}
+
+/** 顶部结论句：把"错 N 题"翻译成"死在同一个动作上" */
+export function breakpointHeadline(groups: BreakpointGroup[]): string | null {
+  if (groups.length === 0) return null
+  const biggest = [...groups].sort((a, b) => b.questionIds.length - a.questionIds.length)[0]
+  const totalWrong = groups.reduce((sum, group) => sum + group.questionIds.length, 0)
+  if (biggest.questionIds.length >= 2) {
+    return `${totalWrong} 道题里，有 ${biggest.questionIds.length} 题死在同一个动作：${biggest.title}。`
+  }
+  if (biggest.state === 'relapse') {
+    return `本轮唯一的复发断点是「${biggest.title}」——这次不是不会，是入口又选错了。`
+  }
+  return `本轮 ${totalWrong} 个断点，最该先修的是「${biggest.title}」。`
+}
+
+export function baselineDimensionValues(
+  grades: QuestionGrade[],
+): Record<ReportDimKey, number | null> {
+  const stats = aggregateDimensions(grades)
+  return stats.reduce(
+    (acc, stat) => {
+      acc[stat.key] = stat.value
+      return acc
+    },
+    {} as Record<ReportDimKey, number | null>,
+  )
+}
+
+export type GradeDimensionRow = {
+  key: ReportDimKey
+  label: string
+  value: number | null
+  base: number | null
+  delta: number | null
+}
+
+/**
+ * 单题维度 vs 本组基线。
+ * 注意：现状报告里那四条维度条误用了全组均值（每题数字相同），这里改为取 grade.dimensions。
+ */
+export function gradeDimensionRows(
+  grade: QuestionGrade,
+  baseline: Record<ReportDimKey, number | null>,
+): GradeDimensionRow[] {
+  const dims = grade.dimensions
+  return (Object.keys(REPORT_DIM_LABELS) as ReportDimKey[]).map((key) => {
+    const value = typeof dims?.[key]?.score === 'number' ? dims[key]!.score! : null
+    const base = baseline[key] ?? null
+    return {
+      key,
+      label: REPORT_DIM_LABELS[key],
+      value,
+      base,
+      delta: value != null && base != null ? Math.round(value - base) : null,
+    }
+  })
+}
+
+/** 维度对照的一句话洞察：只在极差足够大时给出，避免噪声 */
+export function dimensionInsight(rows: GradeDimensionRow[]): string | null {
+  const scored = rows.filter(
+    (row): row is GradeDimensionRow & { value: number } => typeof row.value === 'number',
+  )
+  if (scored.length < 2) return null
+  const sorted = [...scored].sort((a, b) => b.value - a.value)
+  const top = sorted[0]
+  const bottom = sorted[sorted.length - 1]
+  if (top.value - bottom.value < 25) return null
+  const pair = `${top.key}>${bottom.key}`
+  const templates: Record<string, string> = {
+    'speed>strategyInsight': '手比脑子快：写得越果断，入口错得越干脆',
+    'speed>methodUse': '手比脑子快：熟练度在替你掩盖路径盲区',
+    'computation>strategyInsight': '算得动，但没找到路',
+    'computation>methodUse': '算得动，但路走错了',
+    'modeling>computation': '思路对，算挂了',
+    'strategyInsight>computation': '思路对，算挂了',
+  }
+  return templates[pair] ?? `${top.label} ${Math.round(top.value)} 远高于 ${bottom.label} ${Math.round(bottom.value)}`
 }

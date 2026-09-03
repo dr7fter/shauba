@@ -1,0 +1,431 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>方案 A · 结构化体检单</title>
+<style>
+:root{
+  --bg:#f5f6f8; --card:#ffffff; --line:#e6e8ec; --line-soft:#f0f1f4;
+  --t1:#15181d; --t2:#5c6370; --t3:#8b919c;
+  --ok:#2e7d52; --ok-bg:#eef7f1;
+  --warn:#b8791a; --warn-bg:#fdf5e8;
+  --bad:#c0392b; --bad-bg:#fdeded;
+  --accent:#2f5fe0; --accent-bg:#eef2fe;
+  --radius:12px;
+}
+*{box-sizing:border-box;margin:0;padding:0}
+body{
+  background:var(--bg); color:var(--t1);
+  font-family:-apple-system,BlinkMacSystemFont,"Segoe UI","PingFang SC","Microsoft YaHei",sans-serif;
+  font-size:14px; line-height:1.55; padding:24px;
+  -webkit-font-smoothing:antialiased;
+}
+.wrap{max-width:1080px;margin:0 auto}
+
+/* ---------- header ---------- */
+.hdr{display:flex;align-items:flex-start;justify-content:space-between;margin-bottom:18px}
+.hdr h1{font-size:19px;font-weight:650;letter-spacing:-.01em}
+.hdr .sub{font-size:12.5px;color:var(--t2);margin-top:3px}
+.hdr .acts{display:flex;gap:8px}
+.btn{
+  height:32px;padding:0 13px;border:1px solid var(--line);background:#fff;border-radius:8px;
+  font-size:12.5px;color:var(--t1);cursor:pointer;display:inline-flex;align-items:center;gap:5px;
+  font-family:inherit;
+}
+.btn:hover{background:#fafbfc}
+.btn.primary{background:var(--accent);border-color:var(--accent);color:#fff}
+.btn.primary:hover{background:#2550c8}
+
+.card{background:var(--card);border:1px solid var(--line);border-radius:var(--radius);margin-bottom:14px}
+
+/* ---------- verdict ---------- */
+.verdict{padding:20px 22px}
+.verdict-top{display:flex;align-items:baseline;gap:12px;flex-wrap:wrap}
+.verdict-num{font-size:34px;font-weight:680;letter-spacing:-.02em;line-height:1;font-variant-numeric:tabular-nums}
+.verdict-unit{font-size:15px;color:var(--t3);font-weight:500}
+.tag{
+  display:inline-flex;align-items:center;height:22px;padding:0 9px;border-radius:6px;
+  font-size:12px;font-weight:600;letter-spacing:.01em;
+}
+.tag.bad{background:var(--bad-bg);color:var(--bad)}
+.tag.warn{background:var(--warn-bg);color:var(--warn)}
+.tag.ok{background:var(--ok-bg);color:var(--ok)}
+.tag.plain{background:#f0f1f4;color:var(--t2)}
+.verdict-line{margin-top:10px;font-size:14.5px;line-height:1.65;max-width:760px}
+.verdict-line b{font-weight:650}
+.hl{background:linear-gradient(transparent 62%,#ffe9a8 62%);padding:0 1px}
+
+/* ---------- metrics ---------- */
+.metrics{display:grid;grid-template-columns:repeat(5,1fr);border-top:1px solid var(--line-soft);margin-top:18px}
+.metric{padding:14px 16px;border-right:1px solid var(--line-soft)}
+.metric:last-child{border-right:none}
+.metric .k{font-size:11.5px;color:var(--t3);letter-spacing:.02em}
+.metric .v{font-size:20px;font-weight:640;margin-top:3px;font-variant-numeric:tabular-nums;letter-spacing:-.01em}
+.metric .v small{font-size:12px;font-weight:500;color:var(--t3);margin-left:2px}
+.metric .n{font-size:11.5px;color:var(--t2);margin-top:2px}
+.metric .n.bad{color:var(--bad);font-weight:550}
+.metric .n.ok{color:var(--ok);font-weight:550}
+
+/* ---------- section ---------- */
+.sec{padding:18px 22px}
+.sec-hd{display:flex;align-items:center;justify-content:space-between;margin-bottom:14px}
+.sec-hd h2{font-size:14.5px;font-weight:650}
+.sec-hd .hint{font-size:12px;color:var(--t3)}
+
+/* ---------- error clusters ---------- */
+.clusters{display:grid;grid-template-columns:repeat(3,1fr);gap:12px}
+.cluster{border:1px solid var(--line);border-radius:10px;padding:14px;background:#fff}
+.cluster.bad{border-color:#f3d3d0;background:linear-gradient(180deg,#fefafa,#fff 60%)}
+.cluster.warn{border-color:#f0dfc0;background:linear-gradient(180deg,#fffcf6,#fff 60%)}
+.cluster-hd{display:flex;align-items:center;justify-content:space-between;margin-bottom:8px}
+.cluster-hd .name{font-size:13.5px;font-weight:640}
+.count{
+  font-size:11.5px;font-weight:650;background:var(--bad-bg);color:var(--bad);
+  padding:1px 7px;border-radius:5px;font-variant-numeric:tabular-nums;
+}
+.count.w{background:var(--warn-bg);color:var(--warn)}
+.cluster .qids{font-size:12px;color:var(--t2);font-variant-numeric:tabular-nums;margin-bottom:9px}
+.cluster .desc{font-size:12.5px;color:var(--t2);line-height:1.6}
+.rule{
+  margin-top:11px;padding:9px 11px;background:#15181d;border-radius:8px;
+  color:#e8eaed;font-size:12.5px;line-height:1.6;
+}
+.rule .rl{color:#ff9d8a;font-weight:650;margin-right:5px}
+
+/* ---------- question list ---------- */
+.qrow{border-top:1px solid var(--line-soft);padding:13px 0;display:grid;grid-template-columns:70px 1fr 92px 104px;gap:14px;align-items:center}
+.qrow:first-child{border-top:none}
+.qid{font-size:13px;font-weight:620;font-variant-numeric:tabular-nums;color:var(--t1)}
+.qmeta{min-width:0}
+.qcat{font-size:12px;color:var(--t2);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.qerr{font-size:12.5px;color:var(--t1);margin-top:2px}
+.qerr.none{color:var(--t3)}
+.qtime{text-align:right}
+.qtime .t{font-size:13px;font-variant-numeric:tabular-nums;font-weight:550}
+.bar{height:4px;background:#eef0f3;border-radius:2px;margin-top:5px;position:relative;overflow:hidden}
+.bar i{position:absolute;left:0;top:0;bottom:0;border-radius:2px;background:var(--ok)}
+.bar i.over{background:var(--bad)}
+.bar i.near{background:var(--warn)}
+.qverdict{text-align:right;display:flex;flex-direction:column;align-items:flex-end;gap:4px}
+.qverdict .cmp{font-size:11.5px;color:var(--t3);font-variant-numeric:tabular-nums}
+.qverdict .cmp.fix{color:var(--bad);font-weight:600}
+.qverdict .cmp.real{color:var(--ok);font-weight:600}
+
+/* ---------- action list ---------- */
+.acts-list{display:flex;flex-direction:column;gap:0}
+.act{display:grid;grid-template-columns:22px 1fr auto;gap:12px;align-items:center;padding:12px 0;border-top:1px solid var(--line-soft)}
+.act:first-child{border-top:none}
+.act .num{
+  width:22px;height:22px;border-radius:6px;background:var(--accent-bg);color:var(--accent);
+  font-size:11.5px;font-weight:680;display:flex;align-items:center;justify-content:center;
+}
+.act .txt{font-size:13.5px}
+.act .txt small{display:block;font-size:12px;color:var(--t2);margin-top:1px}
+.act .go{
+  height:28px;padding:0 12px;border:1px solid var(--line);background:#fff;border-radius:7px;
+  font-size:12.5px;cursor:pointer;font-family:inherit;color:var(--t1);white-space:nowrap;
+}
+.act .go:hover{border-color:var(--accent);color:var(--accent)}
+
+.foot{display:flex;justify-content:space-between;align-items:center;padding:16px 22px;border-top:1px solid var(--line-soft)}
+.foot .sum{font-size:12.5px;color:var(--t2)}
+
+.note{font-size:12px;color:var(--t3);text-align:center;margin-top:6px}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <div class="hdr">
+    <div>
+      <h1>批改报告 · 2026-09-02 日常训练</h1>
+      <div class="sub">8 题 · 高数 5 / 线代 3 · 批改来源 codex-batch</div>
+    </div>
+    <div class="acts">
+      <button class="btn">导出</button>
+      <button class="btn">刷新</button>
+      <button class="btn primary">完成复盘</button>
+    </div>
+  </div>
+
+  <!-- 判定 + 指标 -->
+  <div class="card">
+    <div class="verdict">
+      <div class="verdict-top">
+        <span class="verdict-num">50%</span><span class="verdict-unit">正确率（4 / 8）</span>
+        <span class="tag bad">2 处错误路径固化</span>
+        <span class="tag warn">1 处假掌握</span>
+        <span class="tag ok">3 题真掌握</span>
+      </div>
+      <p class="verdict-line">
+        正确率 50% 是次要信息。真正的问题是：<b>#7076 与 #10590 复习时比首次快了一倍，却仍然错</b>——
+        这不是没学会，是<span class="hl">错误路径已经固化</span>，讲一遍没用，必须用否定式规则在入口拦截。
+        另有 #1052 耗时只降到一半，属于假掌握。好消息是抽象逆 #148 首次通过验收线（132″ &lt; 140″）。
+      </p>
+
+      <div class="metrics">
+        <div class="metric">
+          <div class="k">正确 / 半对 / 错</div>
+          <div class="v">4 / 1 / 3</div>
+          <div class="n">8 题全部获得批改证据</div>
+        </div>
+        <div class="metric">
+          <div class="k">总耗时</div>
+          <div class="v">22′38″</div>
+          <div class="n">均题 2′50″，预算 4′30″</div>
+        </div>
+        <div class="metric">
+          <div class="k">断点</div>
+          <div class="v">4<small>处</small></div>
+          <div class="n bad">其中 2 处为复习复发</div>
+        </div>
+        <div class="metric">
+          <div class="k">真掌握</div>
+          <div class="v">3<small>题</small></div>
+          <div class="n ok">耗时降到首次 1/3 以下</div>
+        </div>
+        <div class="metric">
+          <div class="k">明日复习</div>
+          <div class="v">3<small>题</small></div>
+          <div class="n">预计 18′</div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- 断点聚合 -->
+  <div class="card">
+    <div class="sec">
+      <div class="sec-hd">
+        <h2>断点聚合（按错误类型，不是按题）</h2>
+        <span class="hint">3 类 · 覆盖 6 题次</span>
+      </div>
+      <div class="clusters">
+        <div class="cluster bad">
+          <div class="cluster-hd">
+            <span class="name">方法入口检索失败</span>
+            <span class="count">3 次</span>
+          </div>
+          <div class="qids">#7076 · #10590 · #1982</div>
+          <div class="desc">看见结构、检索不出标准动作。三次都倒在同一入口，且两次是复习复发。</div>
+          <div class="rule">
+            <span class="rl">禁止</span>看到 <i>√a + √b</i> 或根号内为分式就直接三角换元 —— 先做整式换元 t = √x
+          </div>
+        </div>
+        <div class="cluster warn">
+          <div class="cluster-hd">
+            <span class="name">代数 / 计算精度</span>
+            <span class="count">2 次</span>
+          </div>
+          <div class="qids">#1052 · #1982</div>
+          <div class="desc">思路对，落笔错。集中在多步复合运算的符号与系数。</div>
+          <div class="rule">
+            <span class="rl">强制</span>每完成一步化简，回代一个特殊值校验一次
+          </div>
+        </div>
+        <div class="cluster">
+          <div class="cluster-hd">
+            <span class="name">定理前置条件缺失</span>
+            <span class="count">1 次</span>
+          </div>
+          <div class="qids">#1052</div>
+          <div class="desc">用了定理，但没验证定理成立的条件，属于可一次性补齐的缺口。</div>
+          <div class="rule">
+            <span class="rl">补讲</span>变限积分求导的连续性前提，1 遍即可（知识缺口型）
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- 逐题 -->
+  <div class="card">
+    <div class="sec">
+      <div class="sec-hd">
+        <h2>逐题结果</h2>
+        <span class="hint">点击展开最早断点 / 秒杀解法</span>
+      </div>
+
+      <div class="qrow">
+        <div class="qid">#7076</div>
+        <div class="qmeta">
+          <div class="qcat">高数 / 一元积分 / 含根式 · 根号加比根号减</div>
+          <div class="qerr">第一步就锁死在三角换元，整式换元未进入候选</div>
+        </div>
+        <div class="qtime">
+          <div class="t">0′53″</div>
+          <div class="bar"><i style="width:20%"></i></div>
+        </div>
+        <div class="qverdict">
+          <span class="tag bad">错</span>
+          <span class="cmp fix">115″ → 53″ 仍错 · 固化</span>
+        </div>
+      </div>
+
+      <div class="qrow">
+        <div class="qid">#10590</div>
+        <div class="qmeta">
+          <div class="qcat">高数 / 多元微分 / 复合函数求导</div>
+          <div class="qerr">未识别出链式结构，逐项硬展开</div>
+        </div>
+        <div class="qtime">
+          <div class="t">0′57″</div>
+          <div class="bar"><i style="width:21%"></i></div>
+        </div>
+        <div class="qverdict">
+          <span class="tag bad">错</span>
+          <span class="cmp fix">677″ → 57″ 仍错 · 固化</span>
+        </div>
+      </div>
+
+      <div class="qrow">
+        <div class="qid">#1982</div>
+        <div class="qmeta">
+          <div class="qcat">高数 / 一元微分 / 泰勒多项式</div>
+          <div class="qerr">展开阶数判断失误，余项符号错</div>
+        </div>
+        <div class="qtime">
+          <div class="t">6′12″</div>
+          <div class="bar"><i class="over" style="width:100%"></i></div>
+        </div>
+        <div class="qverdict">
+          <span class="tag bad">错</span>
+          <span class="cmp">第 4 次做 · 累计 1/4</span>
+        </div>
+      </div>
+
+      <div class="qrow">
+        <div class="qid">#1052</div>
+        <div class="qmeta">
+          <div class="qcat">高数 / 一元积分 / 变限积分的定积分</div>
+          <div class="qerr">交换积分次序时漏掉连续性前提</div>
+        </div>
+        <div class="qtime">
+          <div class="t">10′56″</div>
+          <div class="bar"><i class="over" style="width:100%"></i></div>
+        </div>
+        <div class="qverdict">
+          <span class="tag warn">半对</span>
+          <span class="cmp">1257″ → 656″ · 假掌握</span>
+        </div>
+      </div>
+
+      <div class="qrow">
+        <div class="qid">#148</div>
+        <div class="qmeta">
+          <div class="qcat">线代 / 矩阵 / 抽象逆相关</div>
+          <div class="qerr none">—</div>
+        </div>
+        <div class="qtime">
+          <div class="t">2′12″</div>
+          <div class="bar"><i style="width:49%"></i></div>
+        </div>
+        <div class="qverdict">
+          <span class="tag ok">对</span>
+          <span class="cmp real">达标（线 140″）</span>
+        </div>
+      </div>
+
+      <div class="qrow">
+        <div class="qid">#10578</div>
+        <div class="qmeta">
+          <div class="qcat">高数 / 一元积分 / 分部积分</div>
+          <div class="qerr none">—</div>
+        </div>
+        <div class="qtime">
+          <div class="t">0′12″</div>
+          <div class="bar"><i style="width:5%"></i></div>
+        </div>
+        <div class="qverdict">
+          <span class="tag ok">对</span>
+          <span class="cmp real">105″ → 12″ · 真掌握</span>
+        </div>
+      </div>
+
+      <div class="qrow">
+        <div class="qid">#7090</div>
+        <div class="qmeta">
+          <div class="qcat">线代 / 线性方程组 / 含参讨论</div>
+          <div class="qerr none">—</div>
+        </div>
+        <div class="qtime">
+          <div class="t">3′11″</div>
+          <div class="bar"><i style="width:71%"></i></div>
+        </div>
+        <div class="qverdict">
+          <span class="tag ok">对</span>
+          <span class="cmp real">723″ → 191″ · 真掌握</span>
+        </div>
+      </div>
+
+      <div class="qrow">
+        <div class="qid">#10587</div>
+        <div class="qmeta">
+          <div class="qcat">高数 / 一元积分 / 换元法</div>
+          <div class="qerr none">—</div>
+        </div>
+        <div class="qtime">
+          <div class="t">0′45″</div>
+          <div class="bar"><i style="width:17%"></i></div>
+        </div>
+        <div class="qverdict">
+          <span class="tag ok">对</span>
+          <span class="cmp real">808″ → 45″ · 真掌握</span>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- 下一步 -->
+  <div class="card">
+    <div class="sec">
+      <div class="sec-hd">
+        <h2>接下来做什么</h2>
+        <span class="hint">按优先级排序，合计约 33′</span>
+      </div>
+      <div class="acts-list">
+        <div class="act">
+          <span class="num">1</span>
+          <div class="txt">
+            明日复习 #7076 · #10590（固化断点，用否定式规则重做）
+            <small>不看解析，动笔 30 秒内先写出「识别到什么结构 → 对应什么动作」</small>
+          </div>
+          <button class="go">排入明日</button>
+        </div>
+        <div class="act">
+          <span class="num">2</span>
+          <div class="txt">
+            同考点加练 3 题 · 含根式 / 根号加比根号减
+            <small>该叶子题库仅剩 4 题，抽 3 题不伤后续覆盖</small>
+          </div>
+          <button class="go">生成加练</button>
+        </div>
+        <div class="act">
+          <span class="num">3</span>
+          <div class="txt">
+            抽象逆已达标 → 转向「线代 / 数学一专项」29 题
+            <small>16 题是数一真题原卷，年年一道 5 分小题，识别即秒杀</small>
+          </div>
+          <button class="go">查看专项</button>
+        </div>
+        <div class="act">
+          <span class="num">4</span>
+          <div class="txt">
+            补讲：变限积分求导的连续性前提（#1052 的知识缺口）
+            <small>知识缺口型，讲一遍有效，与固化型处理方式不同</small>
+          </div>
+          <button class="go">标记已讲</button>
+        </div>
+      </div>
+    </div>
+    <div class="foot">
+      <span class="sum">扫描线提示：#1982 耗时 6′12″ 已过 5′ 软止损，第 4 次仍未拿下 —— 建议暂时搁置，先清其他叶子</span>
+      <button class="btn primary">完成复盘</button>
+    </div>
+  </div>
+
+  <p class="note">方案 A · 结构化体检单 —— 一屏看完全局，断点按类型聚合，行动清单可直接执行</p>
+</div>
+</body>
+</html>

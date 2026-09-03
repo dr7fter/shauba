@@ -1,0 +1,332 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>方案 B · 断点工作台</title>
+<style>
+:root{
+  --bg:#f5f6f8; --card:#fff; --line:#e6e8ec; --line-soft:#f0f1f4;
+  --t1:#15181d; --t2:#5c6370; --t3:#8b919c;
+  --ok:#2e7d52; --ok-bg:#eef7f1;
+  --warn:#b8791a; --warn-bg:#fdf5e8;
+  --bad:#c0392b; --bad-bg:#fdeded;
+  --accent:#2f5fe0; --accent-bg:#eef2fe;
+}
+*{box-sizing:border-box;margin:0;padding:0}
+body{
+  background:var(--bg);color:var(--t1);font-size:14px;line-height:1.55;padding:24px;
+  font-family:-apple-system,BlinkMacSystemFont,"Segoe UI","PingFang SC","Microsoft YaHei",sans-serif;
+  -webkit-font-smoothing:antialiased;
+}
+.wrap{max-width:1080px;margin:0 auto;display:grid;grid-template-columns:1fr 296px;gap:16px;align-items:start}
+.main{min-width:0}
+
+.hdr{grid-column:1/-1;display:flex;align-items:flex-end;justify-content:space-between;margin-bottom:2px}
+.hdr h1{font-size:19px;font-weight:650}
+.hdr .sub{font-size:12.5px;color:var(--t2);margin-top:3px}
+.hdr .acts{display:flex;gap:8px}
+.btn{height:32px;padding:0 13px;border:1px solid var(--line);background:#fff;border-radius:8px;font-size:12.5px;cursor:pointer;font-family:inherit;color:var(--t1)}
+.btn:hover{background:#fafbfc}
+.btn.primary{background:var(--accent);border-color:var(--accent);color:#fff}
+
+.card{background:var(--card);border:1px solid var(--line);border-radius:12px;margin-bottom:14px}
+.sec{padding:18px 22px}
+.sec-hd{display:flex;align-items:center;justify-content:space-between;margin-bottom:14px}
+.sec-hd h2{font-size:14.5px;font-weight:650}
+.sec-hd .hint{font-size:12px;color:var(--t3)}
+
+/* ---------- breakpoint cards ---------- */
+.bp{border:1px solid var(--line);border-radius:11px;margin-bottom:12px;overflow:hidden;background:#fff}
+.bp.is-fix{border-color:#f0cdc8}
+.bp.is-warn{border-color:#eeddbb}
+.bp.is-ok{border-color:#cfe6da}
+
+.bp-hd{display:flex;align-items:center;gap:10px;padding:13px 16px;background:#fbfcfd;border-bottom:1px solid var(--line-soft)}
+.bp-idx{
+  width:24px;height:24px;border-radius:7px;display:flex;align-items:center;justify-content:center;
+  font-size:12px;font-weight:700;background:var(--bad-bg);color:var(--bad);flex:none;
+}
+.bp-idx.w{background:var(--warn-bg);color:var(--warn)}
+.bp-idx.g{background:var(--ok-bg);color:var(--ok)}
+.bp-title{font-size:14px;font-weight:640;flex:1;min-width:0}
+.bp-title small{display:block;font-size:12px;font-weight:450;color:var(--t2);margin-top:1px}
+.bp-sev{font-size:11.5px;font-weight:650;padding:2px 8px;border-radius:5px;background:var(--bad-bg);color:var(--bad);white-space:nowrap}
+.bp-sev.w{background:var(--warn-bg);color:var(--warn)}
+.bp-sev.g{background:var(--ok-bg);color:var(--ok)}
+
+.bp-body{padding:14px 16px;display:grid;grid-template-columns:1fr 232px;gap:16px}
+.bp-left{min-width:0}
+
+.evidence{display:flex;flex-direction:column;gap:8px;margin-bottom:12px}
+.ev{display:grid;grid-template-columns:58px 1fr 150px;gap:10px;align-items:center;font-size:12.5px}
+.ev .qid{font-variant-numeric:tabular-nums;font-weight:600}
+.ev .cat{color:var(--t2);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.ev .cmp{text-align:right;font-variant-numeric:tabular-nums;font-size:12px;color:var(--t2)}
+.ev .cmp .recur{color:var(--bad);font-weight:650}
+.ev .cmp .good{color:var(--ok);font-weight:650}
+
+.timerow{display:flex;gap:4px;align-items:center}
+.tseg{height:5px;border-radius:3px;background:#e8ebef;position:relative}
+.tseg i{position:absolute;left:0;top:0;bottom:0;border-radius:3px}
+.tarrow{font-size:11px;color:var(--t3)}
+
+.diag{font-size:13px;line-height:1.65;color:var(--t1);padding:10px 12px;background:#fafbfc;border-radius:8px;border:1px solid var(--line-soft)}
+.diag b{font-weight:650}
+
+.bp-right{display:flex;flex-direction:column;gap:8px}
+.fixbox{background:#15181d;color:#e8eaed;border-radius:9px;padding:12px}
+.fixbox .lbl{font-size:11px;letter-spacing:.06em;color:#9aa3ad;margin-bottom:6px;font-weight:600}
+.fixbox .rule{font-size:13px;line-height:1.65;font-weight:600}
+.fixbox .rule .ban{color:#ff8f7a}
+.fixbox .why{font-size:11.5px;color:#9aa3ad;margin-top:7px;line-height:1.55}
+.bp-act{
+  height:34px;border:1px solid var(--line);background:#fff;border-radius:8px;font-size:12.5px;
+  cursor:pointer;font-family:inherit;color:var(--t1);display:flex;align-items:center;justify-content:center;gap:6px;
+}
+.bp-act:hover{border-color:var(--accent);color:var(--accent)}
+.bp-act.hot{background:var(--accent);border-color:var(--accent);color:#fff}
+.bp-act.hot:hover{background:#2550c8;color:#fff}
+
+/* ---------- side ---------- */
+.side{position:sticky;top:24px}
+.mini{padding:16px 18px}
+.mini h3{font-size:12.5px;color:var(--t3);font-weight:600;letter-spacing:.02em;margin-bottom:11px}
+.stat{display:flex;justify-content:space-between;align-items:baseline;padding:7px 0;border-top:1px solid var(--line-soft);font-size:13px}
+.stat:first-of-type{border-top:none}
+.stat .k{color:var(--t2)}
+.stat .v{font-weight:640;font-variant-numeric:tabular-nums}
+.stat .v.bad{color:var(--bad)}
+.stat .v.ok{color:var(--ok)}
+.radarbox{margin-top:14px;padding-top:14px;border-top:1px solid var(--line-soft)}
+.dim{display:grid;grid-template-columns:56px 1fr 30px;gap:8px;align-items:center;font-size:12px;margin-bottom:7px}
+.dim .n{color:var(--t2)}
+.dim .track{height:5px;background:#eef0f3;border-radius:3px;overflow:hidden}
+.dim .track i{display:block;height:100%;background:var(--accent);border-radius:3px}
+.dim .track i.na{background:#dfe2e7;width:100% !important}
+.dim .v{text-align:right;font-variant-numeric:tabular-nums;color:var(--t1);font-weight:550}
+.dim .v.na{color:var(--t3);font-weight:400;font-size:11px}
+
+.oklist{padding:16px 18px}
+.oklist .li{font-size:12.5px;color:var(--t2);padding:6px 0;border-top:1px solid var(--line-soft);display:flex;justify-content:space-between;gap:8px}
+.oklist .li:first-of-type{border-top:none}
+.oklist .li b{color:var(--ok);font-weight:600;font-variant-numeric:tabular-nums}
+
+.note{grid-column:1/-1;font-size:12px;color:var(--t3);text-align:center;margin-top:2px}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <div class="hdr">
+    <div>
+      <h1>批改报告 · 2026-09-02 日常训练</h1>
+      <div class="sub">8 题 → 归并为 4 个断点 + 3 项已固化</div>
+    </div>
+    <div class="acts">
+      <button class="btn">导出</button>
+      <button class="btn">刷新</button>
+      <button class="btn primary">完成复盘</button>
+    </div>
+  </div>
+
+  <div class="main">
+
+    <div class="card">
+      <div class="sec">
+        <div class="sec-hd">
+          <h2>断点（按严重度排序）</h2>
+          <span class="hint">没有断点 = 这次训练白做；有断点 = 有得改</span>
+        </div>
+
+        <!-- 断点 1 -->
+        <div class="bp is-fix">
+          <div class="bp-hd">
+            <span class="bp-idx">1</span>
+            <div class="bp-title">
+              根式入口误判：见到根号就上三角换元
+              <small>高数 / 一元积分 · 含根式 · 根号加比根号减 ｜ 2 题</small>
+            </div>
+            <span class="bp-sev">已固化 · 最危险</span>
+          </div>
+          <div class="bp-body">
+            <div class="bp-left">
+              <div class="evidence">
+                <div class="ev">
+                  <span class="qid">#7076</span>
+                  <span class="cat">首次 115″ 错 → 本次 53″ 错</span>
+                  <span class="cmp"><span class="recur">快 2.2× 仍错 · 复发</span></span>
+                </div>
+                <div class="ev">
+                  <span class="qid">#10590</span>
+                  <span class="cat">首次 677″ 错 → 本次 57″ 错</span>
+                  <span class="cmp"><span class="recur">快 11.9× 仍错 · 复发</span></span>
+                </div>
+              </div>
+              <div class="diag">
+                两次复习都比首次快得多，答案却一样错。这说明<b>旧路径已经被反复强化，且伪装成"我会做"</b>——
+                耗时缩短带来的熟练感是假的。讲解无效，只能靠在入口处用否定式规则拦截。
+              </div>
+            </div>
+            <div class="bp-right">
+              <div class="fixbox">
+                <div class="lbl">拦截规则（否定式）</div>
+                <div class="rule"><span class="ban">禁止</span> 看到 √a ± √b 或根号内为分式，直接上三角换元</div>
+                <div class="why">正面规则"看到 X 做 Y"会被旧习惯覆盖；只有"禁止做 Z"才拦得住。</div>
+              </div>
+              <button class="bp-act hot">明日重做这 2 题</button>
+              <button class="bp-act">同考点加练 3 题</button>
+              <button class="bp-act">48h 后抽检排期</button>
+            </div>
+          </div>
+        </div>
+
+        <!-- 断点 2 -->
+        <div class="bp is-warn">
+          <div class="bp-hd">
+            <span class="bp-idx w">2</span>
+            <div class="bp-title">
+              变限积分：交换次序前漏掉连续性前提
+              <small>高数 / 一元积分 · 求变限积分的定积分 ｜ 1 题 · 半对</small>
+            </div>
+            <span class="bp-sev w">假掌握</span>
+          </div>
+          <div class="bp-body">
+            <div class="bp-left">
+              <div class="evidence">
+                <div class="ev">
+                  <span class="qid">#1052</span>
+                  <span class="cat">首次 1257″ 半对 → 本次 656″ 半对</span>
+                  <span class="cmp">只降到 1/2 · 未达 1/3 线</span>
+                </div>
+              </div>
+              <div class="diag">
+                耗时降了一半，看起来有进步，但<b>真掌握的判据是降到首次的 1/3 以下</b>。
+                同时卡点从"不会做"变成"忘了验证前提"，属于典型的<b>知识缺口</b>，与断点 1 的修法完全不同。
+              </div>
+            </div>
+            <div class="bp-right">
+              <div class="fixbox">
+                <div class="lbl">处理动作</div>
+                <div class="rule">补讲：变限积分求导的连续性前提</div>
+                <div class="why">知识缺口型 —— 讲一遍有效。不要按固化型处理（逼着调用没用）。</div>
+              </div>
+              <button class="bp-act hot">标记已补讲</button>
+              <button class="bp-act">明日复习</button>
+              <button class="bp-act">查看完整解析</button>
+            </div>
+          </div>
+        </div>
+
+        <!-- 断点 3 -->
+        <div class="bp">
+          <div class="bp-hd">
+            <span class="bp-idx">3</span>
+            <div class="bp-title">
+              泰勒展开阶数与余项符号
+              <small>高数 / 一元微分 · 泰勒多项式 ｜ 1 题 · 第 4 次做</small>
+            </div>
+            <span class="bp-sev">建议暂缓</span>
+          </div>
+          <div class="bp-body">
+            <div class="bp-left">
+              <div class="evidence">
+                <div class="ev">
+                  <span class="qid">#1982</span>
+                  <span class="cat">本次 372″ 错 · 累计 4 次 / 对 1 次</span>
+                  <span class="cmp">超 5′ 软止损线</span>
+                </div>
+              </div>
+              <div class="diag">
+                同一道题做了 4 次只对 1 次，本次耗时 6′12″ 已越过止损线（&gt;5′ 正确率从 63% 掉到 53%）。
+                <b>继续硬啃的边际收益为负</b>——建议先清其他叶子，靠轮次而非单题深度来覆盖。
+              </div>
+            </div>
+            <div class="bp-right">
+              <div class="fixbox">
+                <div class="lbl">处置</div>
+                <div class="rule">暂时搁置 · 距下次重试 ≥ 7 天</div>
+                <div class="why">该叶子题库仅 1 题进入过训练，样本过少，不足以判定为硬伤。</div>
+              </div>
+              <button class="bp-act hot">7 天后重试</button>
+              <button class="bp-act">换同族题</button>
+              <button class="bp-act">查看解析</button>
+            </div>
+          </div>
+        </div>
+
+        <!-- 断点 4 -->
+        <div class="bp is-ok">
+          <div class="bp-hd">
+            <span class="bp-idx g">4</span>
+            <div class="bp-title">
+              抽象逆：首次通过验收线
+              <small>线代 / 矩阵 · 抽象逆相关 ｜ 1 题</small>
+            </div>
+            <span class="bp-sev g">已达标</span>
+          </div>
+          <div class="bp-body">
+            <div class="bp-left">
+              <div class="evidence">
+                <div class="ev">
+                  <span class="qid">#148</span>
+                  <span class="cat">本次 132″ 对 · 验收线 &lt; 140″</span>
+                  <span class="cmp"><span class="good">达标 · 可收口</span></span>
+                </div>
+              </div>
+              <div class="diag">
+                这是全库唯一"样本干净"的真硬伤（7 题次 / 7 道不同题 / 29%），现在首次达标。
+                <b>不建议继续加练</b>——把带宽转给零覆盖的「线代 / 数学一专项」29 题。
+              </div>
+            </div>
+            <div class="bp-right">
+              <div class="fixbox">
+                <div class="lbl">下一步</div>
+                <div class="rule">转向 数学一专项 29 题（16 题真题原卷）</div>
+                <div class="why">二次曲面 / 基变换过渡矩阵 / 三平面位置关系，年年一道 5 分小题。</div>
+              </div>
+              <button class="bp-act hot">开始专项</button>
+              <button class="bp-act">保留 1 题抽检</button>
+            </div>
+          </div>
+        </div>
+
+      </div>
+    </div>
+  </div>
+
+  <!-- 侧栏 -->
+  <div class="side">
+    <div class="card mini">
+      <h3>本次概览</h3>
+      <div class="stat"><span class="k">正确率</span><span class="v">50%</span></div>
+      <div class="stat"><span class="k">对 / 半 / 错</span><span class="v">4 / 1 / 3</span></div>
+      <div class="stat"><span class="k">总耗时</span><span class="v">22′38″</span></div>
+      <div class="stat"><span class="k">均题</span><span class="v">2′50″</span></div>
+      <div class="stat"><span class="k">断点</span><span class="v bad">4 处</span></div>
+      <div class="stat"><span class="k">真掌握</span><span class="v ok">3 题</span></div>
+      <div class="stat"><span class="k">明日复习</span><span class="v">3 题 · 18′</span></div>
+
+      <div class="radarbox">
+        <h3>六维证据（6/8 题）</h3>
+        <div class="dim"><span class="n">严谨性</span><span class="track"><i style="width:52%"></i></span><span class="v">5.2</span></div>
+        <div class="dim"><span class="n">计算</span><span class="track"><i style="width:44%"></i></span><span class="v">4.4</span></div>
+        <div class="dim"><span class="n">建模</span><span class="track"><i style="width:61%"></i></span><span class="v">6.1</span></div>
+        <div class="dim"><span class="n">方法调用</span><span class="track"><i style="width:33%"></i></span><span class="v">3.3</span></div>
+        <div class="dim"><span class="n">速度</span><span class="track"><i style="width:70%"></i></span><span class="v">7.0</span></div>
+        <div class="dim"><span class="n">策略洞察</span><span class="track"><i class="na"></i></span><span class="v na">未采集</span></div>
+      </div>
+    </div>
+
+    <div class="card oklist">
+      <h3 style="font-size:12.5px;color:#8b919c;font-weight:600;margin-bottom:11px">已固化（耗时降到 1/3 以下）</h3>
+      <div class="li"><span>#10578 分部积分</span><b>105″→12″</b></div>
+      <div class="li"><span>#10587 换元法</span><b>808″→45″</b></div>
+      <div class="li"><span>#7090 含参讨论</span><b>723″→191″</b></div>
+    </div>
+  </div>
+
+  <p class="note">方案 B · 断点工作台 —— 以断点为一级单位，弱化单题流水账；每题的处理动作与断点类型严格绑定</p>
+</div>
+</body>
+</html>

@@ -1,0 +1,546 @@
+<!DOCTYPE html>
+<html lang="zh-CN" data-theme="warm">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>批改报告 · 视觉终稿</title>
+<style>
+/* ============================================================
+   本文件 1:1 引用 src/styles/tokens.css 的 token，零硬编码 hex。
+   data-theme="default" = App 默认墨绿；data-theme="warm" = 暖纸。
+   ============================================================ */
+:root{
+  --canvas:#f5f7f5; --surface:#ffffff; --sunken:#f1f5f9; --paper:#ffffff;
+  --ink:#27322e; --muted:#6f7b75; --quiet:#98a19d; --on-color:#ffffff;
+  --line:#dfe5e1; --line-strong:#a9c4b6;
+  --line-success:#a9cfbc; --line-warn:#e8cf9a; --line-danger:#f3b8b0;
+  --green:#738f80; --green-dark:#536d5e; --green-soft:#e8efea;
+  --success:#2f8561; --success-strong:#2b7a5a; --success-soft:#f1f8f4;
+  --ink-on-soft:#1e362d;
+  --warn:#d97706; --warn-strong:#92400e; --warn-soft:#fef3c7;
+  --danger:#b91c1c; --danger-strong:#7f1d1d; --danger-soft:#fee2e2;
+  --info:#2f6e91; --info-soft:#e9eff1;
+  --violet:#6d5fc4; --violet-soft:#f5f3ff;
+  --gold:#a88d22; --gold-soft:#fdf7e7;
+  --scrim-soft:rgba(39,50,46,.32);
+  --shadow-1:0 5px 18px rgba(36,59,47,.04);
+  --shadow-2:0 12px 30px rgba(20,35,28,.16);
+  --overlay-ink-1:rgba(55,70,62,.14); --overlay-ink-2:rgba(55,70,62,.06);
+  --fill-radar:rgba(36,122,85,.25);
+  --font-ui:"Inter","Source Han Sans SC","Noto Sans SC","HarmonyOS Sans SC","PingFang SC","Hiragino Sans GB","Segoe UI","Microsoft YaHei UI",-apple-system,sans-serif;
+  --font-stem:"LXGW WenKai Screen","LXGW WenKai","霞鹜文楷","Noto Serif SC","Source Han Serif SC","Songti SC",serif;
+  --font-mono:"JetBrains Mono","Fira Code","SF Mono",ui-monospace,monospace;
+  --fs-xs:11px; --fs-sm:12px; --fs-base:13px; --fs-md:14px; --fs-lg:16px;
+  --fs-xl:18px; --fs-2xl:22px; --fs-3xl:32px; --fs-stem:20px;
+  --sp-1:4px; --sp-2:8px; --sp-3:12px; --sp-4:16px; --sp-5:20px; --sp-6:24px; --sp-8:32px;
+  --r-xs:4px; --r-sm:6px; --r-md:8px; --r-lg:12px; --r-full:999px;
+  --h-sm:28px; --h-md:36px;
+  --dur-1:120ms;
+}
+[data-theme="warm"]{
+  --canvas:#faf6ee; --surface:#fdfaf2; --sunken:#f6f1e6; --paper:#fdfaf2;
+  --ink:#29241e; --muted:#796e62; --quiet:#9e9386; --on-color:#fffdf8;
+  --line:#e8ded2; --line-strong:#cbb694;
+  --line-success:#a9c4a4; --line-warn:#ddc08c; --line-danger:#dcb4ab;
+  --green:#49785a; --green-dark:#2f523c; --green-soft:#eef3eb;
+  --success:#49785a; --success-strong:#3c6549; --success-soft:#eef3eb;
+  --ink-on-soft:#24402f;
+  --warn:#b45309; --warn-strong:#78350f; --warn-soft:#f6ead2;
+  --danger:#a24f47; --danger-strong:#6d2320; --danger-soft:#f4e6e2;
+  --info:#2f627d; --info-soft:#e7edf0;
+  --violet:#6a5fa8; --violet-soft:#f2edfa;
+  --gold:#8f7a2a; --gold-soft:#f8efd8;
+  --scrim-soft:rgba(41,36,30,.32);
+  --shadow-1:0 5px 18px rgba(70,55,40,.05);
+  --shadow-2:0 12px 30px rgba(60,45,30,.18);
+  --overlay-ink-1:rgba(70,55,40,.14); --overlay-ink-2:rgba(70,55,40,.06);
+  --fill-radar:rgba(73,120,90,.22);
+}
+
+*{box-sizing:border-box;margin:0;padding:0}
+body{
+  background:var(--canvas); color:var(--ink);
+  font:var(--fs-base)/1.6 var(--font-ui);
+  -webkit-font-smoothing:antialiased; padding:var(--sp-5);
+}
+.num{font-family:var(--font-mono);font-variant-numeric:tabular-nums}
+.stem{font-family:var(--font-stem)}
+.wrap{max-width:1280px;margin:0 auto}
+
+/* ---------- 顶部 ---------- */
+.top{
+  display:flex;align-items:center;gap:var(--sp-4);
+  background:var(--surface);border:1px solid var(--line);border-radius:var(--r-lg);
+  padding:var(--sp-3) var(--sp-4);margin-bottom:var(--sp-3);box-shadow:var(--shadow-1);
+}
+.top .ttl{font-size:var(--fs-md);font-weight:650;letter-spacing:-.01em}
+.top .meta{font-size:var(--fs-sm);color:var(--quiet);margin-left:var(--sp-2)}
+.top .sp{flex:1}
+.seg{display:inline-flex;background:var(--sunken);border-radius:var(--r-md);padding:2px}
+.seg button{
+  border:0;background:transparent;font:500 var(--fs-sm) var(--font-ui);color:var(--muted);
+  padding:5px 12px;border-radius:var(--r-sm);cursor:pointer;transition:all var(--dur-1);
+}
+.seg button.on{background:var(--surface);color:var(--ink);font-weight:600;box-shadow:var(--shadow-1)}
+.ib{
+  width:30px;height:30px;border:1px solid var(--line);background:var(--surface);
+  border-radius:var(--r-md);color:var(--muted);cursor:pointer;font-size:13px;
+  display:inline-flex;align-items:center;justify-content:center;
+}
+.ib:hover{color:var(--ink);border-color:var(--line-strong)}
+
+/* ---------- 三栏 ---------- */
+.grid{display:grid;grid-template-columns:250px minmax(0,1fr) 296px;gap:var(--sp-3);align-items:start}
+.col{background:var(--surface);border:1px solid var(--line);border-radius:var(--r-lg);overflow:hidden;box-shadow:var(--shadow-1)}
+.hd{
+  padding:10px var(--sp-4);background:var(--sunken);border-bottom:1px solid var(--line);
+  display:flex;align-items:center;justify-content:space-between;gap:8px;
+}
+.hd h2{font-size:var(--fs-base);font-weight:650;letter-spacing:-.01em}
+.hd .hint{font-size:var(--fs-xs);color:var(--quiet);font-family:var(--font-mono)}
+.bd{padding:var(--sp-4)}
+
+/* ---------- 左：成绩 ---------- */
+.sum{padding:var(--sp-4);background:var(--paper);border-bottom:1px solid var(--line)}
+.sum .kick{font-size:var(--fs-xs);color:var(--quiet);letter-spacing:.04em;display:flex;align-items:center;gap:6px}
+.sum .kick::before{content:"";width:5px;height:5px;border-radius:50%;background:var(--green)}
+.sum .big{font-size:var(--fs-3xl);font-weight:700;line-height:1.1;margin:6px 0 2px;letter-spacing:-.02em}
+.sum .big small{font-size:var(--fs-lg);color:var(--quiet);font-weight:500;margin-left:2px}
+.sum .sub{font-size:var(--fs-sm);color:var(--muted)}
+.pair{display:grid;grid-template-columns:1fr 1fr;gap:var(--sp-2) var(--sp-3);margin-top:var(--sp-3);padding-top:var(--sp-3);border-top:1px solid var(--line)}
+.pair div .k{font-size:var(--fs-xs);color:var(--quiet)}
+.pair div .v{font-size:var(--fs-lg);font-weight:650;margin-top:1px}
+.pair div .v.ok{color:var(--success)}
+.pair div .v.bad{color:var(--danger)}
+
+/* ---------- 左：题索引 ---------- */
+.filters{display:flex;gap:4px}
+.filters button{
+  font:500 var(--fs-xs) var(--font-ui);color:var(--muted);padding:3px 8px;
+  border:1px solid var(--line);border-radius:var(--r-sm);background:var(--surface);cursor:pointer;
+}
+.filters button.on{background:var(--green);border-color:var(--green);color:var(--on-color);font-weight:600}
+.plist{padding:var(--sp-1) 0}
+.pitem{
+  display:grid;grid-template-columns:1fr auto;gap:2px var(--sp-2);
+  padding:8px var(--sp-4);cursor:pointer;border-left:2px solid transparent;transition:background var(--dur-1);
+}
+.pitem:hover{background:var(--sunken)}
+.pitem.on{background:var(--green-soft);border-left-color:var(--green)}
+.pitem.err.on{background:var(--danger-soft);border-left-color:var(--danger)}
+.pitem .q{font-size:var(--fs-base);font-weight:600}
+.pitem .c{font-size:var(--fs-xs);color:var(--muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;grid-column:1}
+.pitem .t{font-size:var(--fs-xs);text-align:right;line-height:1.35;grid-row:1/3;grid-column:2;align-self:center}
+.pitem .t b{display:block;font-size:var(--fs-sm);color:var(--ink)}
+.pitem .t .m{font-size:10.5px;color:var(--quiet)}
+.pitem .t .m.fix{color:var(--danger);font-weight:600}
+.pitem .t .m.good{color:var(--success);font-weight:600}
+
+/* ---------- 中 ---------- */
+.qhd{padding:var(--sp-4) var(--sp-5);border-bottom:1px solid var(--line);background:var(--paper)}
+.qhd .path{font-size:var(--fs-xs);color:var(--muted);display:flex;align-items:center;gap:8px;margin-bottom:5px}
+.qhd .path .id{font-family:var(--font-mono);color:var(--green-dark);font-weight:600}
+.qtitle{font-size:var(--fs-xl);font-weight:650;line-height:1.4;letter-spacing:-.01em;margin-bottom:var(--sp-2)}
+.chips{display:flex;gap:5px;flex-wrap:wrap}
+.chip{
+  font-size:var(--fs-xs);font-weight:600;padding:2px 7px;border-radius:var(--r-xs);
+  display:inline-flex;align-items:center;gap:3px;
+}
+.chip.err{background:var(--danger-soft);color:var(--danger);border:1px solid var(--line-danger)}
+.chip.warn{background:var(--warn-soft);color:var(--warn-strong);border:1px solid var(--line-warn)}
+.chip.ok{background:var(--success-soft);color:var(--success-strong);border:1px solid var(--line-success)}
+.chip.mute{background:var(--sunken);color:var(--muted);border:1px solid var(--line)}
+.chip.fix{background:var(--ink);color:#ffb4a2;border-color:var(--ink)}
+
+.qbd{padding:var(--sp-5)}
+.stembox{
+  font-family:var(--font-stem);font-size:var(--fs-stem);line-height:1.8;color:var(--ink);
+  background:var(--paper);border:1px solid var(--line);border-left:3px solid var(--green);
+  border-radius:var(--r-md);padding:var(--sp-4) var(--sp-5);margin-bottom:var(--sp-4);
+}
+.dims{
+  display:grid;grid-template-columns:repeat(4,1fr);gap:var(--sp-3);
+  padding:var(--sp-3) var(--sp-4);background:var(--sunken);
+  border:1px solid var(--line);border-radius:var(--r-md);margin-bottom:var(--sp-4);
+}
+.dims .d .n{font-size:var(--fs-xs);color:var(--muted);margin-bottom:4px}
+.dims .d .bar{height:4px;background:var(--overlay-ink-1);border-radius:2px;overflow:hidden}
+.dims .d .bar i{display:block;height:100%;background:var(--green);border-radius:2px}
+.dims .d .v{font-size:var(--fs-xs);color:var(--ink);margin-top:3px;display:flex;justify-content:space-between}
+.dims .d .v .na{color:var(--quiet)}
+
+.mark{
+  background:var(--danger-soft);border:1px solid var(--line-danger);border-left:3px solid var(--danger);
+  border-radius:var(--r-md);padding:var(--sp-3) var(--sp-4);margin-bottom:var(--sp-3);
+}
+.mark .lb{display:flex;align-items:center;gap:8px;margin-bottom:6px}
+.mark .lb .t{font-size:var(--fs-base);font-weight:650;color:var(--danger-strong)}
+.mark .lb .s{font-size:var(--fs-xs);color:var(--quiet);font-family:var(--font-mono)}
+.mark p{font-family:var(--font-stem);font-size:var(--fs-md);line-height:1.75;color:var(--ink)}
+
+details.fold{border:1px solid var(--line);border-radius:var(--r-md);margin-bottom:var(--sp-2);background:var(--surface);overflow:hidden}
+details.fold summary{
+  padding:9px var(--sp-4);font-size:var(--fs-base);font-weight:600;cursor:pointer;
+  list-style:none;display:flex;align-items:center;justify-content:space-between;
+}
+details.fold summary::-webkit-details-marker{display:none}
+details.fold summary::after{content:"▾";color:var(--quiet);transition:transform var(--dur-1)}
+details.fold[open] summary::after{transform:rotate(180deg)}
+details.fold .fb{
+  padding:0 var(--sp-4) var(--sp-4);font-family:var(--font-stem);
+  font-size:var(--fs-md);line-height:1.8;color:var(--ink);
+}
+details.fold .fb p{margin-bottom:6px}
+details.fold .fb p:last-child{margin-bottom:0}
+
+.actbar{
+  padding:var(--sp-3) var(--sp-5);background:var(--sunken);border-top:1px solid var(--line);
+  display:flex;align-items:center;justify-content:space-between;gap:var(--sp-3);
+}
+.actbar .nav{font-size:var(--fs-xs);color:var(--quiet);display:flex;align-items:center;gap:5px}
+.actbar .nav kbd{
+  font-family:var(--font-mono);background:var(--surface);border:1px solid var(--line);
+  border-radius:var(--r-xs);padding:1px 5px;font-size:10.5px;color:var(--muted);
+}
+.actbar .btns{display:flex;gap:6px}
+.btn{
+  font:500 var(--fs-sm) var(--font-ui);padding:6px 12px;border:1px solid var(--line);
+  background:var(--surface);border-radius:var(--r-md);color:var(--ink);cursor:pointer;
+  transition:all var(--dur-1);
+}
+.btn:hover{border-color:var(--line-strong);color:var(--green-dark)}
+.btn.pri{background:var(--green);border-color:var(--green);color:var(--on-color);font-weight:600}
+.btn.pri:hover{background:var(--green-dark);color:var(--on-color)}
+
+/* ---------- 右 ---------- */
+.tabs{display:flex;border-bottom:1px solid var(--line);background:var(--paper)}
+.tabs button{
+  flex:1;padding:9px 0;font:500 var(--fs-sm) var(--font-ui);color:var(--muted);
+  background:transparent;border:0;border-bottom:2px solid transparent;cursor:pointer;
+}
+.tabs button.on{color:var(--green-dark);border-bottom-color:var(--green);font-weight:650}
+
+.sec{padding:var(--sp-4);border-bottom:1px solid var(--line)}
+.sec h3{
+  font-size:var(--fs-base);font-weight:650;margin-bottom:var(--sp-2);
+  display:flex;align-items:center;justify-content:space-between;gap:8px;
+}
+.sec h3 small{font-size:var(--fs-xs);color:var(--quiet);font-weight:400}
+.tagrow{display:flex;flex-wrap:wrap;gap:5px}
+.tag{font-size:var(--fs-xs);font-weight:600;padding:3px 8px;border-radius:var(--r-sm)}
+.tag.r{background:var(--danger-soft);color:var(--danger);border:1px solid var(--line-danger)}
+.tag.y{background:var(--warn-soft);color:var(--warn-strong);border:1px solid var(--line-warn)}
+.tag.b{background:var(--info-soft);color:var(--info);border:1px solid var(--line-info)}
+
+.quote{
+  font-family:var(--font-stem);font-size:var(--fs-md);line-height:1.75;color:var(--ink);
+  background:var(--sunken);border-radius:var(--r-md);padding:var(--sp-3) var(--sp-4);margin-top:var(--sp-3);
+}
+.note{font-size:var(--fs-xs);color:var(--quiet);line-height:1.7;display:flex;gap:6px;align-items:flex-start}
+.note b{color:var(--muted);font-weight:600;flex:none}
+
+.same{display:flex;align-items:center;gap:var(--sp-2);padding:8px 0;border-top:1px solid var(--line)}
+.same:first-of-type{border-top:0}
+.same .b{
+  width:28px;height:28px;border-radius:50%;flex:none;display:grid;place-items:center;
+  font:600 var(--fs-xs) var(--font-mono);
+  background:var(--danger-soft);color:var(--danger);border:1px solid var(--line-danger);
+}
+.same .b.ok{background:var(--success-soft);color:var(--success);border-color:var(--line-success)}
+.same .t{flex:1;min-width:0}
+.same .t .i{font-size:var(--fs-base);font-weight:600}
+.same .t .d{font-size:var(--fs-xs);color:var(--muted);margin-top:1px}
+.same .r{font-size:var(--fs-xs);color:var(--quiet);font-family:var(--font-mono)}
+
+.pad{background:var(--paper);border:1px solid var(--line);border-radius:var(--r-md);padding:var(--sp-3)}
+.pad .pttl{font-size:var(--fs-xs);color:var(--quiet);display:flex;justify-content:space-between;margin-bottom:6px}
+.pad .pttl kbd{font-family:var(--font-mono);font-size:10.5px;background:var(--sunken);border:1px solid var(--line);border-radius:var(--r-xs);padding:1px 5px;color:var(--muted)}
+.pad textarea{
+  width:100%;min-height:104px;border:0;background:transparent;resize:vertical;outline:none;
+  font-family:var(--font-stem);font-size:var(--fs-md);line-height:1.7;color:var(--ink);
+}
+.pad .pfoot{display:flex;justify-content:space-between;font-size:var(--fs-xs);color:var(--quiet);margin-top:6px}
+.pad .pfoot .sv{color:var(--success);font-weight:600}
+
+.copy{
+  margin:0 var(--sp-5) var(--sp-4);border:1px solid var(--line-strong);border-radius:var(--r-md);
+  background:var(--surface);overflow:hidden;box-shadow:var(--shadow-1);
+}
+.copy .ch{
+  padding:8px var(--sp-4);background:var(--green-soft);border-bottom:1px solid var(--line);
+  display:flex;align-items:center;gap:var(--sp-2);
+}
+.copy .ch .t{font-size:var(--fs-base);font-weight:650;color:var(--ink-on-soft);flex:1}
+.copy .ch .t small{font-weight:400;color:var(--muted);margin-left:6px;font-size:var(--fs-xs)}
+.copy .ch .x{
+  border:0;background:transparent;color:var(--muted);cursor:pointer;font-size:14px;
+  width:22px;height:22px;border-radius:var(--r-xs);
+}
+.copy .ch .x:hover{background:var(--overlay-ink-1);color:var(--ink)}
+.copy .modes{display:flex;gap:4px;padding:var(--sp-2) var(--sp-4) 0}
+.copy .modes button{
+  font:500 var(--fs-xs) var(--font-ui);color:var(--muted);padding:4px 10px;
+  border:1px solid var(--line);border-radius:var(--r-sm);background:var(--surface);cursor:pointer;
+}
+.copy .modes button.on{background:var(--green);border-color:var(--green);color:var(--on-color);font-weight:600}
+.copy pre{
+  margin:var(--sp-2) var(--sp-4);padding:var(--sp-3);background:var(--sunken);
+  border:1px solid var(--line);border-radius:var(--r-sm);
+  font:12px/1.7 var(--font-mono);color:var(--ink);white-space:pre-wrap;
+  max-height:220px;overflow:auto;
+}
+.copy pre .k{color:var(--green-dark);font-weight:600}
+.copy pre .dim{color:var(--quiet)}
+.copy .cf{
+  padding:0 var(--sp-4) var(--sp-3);display:flex;align-items:center;justify-content:space-between;gap:var(--sp-3);
+}
+.copy .cf .tip{font-size:var(--fs-xs);color:var(--quiet);display:flex;align-items:center;gap:5px}
+.copy .cf .tip b{color:var(--success);font-weight:600}
+
+.toast{
+  position:fixed;left:50%;bottom:32px;transform:translateX(-50%);
+  background:var(--ink);color:var(--on-color);font-size:var(--fs-sm);font-weight:500;
+  padding:9px 18px;border-radius:var(--r-full);box-shadow:var(--shadow-2);
+  display:flex;align-items:center;gap:7px;
+}
+.toast .dot{width:6px;height:6px;border-radius:50%;background:var(--success-bright,#34c07c)}
+
+.foot{text-align:center;font-size:var(--fs-xs);color:var(--quiet);margin-top:var(--sp-4)}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <!-- 顶部 -->
+  <div class="top">
+    <span class="ttl">批改报告</span>
+    <span class="meta">2026-09-02 · 8 题 · 高数 5 / 线代 3</span>
+    <span class="sp"></span>
+    <div class="seg">
+      <button class="on">推导演盘</button>
+      <button>长卷通览</button>
+    </div>
+    <button class="ib" title="六维证据">◈</button>
+    <button class="ib" title="刷新">↻</button>
+    <button class="ib" title="关闭">✕</button>
+  </div>
+
+  <div class="grid">
+
+    <!-- ===== 左 ===== -->
+    <aside class="col">
+      <div class="sum">
+        <div class="kick">本次训练</div>
+        <div class="big num">50<small>%</small></div>
+        <div class="sub">正确率 · 4 对 / 1 半 / 3 错</div>
+        <div class="pair">
+          <div><div class="k">真掌握</div><div class="v num ok">3</div></div>
+          <div><div class="k">路径固化</div><div class="v num bad">2</div></div>
+          <div><div class="k">总耗时</div><div class="v num">22′38″</div></div>
+          <div><div class="k">均题</div><div class="v num">2′50″</div></div>
+        </div>
+      </div>
+
+      <div class="hd">
+        <h2>题目索引</h2>
+        <span class="hint">J / K</span>
+      </div>
+      <div style="padding:8px 16px 0;display:flex;gap:4px">
+        <div class="filters" style="flex:1">
+          <button class="on">待攻坚 4</button>
+          <button>全部 8</button>
+        </div>
+      </div>
+      <div class="plist">
+        <div class="pitem err on">
+          <div class="q num">#7076</div>
+          <div class="c">一元积分 · 含根式·根号加比根号减</div>
+          <div class="t num"><b>0′53″</b><span class="m fix">115″→53″ 仍错</span></div>
+        </div>
+        <div class="pitem err">
+          <div class="q num">#10590</div>
+          <div class="c">多元微分 · 复合函数求导</div>
+          <div class="t num"><b>0′57″</b><span class="m fix">677″→57″ 仍错</span></div>
+        </div>
+        <div class="pitem err">
+          <div class="q num">#1982</div>
+          <div class="c">一元微分 · 泰勒多项式</div>
+          <div class="t num"><b>6′12″</b><span class="m">第 4 次 · 1/4</span></div>
+        </div>
+        <div class="pitem">
+          <div class="q num">#1052</div>
+          <div class="c">一元积分 · 变限积分的定积分</div>
+          <div class="t num"><b>10′56″</b><span class="m">1257″→656″</span></div>
+        </div>
+        <div class="pitem">
+          <div class="q num">#148</div>
+          <div class="c">线代 · 矩阵·抽象逆相关</div>
+          <div class="t num"><b>2′12″</b><span class="m good">达标</span></div>
+        </div>
+        <div class="pitem">
+          <div class="q num">#10578</div>
+          <div class="c">一元积分 · 分部积分</div>
+          <div class="t num"><b>0′12″</b><span class="m good">真掌握</span></div>
+        </div>
+        <div class="pitem">
+          <div class="q num">#7090</div>
+          <div class="c">线代 · 线性方程组·含参</div>
+          <div class="t num"><b>3′11″</b><span class="m good">真掌握</span></div>
+        </div>
+        <div class="pitem">
+          <div class="q num">#10587</div>
+          <div class="c">一元积分 · 换元法</div>
+          <div class="t num"><b>0′45″</b><span class="m good">真掌握</span></div>
+        </div>
+      </div>
+    </aside>
+
+    <!-- ===== 中 ===== -->
+    <main class="col">
+      <div class="qhd">
+        <div class="path"><span class="id">#7076</span><span>高等数学 / 一元函数积分学 / 含根式 · 根号加比根号减</span></div>
+        <div class="qtitle">第 1 题 · 含根式分式积分</div>
+        <div class="chips">
+          <span class="chip err">错</span>
+          <span class="chip fix">⚠ 错误路径固化</span>
+          <span class="chip mute num">本次 0′53″ · 首次 1′55″ · 预算 4′42″</span>
+          <span class="chip mute">难度 2</span>
+        </div>
+      </div>
+
+      <div class="qbd">
+        <div class="stembox">求 $\displaystyle\int_0^1 \frac{\sqrt{x+1}}{\sqrt{x+1}+\sqrt{1-x}}\,\mathrm{d}x$.</div>
+
+        <div class="dims">
+          <div class="d"><div class="n">方法调用</div><div class="bar"><i style="width:34%"></i></div><div class="v num"><span>3.4</span><span class="na">/10</span></div></div>
+          <div class="d"><div class="n">计算</div><div class="bar"><i style="width:48%"></i></div><div class="v num"><span>4.8</span><span class="na">/10</span></div></div>
+          <div class="d"><div class="n">策略洞察</div><div class="bar"><i style="width:55%"></i></div><div class="v num"><span>5.5</span><span class="na">/10</span></div></div>
+          <div class="d"><div class="n">速度</div><div class="bar"><i style="width:80%"></i></div><div class="v num"><span>8.0</span><span class="na">/10</span></div></div>
+        </div>
+
+        <!-- 最早断点：一句话，≤100 字 -->
+        <div class="mark">
+          <div class="lb"><span class="t">最早断点</span><span class="s">codex</span></div>
+          <p class="stem">
+            落笔即设 $x=\sin^2 t$。但分子分母根号内都是<strong>整式</strong>，
+            正确入口是整式换元 $t=\sqrt{x+1}$ 后走对称性，不是三角换元。
+            复习耗时从 $1'55''$ 降到 $0'53''$ 却照错——缩短的是路径熟练度，不是正确率。
+          </p>
+        </div>
+
+        <!-- 折叠：默认收起，避免信息冗余 -->
+        <details class="fold">
+          <summary>标准解法</summary>
+          <div class="fb">
+            <p>令 $t^2=x+1$，则 $\mathrm{d}x=2t\,\mathrm{d}t$。</p>
+            <p>由 $f(x)+f(1-x)=1$ 直接得 $I=\dfrac12$，无需展开积分。</p>
+          </div>
+        </details>
+
+        <details class="fold">
+          <summary>明日动作</summary>
+          <div class="fb">
+            <p>动笔 30 秒内口述：“根号内是整式 → 禁止三角换元 → 整式换元 → 查对称性”。</p>
+          </div>
+        </details>
+        <!-- 快捷复制面板：一键生成可粘贴给 AI 的追问上下文 -->
+        <div class="copy">
+          <div class="ch">
+            <span class="t">复制给 AI <small>带上下文，我会持续追问</small></span>
+            <button class="x" title="收起">✕</button>
+          </div>
+          <div class="modes">
+            <button class="on">请教 AI（推荐）</button>
+            <button>仅题目</button>
+            <button>完整档案</button>
+          </div>
+<pre><span class="k">【刷吧 · 求详解】</span>#7076
+考点：高等数学 / 一元函数积分学 / 含根式 · 根号加比根号减
+难度：2 · 本次 0′53″ · 首次 1′55″
+
+<span class="k">【题目】</span>
+求 $\int_0^1 \frac{\sqrt{x+1}}{\sqrt{x+1}+\sqrt{1-x}}\,\mathrm{d}x$.
+
+<span class="k">【我的作答】</span>
+判定：错（非计算失误，是入口误判）
+已批改标签：瞄准失误 · 复习复发（第二次栽在同一入口）
+
+<span class="k">【我已看过的解法】</span> <span class="dim">← 这段已看过，请不要重复讲</span>
+令 $t^2=x+1$ 整体换元；或用 $f(x)+f(1-x)=1$ 得 $I=\tfrac12$。
+
+<span class="k">【我还卡在哪】</span>
+我知道答案怎么来的，但考场上看到这类结构仍然先想到三角换元。
+我需要的是「识别规则」，不是计算过程。
+
+<span class="k">【请你这样帮我】</span>
+1. 讲清认知根源：为什么根号内是整式时三角换元是错路（讲原理，不列步骤）
+2. 给一条可背诵的识别规则：看到什么特征 → 该做什么 / 禁止做什么
+3. 举 2 个只有换元入口不同、其余几乎一样的对照题让我练眼
+4. 我会在本题上持续追问，请保留上述全部上下文
+</pre>
+          <div class="cf">
+            <span class="tip">⧉ 已写入剪贴板 · 直接粘贴给 AI 即可</span>
+            <button class="btn pri">复制</button>
+          </div>
+        </div>
+      </div>
+
+      <div class="actbar">
+        <span class="nav"><kbd>J</kbd> 下一题 <kbd>K</kbd> 上一题</span>
+        <span class="btns">
+          <button class="btn">⧉ 复制给 AI</button>
+          <button class="btn">加练同考点</button>
+          <button class="btn">7 天后抽检</button>
+          <button class="btn pri">排入明日复习</button>
+        </span>
+      </div>
+    </main>
+
+    <!-- ===== 右 ===== -->
+    <aside class="col">
+      <div class="hd"><h2>本题审计</h2><span class="hint">audit</span></div>
+      <div class="tabs">
+        <button class="on">旁注</button>
+        <button>同源</button>
+        <button>便笺</button>
+      </div>
+
+      <div class="sec">
+        <h3>错误标签 <small>codex</small></h3>
+        <div class="tagrow">
+          <span class="tag r">🔴 瞄准失误</span>
+          <span class="tag y">🟡 复习复发</span>
+        </div>
+        <div class="quote stem">入口误判，非计算错误。换元路径选择是唯一断点。</div>
+      </div>
+
+      <div class="sec">
+        <h3>分项得分</h3>
+        <p class="note"><b>—</b><span>后端当前只记录 verdict / earliestError / betterSolution，无分项得分字段。补齐后可在此展示。</span></p>
+      </div>
+
+      <div class="sec" style="border-bottom:0">
+        <h3>同考点历史 <small>含根式</small></h3>
+        <div class="same">
+          <div class="b">4</div>
+          <div class="t"><div class="i num">#7076</div><div class="d">本次 · 复习复发</div></div>
+          <div class="r">2/4</div>
+        </div>
+        <div class="same">
+          <div class="b ok">1</div>
+          <div class="t"><div class="i num">#10578</div><div class="d">分部积分 · 真掌握</div></div>
+          <div class="r">1/1</div>
+        </div>
+        <div class="same">
+          <div class="b">4</div>
+          <div class="t"><div class="i num">#1982</div><div class="d">泰勒 · 同入口问题</div></div>
+          <div class="r">1/4</div>
+        </div>
+      </div>
+    </aside>
+  </div>
+
+  <p class="foot">视觉终稿 · 全部颜色引用 tokens.css（零硬编码 hex）· 支持 default / warm 双主题</p>
+</div>
+</body>
+</html>

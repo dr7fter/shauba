@@ -1,0 +1,491 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>方案 D · 现状改版（保留三栏框架）</title>
+<style>
+:root{
+  --bg:#f6f4ef; --paper:#fdfcf8; --card:#ffffff; --line:#e8e3d8; --line-soft:#f0ece2;
+  --t1:#1f1d18; --t2:#5b574b; --t3:#8a8474;
+  --ink:#5a3713;
+  --red:#a8351d; --red-bg:#fbe9e3; --red-soft:#fbe9e3;
+  --ok:#2e7d52; --ok-bg:#eef7f1;
+  --warn:#a76a13; --warn-bg:#fbf0d8;
+  --accent:#3d4a37;
+  --radius:10px;
+}
+*{box-sizing:border-box;margin:0;padding:0}
+html,body{background:var(--bg);color:var(--t1);font-family:"Songti SC","STSong","SimSun",Georgia,serif;font-size:14px;line-height:1.62;-webkit-font-smoothing:antialiased}
+body{padding:18px}
+.num{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI","PingFang SC",sans-serif;font-variant-numeric:tabular-nums}
+.mono{font-family:"SF Mono","JetBrains Mono","Consolas",monospace;font-variant-numeric:tabular-nums}
+.wrap{max-width:1320px;margin:0 auto}
+
+/* ---------- top bar ---------- */
+.topbar{display:flex;align-items:center;justify-content:space-between;background:var(--paper);border:1px solid var(--line);border-radius:10px;padding:11px 18px;margin-bottom:12px}
+.brand{font-family:"Songti SC",serif;font-size:14px;font-weight:600;letter-spacing:.04em;color:var(--t1)}
+.brand b{color:var(--ink);font-weight:600;margin-right:8px}
+.brand .meta{color:var(--t3);font-size:12.5px;margin-left:10px;font-weight:400}
+.tabs{display:flex;gap:6px;align-items:center}
+.tab{font-size:12.5px;color:var(--t2);padding:5px 12px;border:1px solid var(--line);border-radius:6px;background:#fff;cursor:pointer;font-family:inherit}
+.tab.active{background:var(--ink);color:#fff;border-color:var(--ink)}
+.right{display:flex;gap:6px;align-items:center}
+.iconbtn{width:30px;height:30px;border:1px solid var(--line);background:#fff;border-radius:6px;display:inline-flex;align-items:center;justify-content:center;cursor:pointer;font-size:13px;color:var(--t2)}
+.iconbtn:hover{color:var(--ink)}
+
+/* ---------- 3-col grid ---------- */
+.grid{display:grid;grid-template-columns:264px 1fr 312px;gap:12px;align-items:start}
+.col{background:var(--card);border:1px solid var(--line);border-radius:var(--radius);overflow:hidden}
+.colhd{padding:11px 14px;border-bottom:1px solid var(--line-soft);background:#fbf9f2;display:flex;align-items:center;justify-content:space-between}
+.colhd h2{font-family:"Songti SC",serif;font-size:14px;font-weight:600;letter-spacing:.02em}
+.colhd .hint{font-size:11.5px;color:var(--t3)}
+.colbd{padding:12px 14px}
+
+/* ---------- left: 成绩卡 ---------- */
+.scorecard{padding:14px 14px 10px;background:linear-gradient(180deg,#fbf9f2,#fff 75%);border-bottom:1px solid var(--line-soft)}
+.scorekicker{font-size:11.5px;color:var(--t3);letter-spacing:.06em;display:flex;align-items:center;gap:6px}
+.scorekicker::before{content:"";width:6px;height:6px;border-radius:50%;background:var(--ink);display:inline-block}
+.scorenum{font-family:"Songti SC",serif;font-size:38px;font-weight:700;line-height:1;margin:7px 0 2px;letter-spacing:-.01em}
+.scorenum small{font-size:14px;color:var(--t3);font-weight:400;margin-left:3px}
+.scoreline{font-size:12px;color:var(--t2);margin-bottom:10px}
+.kastrow{display:inline-flex;align-items:center;gap:6px;font-size:11.5px;color:var(--t3);padding:3px 8px;border:1px solid var(--line);border-radius:20px;background:#fff;margin-bottom:11px}
+.kastrow b{color:var(--ok);font-weight:600}
+.miniStats{display:grid;grid-template-columns:1fr 1fr;gap:6px 10px;padding-top:10px;border-top:1px solid var(--line-soft)}
+.miniStats .m{font-size:12px}
+.miniStats .m .k{color:var(--t3);font-size:11px}
+.miniStats .m .v{font-size:14px;font-weight:600;margin-top:1px}
+.miniStats .m .v.bad{color:var(--red)}
+.miniStats .m .v.ok{color:var(--ok)}
+
+/* ---------- left: 题目索引 ---------- */
+.probhd{padding:11px 14px;border-bottom:1px solid var(--line-soft);background:#fbf9f2;display:flex;align-items:center;justify-content:space-between}
+.probhd .title{font-family:"Songti SC",serif;font-size:14px;font-weight:600;display:flex;align-items:center;gap:8px}
+.probhd .title small{font-size:11.5px;color:var(--t3);font-family:"SF Mono",monospace;letter-spacing:.04em;font-weight:400}
+.pfilter{display:flex;gap:4px}
+.pfilter .f{font-size:11.5px;color:var(--t2);padding:3px 8px;border:1px solid var(--line);border-radius:5px;background:#fff;cursor:pointer;font-family:inherit}
+.pfilter .f.active{background:var(--ink);color:#fff;border-color:var(--ink)}
+.problist{padding:6px 0}
+.prob{display:grid;grid-template-columns:30px 1fr 56px;gap:8px;align-items:center;padding:7px 14px;cursor:pointer;border-left:2px solid transparent}
+.prob:hover{background:#fbf9f2}
+.prob.active{background:#fdf6e8;border-left-color:var(--ink)}
+.prob.is-bad.active{background:#fbe9e3;border-left-color:var(--red)}
+.prob .ord{font-family:"Songti SC",serif;font-size:13px;color:var(--t3);text-align:center}
+.prob.active .ord{color:var(--ink)}
+.prob .meta{min-width:0}
+.prob .qid{font-size:12.5px;font-weight:600}
+.prob .qcat{font-size:11.5px;color:var(--t2);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.prob .qtime{font-size:11.5px;color:var(--t3);text-align:right;line-height:1.3}
+.prob .qtime b{color:var(--t1);font-weight:600;font-size:12px;display:block}
+.prob .qtime .cm{font-size:10.5px}
+.prob .qtime .cm.fix{color:var(--red);font-weight:600}
+.prob .qtime .cm.good{color:var(--ok);font-weight:600}
+
+/* ---------- middle: 题目详情 ---------- */
+.qhd{padding:14px 18px;border-bottom:1px solid var(--line-soft);background:#fdfcf8}
+.qhd .kicker{font-size:11.5px;color:var(--t3);letter-spacing:.04em;display:flex;align-items:center;gap:10px;margin-bottom:5px}
+.qhd .kicker .pid{font-family:"SF Mono",monospace;color:var(--ink);font-weight:600}
+.qhd .kicker .cat{color:var(--t2)}
+.qtitle{font-family:"Songti SC",serif;font-size:19px;font-weight:600;line-height:1.4;margin-bottom:8px;letter-spacing:-.01em}
+.qmeta{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
+.tag{font-size:11.5px;padding:2px 8px;border-radius:4px;font-weight:600;letter-spacing:.01em;display:inline-flex;align-items:center;gap:4px}
+.tag.bad{background:var(--red-bg);color:var(--red)}
+.tag.warn{background:var(--warn-bg);color:var(--warn)}
+.tag.ok{background:var(--ok-bg);color:var(--ok)}
+.tag.plain{background:#f0ece2;color:var(--t2)}
+.tag.fix{background:#15181d;color:#ff8f7a;border:1px solid #2a2a2a}
+.qbody{padding:18px 20px}
+.stem{font-family:"Songti SC",serif;font-size:15.5px;line-height:1.85;color:var(--t1);background:#fdfcf8;padding:14px 16px;border-radius:8px;border:1px solid var(--line-soft);border-left:3px solid var(--ink);margin-bottom:14px}
+
+/* 真实维度小条 */
+.dimstrip{display:grid;grid-template-columns:repeat(4,1fr);gap:8px 14px;padding:10px 12px;background:#fbf9f2;border:1px solid var(--line-soft);border-radius:8px;margin-bottom:14px}
+.dimstrip .d{font-size:12px}
+.dimstrip .d .n{color:var(--t3);font-size:11px;margin-bottom:3px}
+.dimstrip .d .bar{height:4px;background:#ece7d8;border-radius:2px;overflow:hidden}
+.dimstrip .d .bar i{display:block;height:100%;background:var(--accent);border-radius:2px}
+.dimstrip .d .v{font-size:11.5px;color:var(--t1);margin-top:3px;display:flex;justify-content:space-between}
+.dimstrip .d .v .na{color:var(--t3);font-size:10.5px}
+
+/* 朱批 */
+.redmark{position:relative;background:#fff;border:1px solid #e7c8b5;border-left:3px solid var(--red);border-radius:8px;padding:12px 14px;margin-bottom:12px}
+.redmark::before{content:"";position:absolute;left:6px;top:0;bottom:0;width:1px;background:repeating-linear-gradient(to bottom,var(--red) 0 4px,transparent 4px 8px);opacity:.18}
+.redmark .lbl{display:flex;align-items:center;gap:8px;margin-bottom:8px}
+.redmark .lbl .ttl{font-family:"Songti SC",serif;font-weight:600;font-size:13px;color:var(--red)}
+.redmark .lbl .src{font-size:11.5px;color:var(--t3)}
+.redmark p{font-family:"Songti SC",serif;font-size:14px;line-height:1.78;color:#3a2418}
+
+/* 标准解法（折叠） */
+.fold{background:#fff;border:1px solid var(--line);border-radius:8px;margin-bottom:12px;overflow:hidden}
+.fold summary{padding:10px 14px;font-size:13.5px;font-weight:600;cursor:pointer;display:flex;align-items:center;justify-content:space-between;list-style:none}
+.fold summary::-webkit-details-marker{display:none}
+.fold summary::after{content:"▾";color:var(--t3);transition:transform .2s}
+.fold[open] summary::after{transform:rotate(180deg)}
+.fold .fb{padding:0 14px 14px;font-family:"Songti SC",serif;font-size:14px;line-height:1.78;color:var(--t1)}
+.fold .fb p{margin-bottom:8px}
+
+/* 底部行动条 */
+.footact{padding:12px 18px;background:#fbf9f2;border-top:1px solid var(--line-soft);display:flex;gap:8px;align-items:center;justify-content:space-between}
+.footact .btns{display:flex;gap:6px}
+.btn{font-size:12.5px;padding:6px 12px;border:1px solid var(--line);background:#fff;border-radius:6px;color:var(--t1);cursor:pointer;font-family:inherit;display:inline-flex;align-items:center;gap:5px}
+.btn:hover{border-color:var(--ink);color:var(--ink)}
+.btn.primary{background:var(--ink);border-color:var(--ink);color:#fff}
+.btn.primary:hover{color:#fff;background:#3a2a0e}
+.footact .pgnav{display:flex;gap:4px;align-items:center;font-size:12px;color:var(--t2)}
+.footact .pgnav kbd{font-family:"SF Mono",monospace;background:#fff;border:1px solid var(--line);padding:1px 5px;border-radius:3px;font-size:10.5px}
+
+/* ---------- right: 审计 ---------- */
+.audhd{padding:11px 14px;border-bottom:1px solid var(--line-soft);background:#fbf9f2}
+.tabs2{display:flex;gap:0;border-bottom:1px solid var(--line-soft);background:#fdfcf8}
+.tabs2 button{flex:1;padding:9px 0;font-size:12.5px;color:var(--t2);background:transparent;border:none;cursor:pointer;font-family:inherit;border-bottom:2px solid transparent}
+.tabs2 button.active{color:var(--ink);border-bottom-color:var(--ink);font-weight:600}
+
+.audsec{padding:14px}
+.audsec h3{font-family:"Songti SC",serif;font-size:13.5px;font-weight:600;margin-bottom:10px;display:flex;align-items:center;justify-content:space-between}
+.audsec h3 small{font-size:11px;color:var(--t3);font-weight:400;font-family:"Songti SC",serif}
+
+.audempty{padding:18px 12px;background:#fbf9f2;border:1px dashed var(--line);border-radius:8px;font-size:12.5px;color:var(--t2);line-height:1.7;text-align:center}
+.audempty b{color:var(--t1);font-weight:600}
+
+.errorchips{display:flex;flex-wrap:wrap;gap:5px;margin-bottom:10px}
+.chip{font-size:11.5px;padding:3px 8px;background:#fbe9e3;color:var(--red);border-radius:4px;font-weight:500}
+.chip.weak{background:#fdf0e1;color:var(--warn)}
+
+.peerrow{display:flex;align-items:center;gap:8px;padding:8px 0;border-top:1px solid var(--line-soft);font-size:12.5px}
+.peerrow:first-of-type{border-top:none}
+.peerrow .b{width:30px;height:30px;border-radius:50%;background:var(--red-bg);color:var(--red);display:flex;align-items:center;justify-content:center;font-size:11px;font-weight:600;flex:none}
+.peerrow .b.ok{background:var(--ok-bg);color:var(--ok)}
+.peerrow .t{flex:1;min-width:0}
+.peerrow .t .id{font-weight:600}
+.peerrow .t .desc{color:var(--t2);font-size:11.5px;margin-top:1px}
+.peerrow .cnt{font-size:11px;color:var(--t3)}
+
+.notepad{background:#fdfcf8;border:1px solid var(--line);border-radius:8px;padding:10px 12px}
+.notepad .ttl{font-size:12px;color:var(--t3);display:flex;align-items:center;justify-content:space-between;margin-bottom:6px}
+.notepad textarea{width:100%;min-height:90px;border:none;background:transparent;resize:vertical;font-family:"Songti SC",serif;font-size:13.5px;line-height:1.7;color:var(--t1);outline:none}
+.notepad .meta{display:flex;justify-content:space-between;align-items:center;margin-top:6px;font-size:11.5px;color:var(--t3)}
+.notepad .meta .save{color:var(--ok);font-weight:600;display:none}
+.notepad .meta .save.show{display:inline}
+
+.kdb{display:inline-block;background:#fff;border:1px solid var(--line);border-radius:3px;padding:1px 5px;font-family:"SF Mono",monospace;font-size:10.5px;color:var(--t2)}
+
+.foot{font-size:11.5px;color:var(--t3);text-align:center;margin-top:14px}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <!-- topbar -->
+  <div class="topbar">
+    <div>
+      <span class="brand"><b>刷吧</b>数一全真诊断</span>
+      <span class="meta">SSB-BATCH-20260902-1380 · 2026-09-02 · 8 题 · 高数 5 / 线代 3</span>
+    </div>
+    <div class="tabs">
+      <button class="tab active">步骤推导演盘</button>
+      <button class="tab">长卷通览</button>
+    </div>
+    <div class="right">
+      <button class="iconbtn" title="六维证据">六维</button>
+      <button class="iconbtn" title="刷新">↻</button>
+      <button class="iconbtn" title="关闭">✕</button>
+    </div>
+  </div>
+
+  <div class="grid">
+
+    <!-- ============ LEFT ============ -->
+    <aside class="col">
+      <div class="scorecard">
+        <div class="scorekicker">本次训练 · 8 题</div>
+        <div class="scorenum num">50<small>%</small></div>
+        <div class="scoreline">正确率（4 / 8）· <span class="mono" style="color:var(--t3)">均题 2′50″</span></div>
+        <div class="kastrow">证据覆盖 <b>6 / 8</b> 题具备维度数据</div>
+        <div class="miniStats">
+          <div class="m"><div class="k">对 / 半 / 错</div><div class="v num">4 / 1 / 3</div></div>
+          <div class="m"><div class="k">总耗时</div><div class="v num">22′38″</div></div>
+          <div class="m"><div class="k">真掌握</div><div class="v num ok">3 题</div></div>
+          <div class="m"><div class="k">错误路径固化</div><div class="v num bad">2 题</div></div>
+        </div>
+      </div>
+
+      <div class="probhd">
+        <span class="title">题目索引<small>J / K</small></span>
+        <div class="pfilter">
+          <button class="f active">待攻坚 4</button>
+          <button class="f">全部 8</button>
+        </div>
+      </div>
+      <div class="problist">
+
+        <div class="prob is-bad active">
+          <div class="ord">§ 1</div>
+          <div class="meta">
+            <div class="qid num">#7076</div>
+            <div class="qcat">一元积分 · 含根式·根号加比根号减</div>
+          </div>
+          <div class="qtime num">
+            <b>0′53″</b>
+            <span class="cm fix">115″→53″ 仍错</span>
+          </div>
+        </div>
+
+        <div class="prob is-bad">
+          <div class="ord">§ 2</div>
+          <div class="meta">
+            <div class="qid num">#10590</div>
+            <div class="qcat">多元微分 · 复合函数求导</div>
+          </div>
+          <div class="qtime num">
+            <b>0′57″</b>
+            <span class="cm fix">677″→57″ 仍错</span>
+          </div>
+        </div>
+
+        <div class="prob is-bad">
+          <div class="ord">§ 3</div>
+          <div class="meta">
+            <div class="qid num">#1982</div>
+            <div class="qcat">一元微分 · 泰勒多项式</div>
+          </div>
+          <div class="qtime num">
+            <b>6′12″</b>
+            <span class="cm">第 4 次 · 1/4</span>
+          </div>
+        </div>
+
+        <div class="prob">
+          <div class="ord">§ 4</div>
+          <div class="meta">
+            <div class="qid num">#1052</div>
+            <div class="qcat">一元积分 · 变限积分的定积分</div>
+          </div>
+          <div class="qtime num">
+            <b>10′56″</b>
+            <span class="cm">1257″→656″ 假掌握</span>
+          </div>
+        </div>
+
+        <div class="prob">
+          <div class="ord">§ 5</div>
+          <div class="meta">
+            <div class="qid num">#148</div>
+            <div class="qcat">线代 · 矩阵·抽象逆相关</div>
+          </div>
+          <div class="qtime num">
+            <b>2′12″</b>
+            <span class="cm good">140″ 内达标</span>
+          </div>
+        </div>
+
+        <div class="prob">
+          <div class="ord">§ 6</div>
+          <div class="meta">
+            <div class="qid num">#10578</div>
+            <div class="qcat">一元积分 · 分部积分</div>
+          </div>
+          <div class="qtime num">
+            <b>0′12″</b>
+            <span class="cm good">105″→12″ 真掌握</span>
+          </div>
+        </div>
+
+        <div class="prob">
+          <div class="ord">§ 7</div>
+          <div class="meta">
+            <div class="qid num">#7090</div>
+            <div class="qcat">线代 · 线性方程组·含参</div>
+          </div>
+          <div class="qtime num">
+            <b>3′11″</b>
+            <span class="cm good">723″→191″ 真掌握</span>
+          </div>
+        </div>
+
+        <div class="prob">
+          <div class="ord">§ 8</div>
+          <div class="meta">
+            <div class="qid num">#10587</div>
+            <div class="qcat">一元积分 · 换元法</div>
+          </div>
+          <div class="qtime num">
+            <b>0′45″</b>
+            <span class="cm good">808″→45″ 真掌握</span>
+          </div>
+        </div>
+
+      </div>
+    </aside>
+
+    <!-- ============ MIDDLE ============ -->
+    <main class="col">
+      <div class="qhd">
+        <div class="kicker">
+          <span class="pid">#7076</span>
+          <span class="cat">高等数学 / 一元函数积分学 / 含根式 · 根号加比根号减</span>
+        </div>
+        <div class="qtitle">第 1 题 · 含根式分式积分</div>
+        <div class="qmeta">
+          <span class="tag bad">错</span>
+          <span class="tag fix">⚠ 错误路径固化</span>
+          <span class="tag plain">difficulty 2</span>
+          <span class="tag plain num">本次 0′53″ · 首次 1′55″ · 预算 4′42″</span>
+        </div>
+      </div>
+
+      <div class="qbody">
+        <!-- 真实题干 -->
+        <div class="stem">
+          求 ∫<sub>0</sub><sup>1</sup> √(x+1) / (√(x+1) + √(1−x)) dx.
+        </div>
+
+        <!-- 真实维度（来自 codex_inbox.dimensions） -->
+        <div class="dimstrip">
+          <div class="d">
+            <div class="n">方法调用</div>
+            <div class="bar"><i style="width:34%"></i></div>
+            <div class="v num"><span>3.4</span><span class="na">/ 10</span></div>
+          </div>
+          <div class="d">
+            <div class="n">计算</div>
+            <div class="bar"><i style="width:48%"></i></div>
+            <div class="v num"><span>4.8</span><span class="na">/ 10</span></div>
+          </div>
+          <div class="d">
+            <div class="n">策略洞察</div>
+            <div class="bar"><i style="width:55%"></i></div>
+            <div class="v num"><span>5.5</span><span class="na">/ 10</span></div>
+          </div>
+          <div class="d">
+            <div class="n">速度</div>
+            <div class="bar"><i style="width:80%"></i></div>
+            <div class="v num"><span>8.0</span><span class="na">/ 10</span></div>
+          </div>
+        </div>
+
+        <!-- earliestError：来自 codex 真实输出（不是模板） -->
+        <div class="redmark">
+          <div class="lbl">
+            <span class="ttl">⚠ 最早断点</span>
+            <span class="src">codex · 批改输出</span>
+          </div>
+          <p>
+            落笔即设 <i>x = sin²t</i>，把 <i>√(x+1) + √(1−x)</i> 化为三角和式。但该结构分子分母的根号内
+            都是<strong>整式</strong>（含 1 是偏移，不是根号内分式），正确入口是<strong>整式换元</strong>
+            t = √(x+1) 化简后再做对称性，而非三角换元。你在 <i>1′55″ → 0′53″</i> 的复习中重复了同一条路径——
+            <strong>耗时缩短带来的是"路径熟练度"，不是"路径正确性"</strong>。
+          </p>
+        </div>
+
+        <!-- betterSolution：来自 codex 真实输出 -->
+        <details class="fold" open>
+          <summary>标准解法（codex 推荐路径）</summary>
+          <div class="fb">
+            <p><strong>第 1 步 · 入口识别：</strong>分子分母都是 <i>√</i>(整式)，未出现分式嵌套 → 排除三角换元 → 用整式换元 t = √(x+1)。</p>
+            <p><strong>第 2 步 · 化简：</strong>令 t² = x+1，则 dx = 2t dt，原式化为 ∫ t / (t + √(2−t²)) · 2t dt。</p>
+            <p><strong>第 3 步 · 对称性秒杀：</strong>分子含 t² 时与分母 √(2−t²) 不对称，<strong>改设</strong> t = √((1+x)/2)·√2，把区间 [0,1] 映射到 [1,√2]，配合 x ↔ 1−x 对称可省一半运算。</p>
+            <p><strong>第 4 步 · 出口：</strong>由 I = ∫₀¹ f(x)dx 且 f(x) + f(1−x) = 1 直接得 I = 1/2。</p>
+          </div>
+        </details>
+
+        <!-- advice：来自 codex 真实输出 -->
+        <details class="fold">
+          <summary>考场专项抢救指令</summary>
+          <div class="fb">
+            <p>本类题的<strong>否定式规则</strong>："看到根号内为<strong>整式</strong>（无论含不含 1、a、x）→ 禁止直接上三角换元 → 先做整式换元 t = √(整式)，再判断能否走对称性"。</p>
+            <p>明日复习动笔 30 秒内先口述："这是不是整式？→ 是 → 整式换元 → 检查对称性"。</p>
+          </div>
+        </details>
+      </div>
+
+      <div class="footact">
+        <div class="pgnav">
+          <kbd>J</kbd> 下一题 · <kbd>K</kbd> 上一题
+        </div>
+        <div class="btns">
+          <button class="btn">加练同考点</button>
+          <button class="btn">7 天后抽检</button>
+          <button class="btn">收藏</button>
+          <button class="btn primary">排入明日复习</button>
+        </div>
+      </div>
+    </main>
+
+    <!-- ============ RIGHT ============ -->
+    <aside class="col">
+      <div class="audhd">
+        <div class="colhd" style="padding:0;background:transparent;border:none">
+          <h2>本题审计</h2>
+          <span class="hint mono">audit</span>
+        </div>
+      </div>
+
+      <div class="tabs2">
+        <button class="active">断点旁注</button>
+        <button>同源错题</button>
+        <button>自省便笺</button>
+      </div>
+
+      <div class="audsec">
+        <h3>错误标签 <small>来自 codex 标签</small></h3>
+        <div class="errorchips">
+          <span class="chip">方法入口误判</span>
+          <span class="chip">复习复发</span>
+          <span class="weak">换元路径选择弱</span>
+        </div>
+
+        <h3 style="margin-top:16px">本题扣分明细 <small>基于已采集的 + / -</small></h3>
+        <div class="audempty">
+          <b>后端未提供分项得分</b><br>
+          当前仅记录 verdict / earliestError / betterSolution。<br>
+          评分细则需补建 <span class="kdb">attempts.score_breakdown</span> 字段。
+        </div>
+
+        <h3 style="margin-top:16px">同考点历史作答 <small>含根式 / 根号加比根号减</small></h3>
+        <div class="peerrow">
+          <div class="b">#7076</div>
+          <div class="t">
+            <div class="id num">本次 · 0′53″</div>
+            <div class="desc">复习复发 · 固化</div>
+          </div>
+          <div class="cnt">2 / 4 错</div>
+        </div>
+        <div class="peerrow">
+          <div class="b ok">#10578</div>
+          <div class="t">
+            <div class="id num">上次 · 0′12″</div>
+            <div class="desc">分部积分 · 真掌握</div>
+          </div>
+          <div class="cnt">1 / 1 对</div>
+        </div>
+        <div class="peerrow">
+          <div class="b">#1982</div>
+          <div class="t">
+            <div class="id num">4 次 · 1 对</div>
+            <div class="desc">泰勒 · 同样换元入口问题</div>
+          </div>
+          <div class="cnt">1 / 4 对</div>
+        </div>
+      </div>
+
+      <div class="audsec" style="border-top:1px solid var(--line-soft);background:#fdfcf8">
+        <h3>考场亲笔自省 <small>支持 LaTeX</small></h3>
+        <div class="notepad">
+          <div class="ttl">
+            <span>✎ 便笺（自动按题号归档）</span>
+            <span class="mono kdb">⌘+S</span>
+          </div>
+          <textarea placeholder="写下你考场上的真实反应：识别到了什么 → 卡在哪 → 下次怎么拦。&#10;&#10;明日复习前先读这条。"></textarea>
+          <div class="meta">
+            <span>已存到题本 · 2026-09-02 23:51</span>
+            <span class="save show">已自动同步到 codex-inbox</span>
+          </div>
+        </div>
+      </div>
+    </aside>
+
+  </div>
+
+  <p class="foot">方案 D · 保留你接受的三栏框架 + 羊皮纸 serif，删假数据，补真实维度与时间对比</p>
+</div>
+</body>
+</html>

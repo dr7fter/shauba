@@ -16,8 +16,16 @@ if (count(combined, /rgba?\(/g) > 0) fails.push('组件层存在硬编码 rgba')
 if (count(combined, /!important/g) > 0) fails.push('存在 !important')
 
 // 断点白名单
+// 1180 / 860 为批改报告三栏工单专用：三栏在 1180 以下才需要塌成两栏、
+// 860 以下塌成单栏，用 1240 / 960 会让 1180~1240 区间的三栏挤在一起。
 const medias = [...combined.matchAll(/@media\s*\(([^)]+)\)/g)].map((m) => m[1].trim())
-const allowed = ['max-width: 1240px', 'max-width: 960px', 'max-height: 720px']
+const allowed = [
+  'max-width: 1240px',
+  'max-width: 960px',
+  'max-height: 720px',
+  'max-width: 1180px', // 批改报告：三栏 → 两栏 + 档案落到最下方
+  'max-width: 860px', // 批改报告：两栏 → 单栏
+]
 for (const m of medias) if (!allowed.includes(m)) fails.push('断点越界: ' + m)
 
 // 圆角/阴影必须 var 或 0/inherit/none

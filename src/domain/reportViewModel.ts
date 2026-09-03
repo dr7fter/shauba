@@ -547,12 +547,12 @@ export function dimensionInsight(rows: GradeDimensionRow[]): string | null {
   if (top.value - bottom.value < 25) return null
   const pair = `${top.key}>${bottom.key}`
   const templates: Record<string, string> = {
-    'speed>strategyInsight': '手比脑子快：写得越果断，入口错得越干脆',
-    'speed>methodUse': '手比脑子快：熟练度在替你掩盖路径盲区',
-    'computation>strategyInsight': '算得动，但没找到路',
-    'computation>methodUse': '算得动，但路走错了',
-    'modeling>computation': '思路对，算挂了',
-    'strategyInsight>computation': '思路对，算挂了',
+    'speed>strategyInsight': '节奏偏急：直觉推导掩盖了审题盲区',
+    'speed>methodUse': '盲目抢快：解法调用与题干结构脱节',
+    'computation>strategyInsight': '运算充分，但解法路径绕远',
+    'computation>methodUse': '运算扎实，但方法模型未对齐',
+    'modeling>computation': '方向正确，但末端计算失准',
+    'strategyInsight>computation': '思路清晰，但关键演算脱漏',
   }
   return templates[pair] ?? `${top.label} ${Math.round(top.value)} 远高于 ${bottom.label} ${Math.round(bottom.value)}`
 }

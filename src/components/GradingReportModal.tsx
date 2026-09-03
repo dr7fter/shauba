@@ -674,7 +674,7 @@ export function PressureLearningReportView({
                     <b className="num">{partialCount}</b>
                     <em>部分</em>
                   </span>
-                  <span className="gi-chip bad">
+                  <span className={`gi-chip ${wrongCount > 0 ? 'bad' : ''}`}>
                     <b className="num">{wrongCount}</b>
                     <em>错误</em>
                   </span>
@@ -1105,216 +1105,229 @@ export function PressureLearningReportView({
                       )}
 
                       <div className="bp-flow">
-                        {/* 01 你当时的入口 */}
-                        {activeFlow?.myEntry ? (
-                          <section className="bp-step">
-                            <div className="bp-step-n" data-n="01" />
-                            <div className="bp-step-body">
-                              <div className="bp-step-t">
-                                你当时的入口
-                                {compression != null && activeDurInfo ? (
-                                  <span className="bp-cmp">
-                                    首次 {formatElapsed((firstDuration ?? 0) * 1000)} → 本次{' '}
-                                    <b>{formatElapsed(activeDurInfo.duration * 1000)}</b>（{compression}%）
-                                  </span>
-                                ) : null}
-                              </div>
-                              <div className="bp-mine">
-                                <MathText value={activeFlow.myEntry} />
-                              </div>
-                            </div>
-                          </section>
-                        ) : null}
-
-                        {/* 02 断点一句话 */}
-                        {activeFlow?.killLine ? (
-                          <section className="bp-step kill">
-                            <div className="bp-step-n" data-n="02" />
-                            <div className="bp-step-body">
-                              <div className="bp-step-t">断点 · 一句话</div>
-                              <div className="bp-kill">
-                                <SafeClampedText value={activeFlow.killLine} />
-                                {activeGrade && typeof activeGrade.confidence === 'number' ? (
-                                  <div className="bp-src mono">
-                                    codex 批改 · 置信 {Math.round(activeGrade.confidence * 100)}%
-                                    {activeFlow.errorCode ? ` · ${activeFlow.errorCode}` : ''}
-                                  </div>
-                                ) : null}
-                              </div>
-                            </div>
-                          </section>
-                        ) : null}
-
-                        {/* 03 为什么这条是死路 */}
-                        {activeFlow?.whyDeadEnd ? (
-                          <section className="bp-step">
-                            <div className="bp-step-n" data-n="03" />
-                            <div className="bp-step-body">
-                              <div className="bp-step-t">为什么这条是死路 · 讲原理，不讲步骤</div>
-                              <div className="bp-why">
-                                <SafeClampedText value={activeFlow.whyDeadEnd} />
-                              </div>
-                            </div>
-                          </section>
-                        ) : null}
-
-                        {/* 04 正确入口：路径对照 / 推导 双视图 + 延迟揭示 */}
-                        {activeFlow?.fork?.standardPath || activeGrade?.betterSolution ? (
-                          <section className="bp-step">
-                            <div className="bp-step-n" data-n="04" />
-                            <div className="bp-step-body">
-                              <div className="bp-step-t">
-                                正确入口
-                                <span className="bp-viewswitch">
-                                  <button
-                                    type="button"
-                                    className={solutionView === 'fork' ? 'on' : ''}
-                                    onClick={() => setSolutionView('fork')}
-                                  >
-                                    路径对照
-                                  </button>
-                                  <button
-                                    type="button"
-                                    className={solutionView === 'derive' ? 'on' : ''}
-                                    onClick={() => setSolutionView('derive')}
-                                  >
-                                    推导
-                                  </button>
-                                </span>
-                              </div>
-
-                              <div className={`bp-soln ${solutionRevealed ? 'unlocked' : 'locked'}`}>
-                                {solutionView === 'fork' ? (
-                                  <div className="bp-fork">
-                                    <div className="bp-fork-hd">
-                                      <span className="mine">我的路径</span>
-                                      <span className="gap" />
-                                      <span className="std">标准路径</span>
-                                    </div>
-                                    <div className="bp-fork-row fork">
-                                      <div className="cell">
-                                        <span className="sn">
-                                          第 {activeFlow?.fork?.step ?? 1} 步 ·{' '}
-                                          {activeFlow?.fork?.label ?? '路径选择'}
+                        {(() => {
+                          let stepNum = 0
+                          return (
+                            <>
+                              {/* 01 你当时的入口 */}
+                              {activeFlow?.myEntry ? (
+                                <section className="bp-step">
+                                  <div className="bp-step-n" data-n={String(++stepNum).padStart(2, '0')} />
+                                  <div className="bp-step-body">
+                                    <div className="bp-step-t">
+                                      你当时的入口
+                                      {compression != null && activeDurInfo ? (
+                                        <span className="bp-cmp">
+                                          首次 {formatElapsed((firstDuration ?? 0) * 1000)} → 本次{' '}
+                                          <b>{formatElapsed(activeDurInfo.duration * 1000)}</b>（{compression}%）
                                         </span>
-                                        <span className="kill">
-                                          {activeFlow?.fork?.myPath ? (
-                                            <MathText value={activeFlow.fork.myPath} />
-                                          ) : (
-                                            '未记录'
-                                          )}
-                                        </span>
-                                      </div>
-                                      <div className="mid">
-                                        <span className="dot">⤬</span>
-                                      </div>
-                                      <div className="cell">
-                                        <span className="sn">正解入口</span>
-                                        <MathText
-                                          value={
-                                            activeFlow?.fork?.standardPath ||
-                                            activeGrade?.betterSolution ||
-                                            ''
-                                          }
-                                        />
-                                      </div>
+                                      ) : null}
                                     </div>
-                                    {activeFlow?.fork?.consequence ? (
-                                      <div className="bp-fork-cons">
-                                        走错之后：{activeFlow.fork.consequence}
-                                      </div>
-                                    ) : null}
+                                    <div className="bp-mine">
+                                      <MathText value={activeFlow.myEntry} />
+                                    </div>
                                   </div>
-                                ) : (
-                                  <div className="bp-derive">
-                                    <MathText
-                                      value={
-                                        activeGrade?.betterSolution ||
-                                        activeFlow?.fork?.standardPath ||
-                                        ''
-                                      }
-                                    />
-                                  </div>
-                                )}
+                                </section>
+                              ) : null}
 
-                                {!solutionRevealed ? (
-                                  <div className="bp-veil">
-                                    <div className="vt">先回想这一步该做什么，推不出来再展开。</div>
-                                    <div className="vb">
-                                      <button
-                                        type="button"
-                                        className="mini pri"
-                                        onClick={() => setSolutionRevealed(true)}
-                                      >
-                                        我推过了，看解法
-                                      </button>
-                                      <button
-                                        type="button"
-                                        className="mini"
-                                        onClick={() => setSolutionRevealed(true)}
-                                      >
-                                        直接看
-                                      </button>
+                              {/* 02 断点一句话 */}
+                              {activeFlow?.killLine ? (
+                                <section className="bp-step kill">
+                                  <div className="bp-step-n" data-n={String(++stepNum).padStart(2, '0')} />
+                                  <div className="bp-step-body">
+                                    <div className="bp-step-t">
+                                      最早逻辑断点
+                                      <span className="bp-step-subtag">致命断层</span>
+                                    </div>
+                                    <div className="bp-kill">
+                                      <SafeClampedText value={activeFlow.killLine} />
+                                      {activeGrade && typeof activeGrade.confidence === 'number' ? (
+                                        <div className="bp-src mono">
+                                          codex 批改 · 置信 {Math.round(activeGrade.confidence * 100)}%
+                                          {activeFlow.errorCode ? ` · ${activeFlow.errorCode}` : ''}
+                                        </div>
+                                      ) : null}
                                     </div>
                                   </div>
-                                ) : null}
-                              </div>
-                            </div>
-                          </section>
-                        ) : null}
+                                </section>
+                              ) : null}
 
-                        {/* 05 否定式识别规则 */}
-                        {activeFlow?.rule ? (
-                          <section className="bp-step rule">
-                            <div className="bp-step-n" data-n="05" />
-                            <div className="bp-step-body">
-                              <div className="bp-step-t">
-                                识别规则 · 动笔前 30 秒口述<span className="bp-say">否定式在前</span>
-                              </div>
-                              <div className="bp-rule">
-                                {activeFlow.rule.negation ? (
-                                  <div className="bp-rule-row">
-                                    <span className="s no">禁止</span>
-                                    <div className="txt">
-                                      <MathText value={activeFlow.rule.negation} />
+                              {/* 03 为什么这条是死路 */}
+                              {activeFlow?.whyDeadEnd ? (
+                                <section className="bp-step">
+                                  <div className="bp-step-n" data-n={String(++stepNum).padStart(2, '0')} />
+                                  <div className="bp-step-body">
+                                    <div className="bp-step-t">为什么这条是死路 · 讲原理，不讲步骤</div>
+                                    <div className="bp-why">
+                                      <SafeClampedText value={activeFlow.whyDeadEnd} />
                                     </div>
                                   </div>
-                                ) : null}
-                                {activeFlow.rule.positive ? (
-                                  <div className="bp-rule-row">
-                                    <span className="s yes">该做</span>
-                                    <div className="txt">
-                                      <MathText value={activeFlow.rule.positive} />
-                                    </div>
-                                  </div>
-                                ) : null}
-                              </div>
-                            </div>
-                          </section>
-                        ) : null}
+                                </section>
+                              ) : null}
 
-                        {/* 06 明日动作 */}
-                        {activeFlow?.nextAction ? (
-                          <section className="bp-step act">
-                            <div className="bp-step-n" data-n="06" />
-                            <div className="bp-step-body">
-                              <div className="bp-step-t">明日动作</div>
-                              <label className="bp-todo">
-                                <input type="checkbox" />
-                                <div>
-                                  <div className="t1">
-                                    <SafeClampedText value={activeFlow.nextAction} />
+                              {/* 04 正确入口：路径对照 / 推导 双视图 + 延迟揭示 */}
+                              {activeFlow?.fork?.standardPath || activeGrade?.betterSolution ? (
+                                <section className="bp-step">
+                                  <div className="bp-step-n" data-n={String(++stepNum).padStart(2, '0')} />
+                                  <div className="bp-step-body">
+                                    <div className="bp-step-t">
+                                      正确解法与入口
+                                      <span className="bp-viewswitch">
+                                        <button
+                                          type="button"
+                                          className={solutionView === 'fork' ? 'on' : ''}
+                                          onClick={() => setSolutionView('fork')}
+                                        >
+                                          路径对照
+                                        </button>
+                                        <button
+                                          type="button"
+                                          className={solutionView === 'derive' ? 'on' : ''}
+                                          onClick={() => setSolutionView('derive')}
+                                        >
+                                          推导
+                                        </button>
+                                      </span>
+                                    </div>
+
+                                    <div className={`bp-soln ${solutionRevealed ? 'unlocked' : 'locked'}`}>
+                                      {solutionView === 'fork' ? (
+                                        <div className="bp-fork">
+                                          <div className="bp-fork-hd">
+                                            <span className="mine">我的考场演进</span>
+                                            <span className="gap" />
+                                            <span className="std">标准解法入口</span>
+                                          </div>
+                                          <div className="bp-fork-row fork">
+                                            <div className="cell">
+                                              <span className="sn">
+                                                第 {activeFlow?.fork?.step ?? 1} 步 ·{' '}
+                                                {activeFlow?.fork?.label ?? '路径分歧'}
+                                              </span>
+                                              <span className="kill">
+                                                {activeFlow?.fork?.myPath &&
+                                                activeFlow.fork.myPath.trim() !== activeFlow?.killLine?.trim() ? (
+                                                  <MathText value={activeFlow.fork.myPath} />
+                                                ) : (
+                                                  <span className="bp-dup-note">
+                                                    考场演算在此受阻中断，未能完成最终化简与代入（详见上方断点）。
+                                                  </span>
+                                                )}
+                                              </span>
+                                            </div>
+                                            <div className="mid">
+                                              <span className="dot">⤬</span>
+                                            </div>
+                                            <div className="cell">
+                                              <span className="sn">正解入口</span>
+                                              <MathText
+                                                value={
+                                                  activeFlow?.fork?.standardPath ||
+                                                  activeGrade?.betterSolution ||
+                                                  ''
+                                                }
+                                              />
+                                            </div>
+                                          </div>
+                                          {activeFlow?.fork?.consequence ? (
+                                            <div className="bp-fork-cons">
+                                              走错之后：{activeFlow.fork.consequence}
+                                            </div>
+                                          ) : null}
+                                        </div>
+                                      ) : (
+                                        <div className="bp-derive">
+                                          <MathText
+                                            value={
+                                              activeGrade?.betterSolution ||
+                                              activeFlow?.fork?.standardPath ||
+                                              ''
+                                            }
+                                          />
+                                        </div>
+                                      )}
+
+                                      {!solutionRevealed ? (
+                                        <div className="bp-veil">
+                                          <div className="vt">先回想这一步该做什么，推不出来再展开。</div>
+                                          <div className="vb">
+                                            <button
+                                              type="button"
+                                              className="mini pri"
+                                              onClick={() => setSolutionRevealed(true)}
+                                            >
+                                              我推过了，看解法
+                                            </button>
+                                            <button
+                                              type="button"
+                                              className="mini"
+                                              onClick={() => setSolutionRevealed(true)}
+                                            >
+                                              直接看
+                                            </button>
+                                          </div>
+                                        </div>
+                                      ) : null}
+                                    </div>
                                   </div>
-                                  <div className="t2">
-                                    {activeFlow.acceptance
-                                      ? `验收：${activeFlow.acceptance}`
-                                      : '完成后回到左栏断点清单复查'}
+                                </section>
+                              ) : null}
+
+                              {/* 05 否定式识别规则 */}
+                              {activeFlow?.rule ? (
+                                <section className="bp-step rule">
+                                  <div className="bp-step-n" data-n={String(++stepNum).padStart(2, '0')} />
+                                  <div className="bp-step-body">
+                                    <div className="bp-step-t">
+                                      识别规则 · 动笔前 30 秒口述<span className="bp-say">否定式在前</span>
+                                    </div>
+                                    <div className="bp-rule">
+                                      {activeFlow.rule.negation ? (
+                                        <div className="bp-rule-row">
+                                          <span className="s no">禁止</span>
+                                          <div className="txt">
+                                            <MathText value={activeFlow.rule.negation} />
+                                          </div>
+                                        </div>
+                                      ) : null}
+                                      {activeFlow.rule.positive ? (
+                                        <div className="bp-rule-row">
+                                          <span className="s yes">该做</span>
+                                          <div className="txt">
+                                            <MathText value={activeFlow.rule.positive} />
+                                          </div>
+                                        </div>
+                                      ) : null}
+                                    </div>
                                   </div>
-                                </div>
-                              </label>
-                            </div>
-                          </section>
-                        ) : null}
+                                </section>
+                              ) : null}
+
+                              {/* 06 明日动作 */}
+                              {activeFlow?.nextAction ? (
+                                <section className="bp-step act">
+                                  <div className="bp-step-n" data-n={String(++stepNum).padStart(2, '0')} />
+                                  <div className="bp-step-body">
+                                    <div className="bp-step-t">明日动作</div>
+                                    <label className="bp-todo">
+                                      <input type="checkbox" />
+                                      <div>
+                                        <div className="t1">
+                                          <SafeClampedText value={activeFlow.nextAction} />
+                                        </div>
+                                        <div className="t2">
+                                          {activeFlow.acceptance
+                                            ? `验收：${activeFlow.acceptance}`
+                                            : '完成后回到左栏断点清单复查'}
+                                        </div>
+                                      </div>
+                                    </label>
+                                  </div>
+                                </section>
+                              ) : null}
+                            </>
+                          )
+                        })()}
                       </div>
                     </div>
 
@@ -1378,16 +1391,15 @@ export function PressureLearningReportView({
                     <div className="bp-dos">
                       <div className="bp-codebar">
                         <span className={`bp-code ${activeFlow?.errorCode ? '' : 'none'}`}>
-                          {activeFlow?.errorCode ?? '未编码'}
+                          {activeFlow?.errorCode ?? '新发盲点'}
                         </span>
                         <div className="bp-codebar-t">
-                          <b>{activeFlow?.title ?? '未命名断点'}</b>
+                          <b>{activeFlow?.title ?? '待固化断点'}</b>
                           <small>
-                            {activeFlow?.severity ? SEVERITY_LABEL[activeFlow.severity] : '未分级'}
+                            {activeFlow?.severity ? SEVERITY_LABEL[activeFlow.severity] : '常规盲点'}
                             {activeHistory.length > 1
                               ? ` · 第 ${activeHistory.length} 次作答`
                               : ' · 首次作答'}
-                            {activeFlow?.errorCode ? null : ' · 旧报告无诊断块'}
                           </small>
                         </div>
                       </div>
@@ -1405,6 +1417,73 @@ export function PressureLearningReportView({
                         {activeGrade.weaknessTags?.map((w) => (
                           <span className="chip weak" key={`weak-${w}`}>{w}</span>
                         ))}
+                      </div>
+                    </div>
+
+                    {/* --- 考场亲笔自省（提到首位，直达手边，免去滚轮寻找） --- */}
+                    <div className="bp-sec highlight-sec">
+                      <h3>
+                        考场亲笔自省 <small>支持 LaTeX</small>
+                      </h3>
+                      <div className="notepad">
+                        <div className="ttl">
+                          <span>✎ 便笺（自动按题号归档）</span>
+                          <span className="mono kdb">
+                            {activeIsNoteSaved ? '已保存 ✓' : '⌘+S'}
+                          </span>
+                        </div>
+                        <textarea
+                          placeholder="写下你考场上的真实反应：识别到了什么 → 卡在哪 → 下次怎么拦。&#10;&#10;明日复习前先读这条。"
+                          value={userNotes[activeGrade.questionId] ?? ''}
+                          onChange={(e) => {
+                            const val = e.target.value
+                            setUserNotes((prev) => ({ ...prev, [activeGrade.questionId]: val }))
+                          }}
+                          onBlur={() => {
+                            void handleSaveQuestionNote(activeGrade.questionId, userNotes[activeGrade.questionId] ?? '')
+                          }}
+                        />
+                        <div className="meta">
+                          <span>
+                            {userNotes[activeGrade.questionId] ? '离焦或快捷键自动保存' : '暂无草稿'}
+                          </span>
+                          <span className={`save ${activeIsNoteSaved || activeIsSavingNote ? 'show' : ''}`}>
+                            {activeIsSavingNote ? '保存中…' : '已存'}
+                          </span>
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* --- 验收判据 --- */}
+                    <div className="bp-sec">
+                      <h3>
+                        验收判据 <small>下次怎么算真会</small>
+                      </h3>
+                      <div className="bp-gate-txt">
+                        {activeFlow?.acceptance ?? (
+                          <>
+                            合上报告，独立重做本题：不翻解法、不用提示，
+                            用时压到首次的 1/3 以内且结果正确——才算这条断点闭合。
+                          </>
+                        )}
+                      </div>
+                      <div className="bp-gate">
+                        {gateRows.map((row) => (
+                          <div className={`bp-gate-row ${row.state}`} key={`gate-${row.key}`}>
+                            <span className="bp-gate-i">
+                              {row.state === 'pass' ? '✓' : row.state === 'fail' ? '✕' : '○'}
+                            </span>
+                            <span className="bp-gate-l">{row.label}</span>
+                            <span className="bp-gate-v num">{row.value}</span>
+                          </div>
+                        ))}
+                      </div>
+                      <div className="bp-gate-bar">
+                        <i style={{ width: `${gateProgress}%` }} />
+                      </div>
+                      <div className="bp-gate-foot">
+                        {gatePassed} / {gateRows.length} 项达成
+                        {gatePassed === gateRows.length ? ' · 可申请封盘' : ' · 不得封盘'}
                       </div>
                     </div>
 
@@ -1456,40 +1535,7 @@ export function PressureLearningReportView({
                       )}
                     </div>
 
-                    {/* --- 验收判据 --- */}
-                    <div className="bp-sec">
-                      <h3>
-                        验收判据 <small>下次怎么算真会</small>
-                      </h3>
-                      <div className="bp-gate-txt">
-                        {activeFlow?.acceptance ?? (
-                          <>
-                            合上报告，独立重做本题：不翻解法、不用提示，
-                            用时压到首次的 1/3 以内且结果正确——才算这条断点闭合。
-                          </>
-                        )}
-                      </div>
-                      <div className="bp-gate">
-                        {gateRows.map((row) => (
-                          <div className={`bp-gate-row ${row.state}`} key={`gate-${row.key}`}>
-                            <span className="bp-gate-i">
-                              {row.state === 'pass' ? '✓' : row.state === 'fail' ? '✕' : '○'}
-                            </span>
-                            <span className="bp-gate-l">{row.label}</span>
-                            <span className="bp-gate-v num">{row.value}</span>
-                          </div>
-                        ))}
-                      </div>
-                      <div className="bp-gate-bar">
-                        <i style={{ width: `${gateProgress}%` }} />
-                      </div>
-                      <div className="bp-gate-foot">
-                        {gatePassed} / {gateRows.length} 项达成
-                        {gatePassed === gateRows.length ? ' · 可申请封盘' : ' · 不得封盘'}
-                      </div>
-                    </div>
-
-                    {/* --- 复制给 AI --- */}
+                    {/* --- 继续追问 --- */}
                     <div className="bp-sec">
                       <h3>
                         继续追问 <small>把上下文整包带走</small>
@@ -1512,40 +1558,6 @@ export function PressureLearningReportView({
                           onFocus={(e) => e.currentTarget.select()}
                         />
                       )}
-                    </div>
-
-                    {/* --- 考场亲笔自省（保留原有写入题本的能力） --- */}
-                    <div className="bp-sec">
-                      <h3>
-                        考场亲笔自省 <small>支持 LaTeX</small>
-                      </h3>
-                      <div className="notepad">
-                        <div className="ttl">
-                          <span>✎ 便笺（自动按题号归档）</span>
-                          <span className="mono kdb">
-                            {activeIsNoteSaved ? '已保存 ✓' : '⌘+S'}
-                          </span>
-                        </div>
-                        <textarea
-                          placeholder="写下你考场上的真实反应：识别到了什么 → 卡在哪 → 下次怎么拦。&#10;&#10;明日复习前先读这条。"
-                          value={userNotes[activeGrade.questionId] ?? ''}
-                          onChange={(e) => {
-                            const val = e.target.value
-                            setUserNotes((prev) => ({ ...prev, [activeGrade.questionId]: val }))
-                          }}
-                          onBlur={() => {
-                            void handleSaveQuestionNote(activeGrade.questionId, userNotes[activeGrade.questionId] ?? '')
-                          }}
-                        />
-                        <div className="meta">
-                          <span>
-                            {userNotes[activeGrade.questionId] ? '已存到题本' : '暂无草稿'}
-                          </span>
-                          <span className={`save ${activeIsNoteSaved ? 'show' : ''}`}>
-                            {activeIsSavingNote ? '保存中…' : '已自动同步到题本'}
-                          </span>
-                        </div>
-                      </div>
                     </div>
                   </>
                 )}

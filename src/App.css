@@ -12612,38 +12612,52 @@
 }
 
 .plan-d-shell {
-  --bg: #f5f7f5;
-  --paper: #fbfdfa;
+  --bg: #f4f6f4;
+  --paper: #ffffff;
   --card: #ffffff;
-  --line: #dfe5e1;
-  --line-soft: #eef2ef;
-  --t1: #27322e;
-  --t2: #6f7b75;
-  --t3: #98a19d;
-  --ink: #244a36;
-  --red: #b91c1c;
-  --red-bg: #fef2f2;
-  --red-soft: #fef2f2;
-  --ok: #2f8561;
-  --ok-bg: #f1f8f4;
-  --warn: #d97706;
-  --warn-bg: #fef3c7;
-  --accent: #536d5e;
+  --line: #d8e2dc;
+  --line-soft: #e7eeea;
+  --t1: #16201b;
+  --t2: #38463f;
+  --t3: #586860;
+  --ink: #1b3d2b;
+  --red: #c52222;
+  --red-bg: #fdf3f3;
+  --red-soft: #fdf3f3;
+  --ok: #1c7a52;
+  --ok-bg: #edf7f2;
+  --warn: #c26900;
+  --warn-bg: #fef7e6;
+  --accent: #486455;
   --radius: 10px;
 
   width: min(1360px, 96vw) !important;
   max-height: 92vh !important;
   background: var(--bg) !important;
   color: var(--t1) !important;
-  font-family: "Songti SC", "STSong", "SimSun", "Noto Serif SC", Georgia, serif !important;
-  font-size: 14px !important;
-  line-height: 1.62 !important;
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", "WenQuanYi Micro Hei", sans-serif !important;
+  font-size: 14.5px !important;
+  line-height: 1.75 !important;
   -webkit-font-smoothing: antialiased !important;
+  -moz-osx-font-smoothing: grayscale !important;
+  text-rendering: optimizeLegibility !important;
   border-radius: 12px !important;
   border: 1px solid var(--line) !important;
   box-shadow: 0 25px 70px -15px rgba(18, 36, 27, 0.22) !important;
   overflow-y: auto !important;
   padding: 18px !important;
+}
+
+.plan-d-shell .katex {
+  font-size: 1.06em;
+  line-height: 1.25;
+  text-rendering: auto;
+}
+
+.plan-d-shell .katex-html {
+  overflow-x: auto;
+  overflow-y: hidden;
+  padding: 1px 0;
 }
 
 .plan-d-shell .wrap {
@@ -13081,15 +13095,15 @@
 }
 
 .plan-d-shell .stem {
-  font-family: "Songti SC", "Noto Serif SC", serif;
-  font-size: 15.5px;
-  line-height: 1.85;
+  font-family: "Noto Serif SC", "Source Han Serif SC", "Songti SC", "STSong", -apple-system, "Segoe UI", "Microsoft YaHei", serif;
+  font-size: 16px;
+  line-height: 1.88;
   color: var(--t1);
   background: var(--paper);
-  padding: 14px 16px;
+  padding: 16px 20px;
   border-radius: 8px;
   border: 1px solid var(--line-soft);
-  border-left: 3px solid var(--ink);
+  border-left: 4px solid var(--ink);
   margin-bottom: 14px;
 }
 
@@ -13461,13 +13475,13 @@
 
 .plan-d-shell .notepad textarea {
   width: 100%;
-  min-height: 90px;
+  min-height: 95px;
   border: none;
   background: transparent;
   resize: vertical;
-  font-family: "Songti SC", "Noto Serif SC", serif;
-  font-size: 13.5px;
-  line-height: 1.7;
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "PingFang SC", "Microsoft YaHei", sans-serif;
+  font-size: 14px;
+  line-height: 1.75;
   color: var(--t1);
   outline: none;
   box-sizing: border-box;
@@ -13680,33 +13694,33 @@
 
 .plan-d-shell .bp-code {
   font-family: var(--font-mono);
-  font-size: var(--fs-xs);
+  font-size: 11.5px;
   letter-spacing: .04em;
-  padding: 1px 6px;
+  padding: 2px 7px;
   border-radius: var(--r-xs);
-  background: var(--violet-soft);
-  color: var(--violet);
-  border: 1px solid var(--line-violet);
+  background: #f0f4f1;
+  color: var(--ink);
+  border: 1px solid var(--line);
   white-space: nowrap;
 }
 
 .plan-d-shell .bp-code.none {
   background: var(--sunken);
-  color: var(--quiet);
+  color: var(--t3);
   border-color: var(--line);
 }
 
 .plan-d-shell .bp-lv {
   font-family: var(--font-mono);
-  font-size: var(--fs-xs);
+  font-size: 11px;
   font-weight: 700;
   padding: 1px 5px;
   border-radius: var(--r-xs);
 }
 
-.plan-d-shell .bp-lv.l1 { color: var(--danger); background: var(--danger-soft); }
-.plan-d-shell .bp-lv.l2 { color: var(--warn); background: var(--warn-soft); }
-.plan-d-shell .bp-lv.l3 { color: var(--info); background: var(--info-soft); }
+.plan-d-shell .bp-lv.l1 { color: var(--red); background: var(--red-bg); }
+.plan-d-shell .bp-lv.l2 { color: var(--warn); background: var(--warn-bg); }
+.plan-d-shell .bp-lv.l3 { color: var(--t2); background: #eef2ef; }
 
 .plan-d-shell .bp-st {
   font-size: var(--fs-xs);
@@ -13954,15 +13968,15 @@
 }
 
 .plan-d-shell .bp-step.rule .bp-step-n {
-  background: var(--violet-soft);
-  border-color: var(--line-violet);
-  color: var(--violet);
+  background: #f0f4f1;
+  border-color: var(--line);
+  color: var(--ink);
 }
 
 .plan-d-shell .bp-step.act .bp-step-n {
-  background: var(--green-soft);
-  border-color: var(--line-success);
-  color: var(--success);
+  background: var(--ok-bg);
+  border-color: #c2decb;
+  color: var(--ok);
 }
 
 .plan-d-shell .bp-step-body { flex: 1 1 auto; min-width: 0; }
@@ -13970,13 +13984,23 @@
 .plan-d-shell .bp-step-t {
   display: flex;
   align-items: center;
-  gap: var(--sp-3);
+  gap: 10px;
   flex-wrap: wrap;
-  font-size: var(--fs-sm);
+  font-size: 15px;
   font-weight: 700;
   letter-spacing: .02em;
-  color: var(--ink);
-  margin-bottom: 6px;
+  color: var(--t1);
+  margin-bottom: 8px;
+}
+
+.plan-d-shell .bp-step-subtag {
+  font-size: 11px;
+  font-weight: 600;
+  padding: 1px 7px;
+  border-radius: 4px;
+  background: #fee2e2;
+  color: #b91c1c;
+  letter-spacing: 0.02em;
 }
 
 .plan-d-shell .bp-cmp {
@@ -13991,39 +14015,39 @@
 .plan-d-shell .bp-mine {
   border: 1px dashed var(--line-strong);
   border-radius: var(--r-md);
-  padding: 10px var(--sp-3);
+  padding: 12px 16px;
   background: var(--surface);
-  font-size: var(--fs-base);
-  line-height: 1.75;
-  color: var(--ink);
+  font-size: 15px;
+  line-height: 1.8;
+  color: var(--t1);
 }
 
 .plan-d-shell .bp-kill {
-  border: 1px solid var(--line-danger);
-  border-left: 3px solid var(--danger);
+  border: 1px solid #fecaca;
+  border-left: 4px solid var(--red);
   border-radius: var(--r-md);
-  padding: 10px var(--sp-3);
-  background: var(--danger-soft);
-  font-size: var(--fs-base);
-  line-height: 1.75;
-  color: var(--danger-strong);
+  padding: 13px 16px;
+  background: #fdf5f5;
+  font-size: 15px;
+  line-height: 1.82;
+  color: #7f1d1d;
 }
 
 .plan-d-shell .bp-src {
-  margin-top: 6px;
-  font-size: var(--fs-xs);
-  color: var(--muted);
+  margin-top: 8px;
+  font-size: 12px;
+  color: var(--t3);
 }
 
 .plan-d-shell .bp-why {
   border: 1px solid var(--line);
-  border-left: 3px solid var(--line-strong);
+  border-left: 4px solid var(--line-strong);
   border-radius: var(--r-md);
-  padding: 10px var(--sp-3);
+  padding: 13px 16px;
   background: var(--surface);
-  font-size: var(--fs-base);
-  line-height: 1.8;
-  color: var(--ink);
+  font-size: 15px;
+  line-height: 1.85;
+  color: var(--t1);
 }
 
 /* 双视图开关 */
@@ -14056,7 +14080,7 @@
   position: relative;
   border: 1px solid var(--line-success);
   border-radius: var(--r-md);
-  background: var(--success-soft);
+  background: #f8fcf9;
   overflow: hidden;
 }
 
@@ -14110,13 +14134,13 @@
 }
 
 /* E2 分叉对照 */
-.plan-d-shell .bp-fork { padding: var(--sp-3); }
+.plan-d-shell .bp-fork { padding: 14px 16px; }
 
 .plan-d-shell .bp-fork-hd {
   display: flex;
   align-items: center;
   gap: var(--sp-2);
-  font-size: var(--fs-xs);
+  font-size: 12px;
   font-weight: 700;
   letter-spacing: .04em;
   margin-bottom: 8px;
@@ -14131,7 +14155,7 @@
   grid-template-columns: 1fr 34px 1fr;
   align-items: start;
   gap: var(--sp-2);
-  padding: 8px 0;
+  padding: 10px 0;
   border-top: 1px solid var(--line);
 }
 
@@ -14139,20 +14163,31 @@
 
 .plan-d-shell .bp-fork-row .cell {
   min-width: 0;
-  font-size: var(--fs-sm);
-  line-height: 1.7;
-  color: var(--ink);
+  font-size: 14.5px;
+  line-height: 1.8;
+  color: var(--t1);
 }
 
 .plan-d-shell .bp-fork-row .cell .sn {
   display: block;
-  font-size: var(--fs-xs);
-  color: var(--quiet);
-  margin-bottom: 3px;
+  font-size: 12px;
+  color: var(--t3);
+  margin-bottom: 4px;
   font-family: var(--font-mono);
 }
 
 .plan-d-shell .bp-fork-row .cell .kill { color: var(--danger-strong); }
+
+.plan-d-shell .bp-dup-note {
+  display: block;
+  font-size: 13.5px;
+  line-height: 1.68;
+  color: #78350f;
+  background: #fffbeb;
+  border: 1px dashed #fde68a;
+  border-radius: 6px;
+  padding: 8px 10px;
+}
 
 .plan-d-shell .bp-fork-row .mid {
   display: flex;
@@ -14179,35 +14214,35 @@
   margin-top: 8px;
   padding-top: 8px;
   border-top: 1px dashed var(--line-strong);
-  font-size: var(--fs-xs);
+  font-size: 12px;
   color: var(--warn-strong);
   line-height: 1.6;
 }
 
 .plan-d-shell .bp-derive {
-  padding: var(--sp-3) var(--sp-4);
-  font-size: var(--fs-base);
-  line-height: 1.85;
-  color: var(--ink);
+  padding: 16px 20px;
+  font-size: 15px;
+  line-height: 1.88;
+  color: var(--t1);
 }
 
 /* 05 否定式识别规则 */
 .plan-d-shell .bp-say {
-  font-size: var(--fs-xs);
-  font-weight: 400;
-  color: var(--violet);
-  border: 1px solid var(--line-violet);
-  background: var(--violet-soft);
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--t2);
+  border: 1px solid var(--line);
+  background: #f4f6f4;
   border-radius: var(--r-full);
   padding: 1px 8px;
 }
 
 .plan-d-shell .bp-rule {
-  border: 1px solid var(--line-violet);
-  border-left: 3px solid var(--violet);
+  border: 1px solid var(--line);
+  border-left: 4px solid var(--ink);
   border-radius: var(--r-md);
-  background: var(--violet-soft);
-  padding: var(--sp-3);
+  background: #fbfdfa;
+  padding: 12px 16px;
   display: flex;
   flex-direction: column;
   gap: 8px;

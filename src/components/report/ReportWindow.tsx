@@ -194,21 +194,32 @@ export function ReportWindow({
       .catch(() => {})
   }, [activeGrade, activeFlow, activeQuestion])
 
-  /* 追问上下文：把题面/入口/断点/规则整包带走，并注明已看过解法，避免重复讲解 */
+  /* 追问上下文：题面与详解请求在前，我的断点过程隔在分割线后——
+     让新 AI 先独立给出考纲内标准详解，不被先前批改思路带偏，再对照指出换路点 */
   const handleCopyContext = useCallback(() => {
     if (!activeGrade) return
     const lines = [
       `题号 #${activeGrade.questionId}`,
       activeQuestion?.categoryPath ? `分类：${activeQuestion.categoryPath}` : null,
       activeQuestion?.stem ? `题干：${activeQuestion.stem}` : null,
-      activeFlow?.myEntry ? `我的落笔入口：${activeFlow.myEntry}` : null,
-      activeFlow?.killLine ? `断点：${activeFlow.killLine}` : null,
-      activeFlow?.whyDeadEnd ? `为什么走不通：${activeFlow.whyDeadEnd}` : null,
-      activeFlow?.rule?.negation ? `我已知道的禁止项：${activeFlow.rule.negation}` : null,
-      activeFlow?.rule?.positive ? `我已知道的该做项：${activeFlow.rule.positive}` : null,
-      revealed[selectedIndex] ? '注意：正确解法我已经看过了，不要重复讲解法，只讲我为什么没走到那一步。' : null,
-      `我要的是：一条能拦截这次错误的否定式识别规则，以及一条明天能执行的动作。`,
-    ].filter(Boolean)
+      ``,
+      `请给我这道题在考研数学一考纲范围内的标准详解：`,
+      `1. 步骤完整，可直接写在答卷上；关键步骤注明依据（定理 / 公式名）。`,
+      `2. 只用考纲内方法：不用二级结论、秒杀技巧、特殊值凑答案。`,
+      `3. 详解完全基于题目独立推导，不要受下方我的过程影响。`,
+      ...(activeFlow
+        ? [
+            ``,
+            `━━━ 详解写完再看这里：我当时的过程 ━━━`,
+            activeFlow.myEntry ? `我的落笔入口：${activeFlow.myEntry}` : null,
+            activeFlow.killLine ? `断点：${activeFlow.killLine}` : null,
+            activeFlow.whyDeadEnd ? `为什么走不通：${activeFlow.whyDeadEnd}` : null,
+            activeFlow.rule?.negation ? `我已知道的禁止项：${activeFlow.rule.negation}` : null,
+            activeFlow.rule?.positive ? `我已知道的该做项：${activeFlow.rule.positive}` : null,
+            `4. 对照你的详解，指出我从哪一步开始必须换路、当时该怎么识别；我的入口本身可行就沿它补完。`,
+          ]
+        : []),
+    ].filter((line): line is string => line !== null)
     void navigator.clipboard
       ?.writeText(lines.join('\n'))
       .then(() => {
@@ -216,7 +227,7 @@ export function ReportWindow({
         window.setTimeout(() => setCopied(false), 1600)
       })
       .catch(() => {})
-  }, [activeGrade, activeQuestion, activeFlow, revealed, selectedIndex])
+  }, [activeGrade, activeQuestion, activeFlow])
 
   /* 键盘：报告是高频界面，手不离键盘 */
   useEffect(() => {

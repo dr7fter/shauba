@@ -307,6 +307,56 @@ pub fn normalize_outcome(outcome: &str) -> &'static str {
     }
 }
 
+/// 报告侧「学习状态」元信息：每题的最新病因类、最近一个待办复习任务的复做日期与药方。
+/// 只读查询，供批改报告错题卡与顶部总诊断使用；查不到就是 None（合法的无数据状态）。
+#[derive(Debug, Clone, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct QuestionLearningMeta {
+    pub question_id: i64,
+    pub error_class: Option<String>,
+    pub next_review_at: Option<String>,
+    pub next_action: Option<String>,
+    pub review_stage: Option<String>,
+}
+
+pub fn questions_learning_meta(
+    conn: &Connection,
+    question_ids: &[i64],
+) -> rusqlite::Result<Vec<QuestionLearningMeta>> {
+    let mut diag_stmt = conn.prepare(
+        "SELECT normalized_error_class FROM learning_diagnoses
+          WHERE question_id=?1 ORDER BY updated_at DESC, rowid DESC LIMIT 1",
+    )?;
+    let mut task_stmt = conn.prepare(
+        "SELECT next_review_at, next_action, stage FROM review_tasks
+          WHERE question_id=?1 AND status='pending'
+          ORDER BY COALESCE(next_review_at,'9999') ASC, rowid DESC LIMIT 1",
+    )?;
+    let mut out = Vec::with_capacity(question_ids.len());
+    for &qid in question_ids {
+        let error_class = diag_stmt
+            .query_row([qid], |row| row.get::<_, String>(0))
+            .optional()?;
+        let task = task_stmt
+            .query_row([qid], |row| {
+                Ok((
+                    row.get::<_, Option<String>>(0)?,
+                    row.get::<_, Option<String>>(1)?,
+                    row.get::<_, Option<String>>(2)?,
+                ))
+            })
+            .optional()?;
+        out.push(QuestionLearningMeta {
+            question_id: qid,
+            error_class,
+            next_review_at: task.as_ref().and_then(|t| t.0.clone()),
+            next_action: task.as_ref().and_then(|t| t.1.clone()),
+            review_stage: task.as_ref().and_then(|t| t.2.clone()),
+        });
+    }
+    Ok(out)
+}
+
 pub fn confidence_allows_core(confidence: f64, outcome: &str) -> bool {
     normalize_outcome(outcome) != "uncertain"
         && confidence.is_finite()
@@ -1383,6 +1433,24 @@ mod tests {
     fn copy_slip_error_maps_to_aiming() {
         let tags = vec!["符号抄错".to_string()];
         assert_eq!(normalize_error_class(&tags, None), "aiming");
+    }
+
+    #[test]
+    fn learning_meta_reads_latest_class_and_pending_review() {
+        let conn = conn();
+        // 无数据：三字段全空（合法状态，前端留空不编造）
+        let empty = questions_learning_meta(&conn, &[42]).unwrap();
+        assert_eq!(empty[0].error_class, None);
+        assert_eq!(empty[0].next_review_at, None);
+        assert_eq!(empty[0].next_action, None);
+
+        // upsert_diagnosis 会联动生成复习任务；概念盲区 → concept
+        let input = diagnosis("SB-meta", 7, Some(70), "incorrect");
+        upsert_diagnosis(&conn, input).unwrap();
+        let meta = questions_learning_meta(&conn, &[7]).unwrap();
+        assert_eq!(meta[0].error_class.as_deref(), Some("concept"));
+        assert!(meta[0].next_action.is_some());
+        assert!(meta[0].review_stage.is_some());
     }
 
     #[test]

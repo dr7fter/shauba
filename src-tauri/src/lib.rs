@@ -11813,6 +11813,18 @@ pub struct AttemptHistoryEntry {
     pub error_code: Option<String>,
 }
 
+/// 只读查询：取若干题的学习状态元信息（最新病因类 / 复做日期 / 药方），
+/// 供批改报告的错题卡 chip 与顶部总诊断使用。查不到即为 None，前端留空不编造。
+#[tauri::command]
+fn get_questions_learning_meta(
+    question_ids: Vec<i64>,
+    state: State<AppState>,
+) -> Result<Vec<services::learning::QuestionLearningMeta>, String> {
+    let ids: Vec<i64> = question_ids.into_iter().take(200).collect();
+    let conn = state.db.lock().map_err(|e| e.to_string())?;
+    services::learning::questions_learning_meta(&conn, &ids).map_err(|e| e.to_string())
+}
+
 /// 只读查询：取若干题的历次作答记录，供批改报告的「断点档案」时间线使用。
 /// 诊断字段（verdict / earliestError / errorCode）从 codex_inbox 的历史 payload 中取最新一条。
 #[tauri::command]
@@ -12490,6 +12502,7 @@ pub fn run() {
             get_today_attempted_questions,
             get_mistake_timeline,
             get_question_attempt_history,
+            get_questions_learning_meta,
             get_app_version,
             get_system_proxy,
             get_user_profile,

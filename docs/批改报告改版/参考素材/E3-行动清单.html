@@ -1,0 +1,394 @@
+<!DOCTYPE html>
+<html lang="zh-CN" data-theme="warm">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>批改报告 · E3 行动清单</title>
+<style>
+:root{
+  --canvas:#faf6ee; --surface:#fdfaf2; --sunken:#f6f1e6; --paper:#fdfaf2;
+  --ink:#29241e; --muted:#796e62; --quiet:#9e9386; --on-color:#fffdf8;
+  --line:#e8ded2; --line-strong:#cbb694;
+  --line-success:#a9c4a4; --line-warn:#ddc08c; --line-danger:#dcb4ab; --line-info:#aec2cc;
+  --line-violet:#cfc4de; --line-gold:#dcc396;
+  --green:#49785a; --green-dark:#2f523c; --green-soft:#eef3eb;
+  --success:#49785a; --success-strong:#3c6549; --success-soft:#eef3eb;
+  --ink-on-soft:#24402f;
+  --warn:#b45309; --warn-strong:#78350f; --warn-soft:#f6ead2;
+  --danger:#a24f47; --danger-strong:#6d2320; --danger-soft:#f4e6e2;
+  --info:#2f627d; --info-soft:#e7edf0;
+  --violet:#6a5fa8; --violet-strong:#4a41b8; --violet-soft:#f2edfa;
+  --gold:#8f7a2a; --gold-strong:#5f4408; --gold-soft:#f8efd8;
+  --overlay-ink-1:rgba(70,55,40,.14); --overlay-ink-2:rgba(70,55,40,.06);
+  --shadow-1:0 5px 18px rgba(70,55,40,.05);
+  --shadow-2:0 12px 30px rgba(60,45,30,.18);
+  --font-ui:"Inter","Source Han Sans SC","Noto Sans SC","PingFang SC","Microsoft YaHei UI",-apple-system,sans-serif;
+  --font-stem:"LXGW WenKai Screen","LXGW WenKai","霞鹜文楷","Noto Serif SC","Songti SC",serif;
+  --font-mono:"JetBrains Mono","Fira Code","SF Mono",ui-monospace,monospace;
+  --fs-xs:11px; --fs-sm:12px; --fs-base:13px; --fs-md:14px; --fs-lg:16px;
+  --fs-xl:18px; --fs-2xl:22px; --fs-stem:20px;
+  --sp-1:4px; --sp-2:8px; --sp-3:12px; --sp-4:16px; --sp-5:20px; --sp-6:24px; --sp-8:32px;
+  --r-xs:4px; --r-sm:6px; --r-md:8px; --r-lg:12px; --r-full:999px;
+  --dur-1:120ms;
+}
+*{box-sizing:border-box;margin:0;padding:0}
+body{background:var(--canvas);color:var(--ink);font:var(--fs-base)/1.6 var(--font-ui);-webkit-font-smoothing:antialiased;padding:var(--sp-5)}
+.num{font-family:var(--font-mono);font-variant-numeric:tabular-nums}
+.stem{font-family:var(--font-stem)}
+.wrap{max-width:1320px;margin:0 auto}
+
+.top{display:flex;align-items:center;gap:var(--sp-4);background:var(--surface);border:1px solid var(--line);border-radius:var(--r-lg);padding:var(--sp-3) var(--sp-4);margin-bottom:var(--sp-3);box-shadow:var(--shadow-1)}
+.top .ttl{font-size:var(--fs-md);font-weight:650}
+.top .meta{font-size:var(--fs-sm);color:var(--quiet)}
+.top .sp{flex:1}
+.seg{display:inline-flex;background:var(--sunken);border-radius:var(--r-md);padding:2px}
+.seg button{border:0;background:transparent;font:500 var(--fs-sm) var(--font-ui);color:var(--muted);padding:5px 12px;border-radius:var(--r-sm);cursor:pointer}
+.seg button.on{background:var(--surface);color:var(--ink);font-weight:600;box-shadow:var(--shadow-1)}
+.ib{width:30px;height:30px;border:1px solid var(--line);background:var(--surface);border-radius:var(--r-md);color:var(--muted);cursor:pointer;font-size:12px}
+
+/* 今日动作条 */
+.today{background:var(--surface);border:1px solid var(--line-strong);border-radius:var(--r-lg);padding:var(--sp-4) var(--sp-5);margin-bottom:var(--sp-3);box-shadow:var(--shadow-1)}
+.today .th{display:flex;align-items:center;justify-content:space-between;gap:var(--sp-4);margin-bottom:var(--sp-3)}
+.today .th .t{font-size:var(--fs-md);font-weight:650;display:flex;align-items:center;gap:8px}
+.today .th .t .cnt{font:700 var(--fs-xs) var(--font-ui);background:var(--danger);color:var(--on-color);border-radius:var(--r-full);padding:1px 8px}
+.capbar{display:flex;align-items:center;gap:var(--sp-3);font-size:var(--fs-xs);color:var(--muted)}
+.capbar .track{width:150px;height:6px;background:var(--overlay-ink-1);border-radius:3px;overflow:hidden}
+.capbar .track i{display:block;height:100%;background:var(--green);border-radius:3px}
+.capbar .track i.warn{background:var(--warn)}
+.capbar b{font-family:var(--font-mono);color:var(--ink)}
+
+.acts{display:flex;flex-direction:column;gap:6px}
+.act{display:grid;grid-template-columns:auto minmax(0,1fr) auto auto;gap:var(--sp-3);align-items:center;background:var(--sunken);border:1px solid var(--line);border-radius:var(--r-md);padding:8px var(--sp-3);cursor:pointer;transition:all var(--dur-1)}
+.act:hover{border-color:var(--line-strong);background:var(--paper)}
+.act.done{opacity:.5}
+.act.done .a1{text-decoration:line-through}
+.act input{width:15px;height:15px;accent-color:var(--green);cursor:pointer}
+.act .a1{font-size:var(--fs-base);font-weight:600}
+.act .a2{font-size:var(--fs-xs);color:var(--muted);margin-top:1px;display:flex;gap:8px;flex-wrap:wrap}
+.act .a2 .code{font-family:var(--font-mono);color:var(--danger);font-weight:700}
+.act .dur{font-family:var(--font-mono);font-size:var(--fs-sm);color:var(--muted);white-space:nowrap}
+.act .go{font:600 var(--fs-xs) var(--font-ui);padding:5px 12px;border-radius:var(--r-sm);border:1px solid var(--green);background:var(--green);color:var(--on-color);cursor:pointer;white-space:nowrap}
+.act .go.ghost{background:transparent;color:var(--green-dark);border-color:var(--line-strong)}
+
+.grid{display:grid;grid-template-columns:262px minmax(0,1fr) 310px;gap:var(--sp-3);align-items:start}
+.col{background:var(--surface);border:1px solid var(--line);border-radius:var(--r-lg);overflow:hidden;box-shadow:var(--shadow-1)}
+.hd{padding:10px var(--sp-4);background:var(--sunken);border-bottom:1px solid var(--line);display:flex;align-items:center;justify-content:space-between;gap:8px}
+.hd h2{font-size:var(--fs-base);font-weight:650}
+.hd .hint{font-size:var(--fs-xs);color:var(--quiet);font-family:var(--font-mono)}
+
+/* 左：持续队列（跨报告） */
+.qgroup{padding:var(--sp-3) var(--sp-3) 6px}
+.qgroup .gh{font-size:var(--fs-xs);font-weight:700;color:var(--muted);letter-spacing:.04em;display:flex;justify-content:space-between;margin-bottom:5px}
+.qgroup .gh .n{font-family:var(--font-mono);color:var(--quiet)}
+.qi{display:grid;grid-template-columns:auto 1fr auto;gap:var(--sp-2);align-items:center;padding:6px 8px;border-radius:var(--r-sm);cursor:pointer;border:1px solid transparent;margin-bottom:2px}
+.qi:hover{background:var(--sunken)}
+.qi.on{background:var(--danger-soft);border-color:var(--line-danger)}
+.qi .dot{width:7px;height:7px;border-radius:50%;background:var(--danger)}
+.qi .dot.w{background:var(--warn)}
+.qi .dot.g{background:var(--success)}
+.qi .nm{font-size:var(--fs-base);font-weight:600;font-family:var(--font-mono)}
+.qi .nm .s{display:block;font:400 var(--fs-xs) var(--font-ui);color:var(--muted)}
+.qi .when{font-size:10.5px;color:var(--quiet);font-family:var(--font-mono);text-align:right}
+.qi .when b{display:block;color:var(--danger);font-weight:700}
+.qsep{height:1px;background:var(--line);margin:var(--sp-2) var(--sp-3)}
+
+/* 中：卡片流 */
+.stream{padding:var(--sp-3) var(--sp-4) var(--sp-4)}
+.card{border:1px solid var(--line);border-radius:var(--r-md);margin-bottom:var(--sp-3);overflow:hidden;background:var(--surface)}
+.card.open{border-color:var(--line-danger);box-shadow:var(--shadow-1)}
+.card.okc{border-left:3px solid var(--success)}
+.card .ch{display:grid;grid-template-columns:auto minmax(0,1fr) auto;gap:var(--sp-3);align-items:center;padding:10px var(--sp-3);cursor:pointer}
+.card .ch:hover{background:var(--sunken)}
+.card .ord{width:24px;height:24px;border-radius:50%;display:grid;place-items:center;font:700 var(--fs-xs) var(--font-mono);background:var(--danger-soft);color:var(--danger);border:1px solid var(--line-danger)}
+.card.okc .ord{background:var(--success-soft);color:var(--success);border-color:var(--line-success)}
+.card .ct .l1{display:flex;align-items:center;gap:7px;flex-wrap:wrap}
+.card .ct .l1 .id{font-family:var(--font-mono);font-weight:700;font-size:var(--fs-base)}
+.card .ct .l1 .cat{font-size:var(--fs-xs);color:var(--muted)}
+.card .ct .l2{font-size:var(--fs-base);margin-top:3px;line-height:1.6}
+.card .ct .l2 b{color:var(--danger-strong);font-weight:700}
+.card .ct .l3{font-size:var(--fs-xs);color:var(--quiet);margin-top:4px;display:flex;gap:var(--sp-3);flex-wrap:wrap}
+.card .cr{text-align:right;font-family:var(--font-mono);font-size:var(--fs-xs);color:var(--quiet);line-height:1.5}
+.card .cr b{display:block;font-size:var(--fs-md);color:var(--ink)}
+.card .cbody{display:none;padding:0 var(--sp-4) var(--sp-4);border-top:1px solid var(--line)}
+.card.open .cbody{display:block}
+.card .stembox{font-family:var(--font-stem);font-size:var(--fs-stem);line-height:1.8;background:var(--paper);border:1px solid var(--line);border-left:3px solid var(--green);border-radius:var(--r-md);padding:var(--sp-3) var(--sp-4);margin:var(--sp-3) 0}
+.blk{margin-bottom:var(--sp-3)}
+.blk .bt{font-size:var(--fs-xs);font-weight:700;letter-spacing:.04em;color:var(--quiet);margin-bottom:4px}
+.blk .bx{font-family:var(--font-stem);font-size:var(--fs-md);line-height:1.8;padding:var(--sp-3);border-radius:var(--r-md)}
+.blk.kill .bx{background:var(--danger-soft);border-left:3px solid var(--danger)}
+.blk.rule .bx{background:var(--gold-soft);border-left:3px solid var(--gold)}
+.blk.rule .bx b{color:var(--danger-strong)}
+.blk.soln .bx{background:var(--success-soft);border-left:3px solid var(--success)}
+.cfoot{display:flex;gap:6px;flex-wrap:wrap;padding-top:var(--sp-2);border-top:1px solid var(--line)}
+.mini{font:500 var(--fs-xs) var(--font-ui);padding:5px 10px;border:1px solid var(--line);background:var(--surface);border-radius:var(--r-sm);color:var(--ink);cursor:pointer}
+.mini:hover{border-color:var(--line-strong)}
+.mini.pri{background:var(--green);border-color:var(--green);color:var(--on-color);font-weight:600}
+
+/* 右：画像写回 */
+.diff{font-family:var(--font-mono);font-size:11.5px;line-height:1.65;border-radius:var(--r-sm);overflow:hidden;border:1px solid var(--line)}
+.dl{display:grid;grid-template-columns:14px 1fr;gap:0;padding:4px 8px;border-bottom:1px solid var(--overlay-ink-2)}
+.dl:last-child{border-bottom:0}
+.dl .s{font-weight:700;text-align:center}
+.dl.add{background:var(--success-soft)}
+.dl.add .s{color:var(--success)}
+.dl.mod{background:var(--warn-soft)}
+.dl.mod .s{color:var(--warn-strong)}
+.dl.del{background:var(--danger-soft)}
+.dl.del .s{color:var(--danger)}
+.dl .c{color:var(--ink);word-break:break-all}
+.dl .c .t{color:var(--quiet)}
+.dl .c b{font-weight:700}
+.dl.add .c b{color:var(--success-strong)}
+.dl.mod .c b{color:var(--warn-strong)}
+
+.wsec{padding:var(--sp-4);border-bottom:1px solid var(--line)}
+.wsec h3{font-size:var(--fs-base);font-weight:650;margin-bottom:var(--sp-2);display:flex;justify-content:space-between;align-items:center;gap:8px}
+.wsec h3 small{font-size:var(--fs-xs);color:var(--quiet);font-weight:400}
+.chk{display:flex;gap:8px;align-items:flex-start;padding:6px 0;font-size:var(--fs-base);line-height:1.6}
+.chk input{margin-top:3px;accent-color:var(--green)}
+.chk .t .s{font-size:var(--fs-xs);color:var(--muted);display:block}
+.warnbox{background:var(--warn-soft);border:1px solid var(--line-warn);border-radius:var(--r-sm);padding:8px 10px;font-size:var(--fs-xs);color:var(--warn-strong);line-height:1.7;margin-top:var(--sp-2)}
+.warnbox b{font-weight:700}
+.write{width:100%;margin-top:var(--sp-3);padding:9px;border:0;border-radius:var(--r-md);background:var(--green);color:var(--on-color);font:650 var(--fs-base) var(--font-ui);cursor:pointer}
+.write:hover{background:var(--green-dark)}
+.ghostbtn{width:100%;margin-top:6px;padding:7px;border:1px solid var(--line);border-radius:var(--r-md);background:transparent;font:500 var(--fs-sm) var(--font-ui);color:var(--muted);cursor:pointer}
+
+.foot{text-align:center;font-size:var(--fs-xs);color:var(--quiet);margin-top:var(--sp-4);line-height:1.8}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <div class="top">
+    <span class="ttl">批改报告</span>
+    <span class="meta">2026-09-02 · 8 题 · 已生成 3 个动作</span>
+    <span class="sp"></span>
+    <div class="seg"><button class="on">行动清单</button><button>长卷通览</button></div>
+    <button class="ib" title="画像">◈</button><button class="ib" title="刷新">↻</button><button class="ib" title="关闭">✕</button>
+  </div>
+
+  <!-- 今日动作：报告第一屏就是"接下来做什么" -->
+  <div class="today">
+    <div class="th">
+      <div class="t">今日动作 <span class="cnt">3</span> <span style="font-weight:400;font-size:var(--fs-xs);color:var(--muted)">按日容量自动排，做完打勾</span></div>
+      <div class="capbar">
+        <span>日容量</span>
+        <span class="track"><i style="width:14%"></i></span>
+        <span>已排 <b>16′</b> / 111′ · 剩 <b>95′</b></span>
+      </div>
+    </div>
+    <div class="acts">
+      <div class="act">
+        <input type="checkbox">
+        <div>
+          <div class="a1">根号池抽 3 题练眼</div>
+          <div class="a2"><span class="code">E-027</span><span>只说入口，不算到底</span><span>验收目标 3/13</span></div>
+        </div>
+        <span class="dur">6′</span>
+        <button class="go">开始</button>
+      </div>
+      <div class="act">
+        <input type="checkbox">
+        <div>
+          <div class="a1">#7076 重做 · 落笔前先口述否定式</div>
+          <div class="a2"><span class="code">E-027</span><span>预算 4′42″ 内完成才算达标</span></div>
+        </div>
+        <span class="dur">5′</span>
+        <button class="go">开始</button>
+      </div>
+      <div class="act">
+        <input type="checkbox">
+        <div>
+          <div class="a1">#10590 重做 · 复合求导先画链式树</div>
+          <div class="a2"><span>新断点</span><span>建议编码后入画像</span></div>
+        </div>
+        <span class="dur">5′</span>
+        <button class="go">开始</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="grid">
+
+    <!-- 左：跨报告的持续队列 -->
+    <aside class="col">
+      <div class="hd"><h2>我的队列</h2><span class="hint">跨报告</span></div>
+
+      <div class="qgroup">
+        <div class="gh"><span>🔴 攻坚队列</span><span class="n">4</span></div>
+        <div class="qi on"><i class="dot"></i><div class="nm">#7076<span class="s">根式换元入口</span></div><div class="when"><b>今日</b>第 2 次</div></div>
+        <div class="qi"><i class="dot"></i><div class="nm">#10590<span class="s">复合求导漏项</span></div><div class="when"><b>今日</b>新增</div></div>
+        <div class="qi"><i class="dot"></i><div class="nm">#1982<span class="s">泰勒阶数</span></div><div class="when"><b>今日</b>第 4 次</div></div>
+        <div class="qi"><i class="dot"></i><div class="nm">#149<span class="s">抽象逆高阶</span></div><div class="when">09-04<br>P2</div></div>
+      </div>
+      <div class="qsep"></div>
+
+      <div class="qgroup">
+        <div class="gh"><span>🟡 观察中</span><span class="n">5</span></div>
+        <div class="qi"><i class="dot w"></i><div class="nm">#135<span class="s">E-024 预化简</span></div><div class="when">09-05<br>抽检</div></div>
+        <div class="qi"><i class="dot w"></i><div class="nm">#1052<span class="s">变限积分收尾慢</span></div><div class="when">09-06<br>抽检</div></div>
+        <div class="qi"><i class="dot w"></i><div class="nm">#514<span class="s">E-017 非齐次解数</span></div><div class="when">09-07<br>抽检</div></div>
+        <div class="qi"><i class="dot w"></i><div class="nm">#837<span class="s">E-020 单位化</span></div><div class="when">09-07<br>抽检</div></div>
+        <div class="qi"><i class="dot w"></i><div class="nm">#814<span class="s">E-037 回代校验</span></div><div class="when">09-08<br>抽检</div></div>
+      </div>
+      <div class="qsep"></div>
+
+      <div class="qgroup" style="padding-bottom:var(--sp-4)">
+        <div class="gh"><span>🟢 已固化</span><span class="n">3</span></div>
+        <div class="qi"><i class="dot g"></i><div class="nm">#7090<span class="s">E-003 全微分消元</span></div><div class="when">连续 2 次<br>独立避坑</div></div>
+        <div class="qi"><i class="dot g"></i><div class="nm">#10578<span class="s">分部积分</span></div><div class="when">12″</div></div>
+        <div class="qi"><i class="dot g"></i><div class="nm">#148<span class="s">抽象逆</span></div><div class="when">2′12″</div></div>
+      </div>
+    </aside>
+
+    <!-- 中：题目卡片流，默认折叠为"断点+动作" -->
+    <main class="col">
+      <div class="hd"><h2>逐题复盘</h2><span class="hint">点开看解析</span></div>
+
+      <div class="stream">
+
+        <!-- 展开态 -->
+        <div class="card open">
+          <div class="ch">
+            <div class="ord">1</div>
+            <div class="ct">
+              <div class="l1"><span class="id">#7076</span><span class="cat">一元积分 / 含根式</span><span class="chip" style="font-size:10.5px;font-weight:700;padding:0 5px;border-radius:3px;background:var(--danger-soft);color:var(--danger);border:1px solid var(--line-danger)">错 · 复发</span></div>
+              <div class="l2">根号里是一次整式，<b>你却用了消灭二次式的三角换元</b></div>
+              <div class="l3"><span>本次 0′53″ · 首次 1′55″</span><span>E-027 第 2 次</span><span>分叉于第 1 步</span></div>
+            </div>
+            <div class="cr"><b>0′53″</b>115″→53″</div>
+          </div>
+          <div class="cbody">
+            <div class="stembox">求 $\displaystyle\int_0^1 \frac{\sqrt{x+1}}{\sqrt{x+1}+\sqrt{1-x}}\,\mathrm{d}x$.</div>
+            <div class="blk kill">
+              <div class="bt">断点</div>
+              <div class="bx">三角换元只服务 $a^2-x^2$ 型二次式。这里两个根号内都是一次整式，换元不消灭根号，只把它变复杂。耗时降 54% 却照错——<b>这个错误已经自动化</b>。</div>
+            </div>
+            <div class="blk rule">
+              <div class="bt">识别规则 · 动笔前 30 秒口述</div>
+              <div class="bx"><b>禁止</b>：根号内为一次整式时三角换元。<br><b>该做</b>：整体设 $t=\sqrt{\text{整个根式}}$，再查 $f(x)+f(1-x)$ 对称性。</div>
+            </div>
+            <div class="blk soln">
+              <div class="bt">正确入口</div>
+              <div class="bx">$f(x)+f(1-x)=1 \Rightarrow 2I=\int_0^1 1\,\mathrm{d}x=1 \Rightarrow I=\tfrac12$。</div>
+            </div>
+            <div class="cfoot">
+              <button class="mini pri">重做本题</button>
+              <button class="mini">只练第 1 步</button>
+              <button class="mini">⧉ 复制给 AI</button>
+              <button class="mini">3 天后抽检</button>
+              <button class="mini">加练同考点</button>
+            </div>
+          </div>
+        </div>
+
+        <!-- 折叠态 -->
+        <div class="card">
+          <div class="ch">
+            <div class="ord">2</div>
+            <div class="ct">
+              <div class="l1"><span class="id">#10590</span><span class="cat">多元微分 / 复合函数求导</span><span class="chip" style="font-size:10.5px;font-weight:700;padding:0 5px;border-radius:3px;background:var(--danger-soft);color:var(--danger);border:1px solid var(--line-danger)">错 · 新增</span></div>
+              <div class="l2">中间变量漏掉一条链式分支，<b>落笔就少了项</b></div>
+              <div class="l3"><span>本次 0′57″ · 首次 11′17″</span><span>未编码 · 待命名</span><span>分叉于第 1 步</span></div>
+            </div>
+            <div class="cr"><b>0′57″</b>677″→57″</div>
+          </div>
+          <div class="cbody"><div class="blk kill"><div class="bt">断点</div><div class="bx">展开解析</div></div></div>
+        </div>
+
+        <div class="card">
+          <div class="ch">
+            <div class="ord">3</div>
+            <div class="ct">
+              <div class="l1"><span class="id">#1982</span><span class="cat">一元微分 / 泰勒多项式</span><span class="chip" style="font-size:10.5px;font-weight:700;padding:0 5px;border-radius:3px;background:var(--warn-soft);color:var(--warn-strong);border:1px solid var(--line-warn)">观察中</span></div>
+              <div class="l2">展开点选对，<b>余项阶数少取一阶</b></div>
+              <div class="l3"><span>本次 6′12″ · 第 4 次 · 1/4</span><span>分叉于第 3 步</span></div>
+            </div>
+            <div class="cr"><b>6′12″</b>超时</div>
+          </div>
+        </div>
+
+        <div class="card okc">
+          <div class="ch">
+            <div class="ord">✓</div>
+            <div class="ct">
+              <div class="l1"><span class="id">#10578</span><span class="cat">一元积分 / 分部积分</span></div>
+              <div class="l2">分部积分一次到位，<b>12 秒出结果</b></div>
+              <div class="l3"><span>本次 0′12″</span><span>真掌握</span><span>无需动作</span></div>
+            </div>
+            <div class="cr"><b>0′12″</b>达标</div>
+          </div>
+        </div>
+
+        <div class="card okc">
+          <div class="ch">
+            <div class="ord">✓</div>
+            <div class="ct">
+              <div class="l1"><span class="id">#7090</span><span class="cat">线代 / 含参方程组</span></div>
+              <div class="l2">全微分消元路径稳定，<b>E-003 判定已固化</b></div>
+              <div class="l3"><span>本次 3′11″</span><span>连续 2 次独立避坑</span></div>
+            </div>
+            <div class="cr"><b>3′11″</b>达标</div>
+          </div>
+        </div>
+
+        <div class="card okc">
+          <div class="ch">
+            <div class="ord">✓</div>
+            <div class="ct">
+              <div class="l1"><span class="id">#148</span><span class="cat">线代 / 抽象逆</span></div>
+              <div class="l2">未碰逆先降次，路径正确</div>
+              <div class="l3"><span>本次 2′12″</span><span>达标</span></div>
+            </div>
+            <div class="cr"><b>2′12″</b>达标</div>
+          </div>
+        </div>
+
+      </div>
+    </main>
+
+    <!-- 右：画像写回预览 -->
+    <aside class="col">
+      <div class="hd"><h2>写回画像</h2><span class="hint">characteristic</span></div>
+
+      <div class="wsec">
+        <h3>本次将产生的变更 <small>6 处</small></h3>
+        <div class="diff">
+          <div class="dl add"><span class="s">+</span><span class="c"><b>#10590 复合求导链式漏项</b><br><span class="t">→ 建议编码 E-041，L1 致命</span></span></div>
+          <div class="dl mod"><span class="s">~</span><span class="c"><b>E-027</b> 🟡 观察中 → 🔴 <b>未修复</b><br><span class="t">复发第 2 次，耗时降 46% 正确率 0</span></span></div>
+          <div class="dl mod"><span class="s">~</span><span class="c"><b>#1982 泰勒</b> 🟡 观察中维持<br><span class="t">第 4 次 · 1/4，未满 2 次纠偏</span></span></div>
+          <div class="dl add"><span class="s">+</span><span class="c"><b>排产 09-05 抽检</b> #7076 / #10590<br><span class="t">48~72h 窗口</span></span></div>
+          <div class="dl add"><span class="s">+</span><span class="c"><b>E-003 升级为 🟢 已固化</b><br><span class="t">#7090 连续 2 次独立避坑</span></span></div>
+          <div class="dl del"><span class="s">−</span><span class="c">日容量 111′ <b>− 16′</b> → 剩 95′<br><span class="t">本轮已排产动作</span></span></div>
+        </div>
+        <div class="warnbox">
+          <b>⚠ 写回前核对</b><br>
+          E-027 不得因"看过解法"就标 🟢。验收判据仍是根号池 13 题零覆盖——当前 0/13。
+        </div>
+      </div>
+
+      <div class="wsec">
+        <h3>确认项 <small>逐条勾选</small></h3>
+        <label class="chk"><input type="checkbox" checked><span class="t">E-027 复发属实<span class="s">非标注失误，有草稿证据</span></span></label>
+        <label class="chk"><input type="checkbox" checked><span class="t">#10590 断点描述准确<span class="s">若描述不符，先改描述再入库</span></span></label>
+        <label class="chk"><input type="checkbox"><span class="t">E-003 封盘为已固化<span class="s">需连续 2 次独立纠偏，已满足</span></span></label>
+        <label class="chk"><input type="checkbox" checked><span class="t">排入 09-05 抽检<span class="s">48~72h 窗口内</span></span></label>
+      </div>
+
+      <div class="wsec" style="border-bottom:0">
+        <button class="write">确认写入 characteristic</button>
+        <button class="ghostbtn">先导出草稿给我看</button>
+        <div class="warnbox" style="background:var(--info-soft);border-color:var(--line-info);color:var(--info)">
+          写入后 <b>characteristic-core.md</b> 同步更新摘要，下次推题直接读到新断点。
+        </div>
+      </div>
+    </aside>
+  </div>
+
+  <p class="foot">
+    <b>E3 · 行动清单 + 画像写回</b>——主张：报告 80% 的价值在"接下来做什么"。第一屏是今日动作（受日容量 111′ 约束），题目以卡片流呈现、默认只露断点与动作；左栏是跨报告的持续队列；右栏把「写入画像」这一步从黑盒变成可核对的 diff 预览。<br>
+    全色值引用 tokens.css，零硬编码 hex。
+  </p>
+</div>
+</body>
+</html>

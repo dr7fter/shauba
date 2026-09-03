@@ -1,0 +1,344 @@
+<!DOCTYPE html>
+<html lang="zh-CN" data-theme="default" data-font-scale="medium">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>批改报告 · E1 断点工单 实装预览</title>
+<link rel="stylesheet" href="../../dist/assets/index-DS8yeu7R.css" />
+<style>
+  body { margin: 0; background: var(--canvas); }
+  .preview-frame { padding: 18px; }
+</style>
+</head>
+<body>
+<div class="pressure-report-wrap workbench-mode-wrap plan-d-shell">
+  <div class="inner">
+
+    <!-- ===== 顶部结论条 ===== -->
+    <div class="bp-verdict">
+      <div class="bp-verdict-main">
+        <div class="bp-kick">本轮结论 · 先读这一条</div>
+        <h2>8 道题里，有 3 题死在同一个动作：看到「可导」就对等式两边求导。</h2>
+        <p>共 4 个断点 · 其中 1 个是复发 · 有断点尚未编码，批改回传时可补 errorCode</p>
+      </div>
+      <div class="bp-verdict-stats">
+        <div><span class="k">断点</span><span class="v num bad">4</span></div>
+        <div><span class="k">复发</span><span class="v num bad">1</span></div>
+        <div><span class="k">真掌握</span><span class="v num ok">3</span></div>
+        <div><span class="k">对 / 半 / 错</span><span class="v num">3 / 2 / 3</span></div>
+      </div>
+    </div>
+
+    <div class="grid">
+
+      <!-- ===== 左栏 ===== -->
+      <aside class="col">
+        <div class="bp-summary">
+          <div class="bp-ring"><b class="num">4</b></div>
+          <div class="bp-summary-txt">
+            <div class="a">本轮断点</div>
+            <div class="b">1 个复发 · 1 个未编码<br />总耗时 42:10 · 均题 05:16</div>
+          </div>
+        </div>
+
+        <div class="bp-hd"><h2>断点清单</h2><span class="hint mono">J / K</span></div>
+
+        <div class="bp-list">
+          <div class="bp-item on">
+            <div class="bp-r1">
+              <span class="bp-code">D-CAL-07</span>
+              <span class="bp-lv l1">L1</span>
+              <span class="bp-st relapse">复发</span>
+            </div>
+            <div class="bp-nm">对抽象函数等式两边求导</div>
+            <div class="bp-qs">#7076 · #10590 · #3122 · 历史 4/5 错</div>
+          </div>
+          <div class="bp-item">
+            <div class="bp-r1">
+              <span class="bp-code">L-EIG-03</span>
+              <span class="bp-lv l2">L2</span>
+              <span class="bp-st new">新增</span>
+            </div>
+            <div class="bp-nm">特征向量线性组合未验证非零</div>
+            <div class="bp-qs">#5510</div>
+          </div>
+          <div class="bp-item">
+            <div class="bp-r1">
+              <span class="bp-code none">未编码</span>
+              <span class="bp-lv l3">L3</span>
+              <span class="bp-st new">新增</span>
+            </div>
+            <div class="bp-nm">分部积分符号抄错</div>
+            <div class="bp-qs">#8814</div>
+          </div>
+        </div>
+
+        <div class="bp-split">
+          <span>全部 8 题</span>
+          <button type="button" class="bp-toggle">显示全部</button>
+        </div>
+
+        <div class="bp-mini-list">
+          <div class="bp-mini"><i class="d bad"></i><span class="qid num">#7076</span><span class="cat">中值定理</span><span class="t num">08:12</span></div>
+          <div class="bp-mini on"><i class="d ok"></i><span class="qid num">#5510</span><span class="cat">特征值与特征向量</span><span class="t num">04:31</span></div>
+          <div class="bp-mini"><i class="d bad"></i><span class="qid num">#10590</span><span class="cat">中值定理</span><span class="t num">03:57</span></div>
+          <div class="bp-mini"><i class="d ok"></i><span class="qid num">#3122</span><span class="cat">导数应用</span><span class="t num">02:10</span></div>
+        </div>
+      </aside>
+
+      <!-- ===== 中栏 ===== -->
+      <main class="col">
+        <div class="qhd">
+          <div class="kicker">
+            <span class="pid">#7076</span>
+            <span class="cat">高等数学 / 中值定理与导数应用</span>
+          </div>
+          <div class="qtitle">第 1 题 · 中值定理</div>
+          <div class="qmeta">
+            <span class="tag bad">错误</span>
+            <span class="tag fix">⚠ 路径待纠偏</span>
+            <span class="tag plain">difficulty 3</span>
+            <span class="tag plain num">本次 08:12 · 预算 06:00</span>
+          </div>
+        </div>
+
+        <div class="qbody">
+          <div class="stem">
+            设 $f(x)$ 在 $[0,1]$ 上连续，在 $(0,1)$ 内可导，且 $f(0)=0$，$f(1)=1$。证明：存在 $\xi\in(0,1)$ 使得 $f'(\xi)=2\xi$。
+          </div>
+
+          <!-- 本题 / 本组基线 -->
+          <div class="bp-dims">
+            <div class="bp-dims-hd">
+              <span>本题 / 本组基线</span>
+              <b>手比脑子快：写得越果断，入口错得越干脆</b>
+            </div>
+            <div class="bp-dims-grid">
+              <div class="bp-dim">
+                <div class="bp-dim-top"><span class="lb">严谨</span><span class="vv down">58 (-14)</span></div>
+                <div class="bp-dim-bar"><i class="base" style="width:72%"></i><i class="cur down" style="width:58%"></i></div>
+              </div>
+              <div class="bp-dim">
+                <div class="bp-dim-top"><span class="lb">计算</span><span class="vv up">84 (+9)</span></div>
+                <div class="bp-dim-bar"><i class="base" style="width:75%"></i><i class="cur" style="width:84%"></i></div>
+              </div>
+              <div class="bp-dim">
+                <div class="bp-dim-top"><span class="lb">建模</span><span class="vv">62</span></div>
+                <div class="bp-dim-bar"><i class="base" style="width:62%"></i><i class="cur" style="width:62%"></i></div>
+              </div>
+              <div class="bp-dim">
+                <div class="bp-dim-top"><span class="lb">方法</span><span class="vv down">41 (-22)</span></div>
+                <div class="bp-dim-bar"><i class="base" style="width:63%"></i><i class="cur down" style="width:41%"></i></div>
+              </div>
+              <div class="bp-dim">
+                <div class="bp-dim-top"><span class="lb">速度</span><span class="vv">88</span></div>
+                <div class="bp-dim-bar"><i class="base" style="width:80%"></i><i class="cur" style="width:88%"></i></div>
+              </div>
+              <div class="bp-dim">
+                <div class="bp-dim-top"><span class="lb">洞察</span><span class="vv down">30 (-25)</span></div>
+                <div class="bp-dim-bar"><i class="base" style="width:55%"></i><i class="cur down" style="width:30%"></i></div>
+              </div>
+            </div>
+          </div>
+
+          <!-- 认知动线六段 -->
+          <div class="bp-flow">
+
+            <section class="bp-step">
+              <div class="bp-step-n" data-n="01"></div>
+              <div class="bp-step-body">
+                <div class="bp-step-t">
+                  你当时的入口
+                  <span class="bp-cmp">首次 11:17 → 本次 <b>08:12</b>（53%）</span>
+                </div>
+                <div class="bp-mine">看到「可导」和要证的 $f'(\xi)=2\xi$，直接对 $f(x)=x^2$ 下手，试图把等式变成 $f(x)-x^2$ 再套 Rolle。</div>
+              </div>
+            </section>
+
+            <section class="bp-step kill">
+              <div class="bp-step-n" data-n="02"></div>
+              <div class="bp-step-body">
+                <div class="bp-step-t">断点 · 一句话</div>
+                <div class="bp-kill">
+                  第 1 步就把待证的 $f'(\xi)=2\xi$ 当成了已知恒等式 $f'(x)=2x$ 来用——这是把结论当条件。
+                  <div class="bp-src mono">codex 批改 · 置信 92% · D-CAL-07</div>
+                </div>
+              </div>
+            </section>
+
+            <section class="bp-step">
+              <div class="bp-step-n" data-n="03"></div>
+              <div class="bp-step-body">
+                <div class="bp-step-t">为什么这条是死路 · 讲原理，不讲步骤</div>
+                <div class="bp-why">
+                  $f'(\xi)=2\xi$ 只在一个点上成立，而 $f'(x)=2x$ 要求在整个区间成立。Rolle 定理要的是「构造出的辅助函数在两端点值相等」，
+                  你把只有单点成立的式子铺到全区间，第一步就把辅助函数构造错了——后面算得再干净也是无效功。
+                </div>
+              </div>
+            </section>
+
+            <section class="bp-step">
+              <div class="bp-step-n" data-n="04"></div>
+              <div class="bp-step-body">
+                <div class="bp-step-t">
+                  正确入口
+                  <span class="bp-viewswitch">
+                    <button type="button" class="on">路径对照</button>
+                    <button type="button">推导</button>
+                  </span>
+                </div>
+                <div class="bp-soln locked">
+                  <div class="bp-fork">
+                    <div class="bp-fork-hd">
+                      <span class="mine">我的路径</span><span class="gap"></span><span class="std">标准路径</span>
+                    </div>
+                    <div class="bp-fork-row fork">
+                      <div class="cell">
+                        <span class="sn">第 1 步 · 由「可导」想到求导</span>
+                        <span class="kill">把 $f'(\xi)=2\xi$ 当成 $f'(x)=2x$ 使用，对 $f(x)-x^2$ 套 Rolle</span>
+                      </div>
+                      <div class="mid"><span class="dot">⤬</span></div>
+                      <div class="cell">
+                        <span class="sn">正解入口</span>
+                        令 $F(x)=f(x)-x^2$，则 $F(0)=F(1)=0$，由 Rolle 得 $F'(\xi)=0$，即 $f'(\xi)-2\xi=0$
+                      </div>
+                    </div>
+                    <div class="bp-fork-cons">走错之后：后续 6 行计算全部成立但方向相反，最后一步符号对不上，回头也找不到错在哪。</div>
+                  </div>
+                  <div class="bp-veil">
+                    <div class="vt">先回想这一步该做什么，推不出来再展开。</div>
+                    <div class="vb">
+                      <button type="button" class="mini pri">我推过了，看解法</button>
+                      <button type="button" class="mini">直接看</button>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </section>
+
+            <section class="bp-step rule">
+              <div class="bp-step-n" data-n="05"></div>
+              <div class="bp-step-body">
+                <div class="bp-step-t">识别规则 · 动笔前 30 秒口述<span class="bp-say">否定式在前</span></div>
+                <div class="bp-rule">
+                  <div class="bp-rule-row">
+                    <span class="s no">禁止</span>
+                    <div class="txt">禁止把待证式里的 $\xi$ 改写成 $x$ 当作已知条件使用——$\xi$ 是「存在」，不是「任意」。</div>
+                  </div>
+                  <div class="bp-rule-row">
+                    <span class="s yes">该做</span>
+                    <div class="txt">先把 $f'(\xi)=g(\xi)$ 移项成 $f'(\xi)-g(\xi)=0$，再反着凑出导函数 $F'(x)$，于是 $F(x)=f(x)-\int g$。</div>
+                  </div>
+                </div>
+              </div>
+            </section>
+
+            <section class="bp-step act">
+              <div class="bp-step-n" data-n="06"></div>
+              <div class="bp-step-body">
+                <div class="bp-step-t">明日动作</div>
+                <label class="bp-todo">
+                  <input type="checkbox" />
+                  <div>
+                    <div class="t1">重做 #7076 与 #10590，动笔前先默写上面那条禁止规则，再落笔。</div>
+                    <div class="t2">验收：不看解法独立重做，用时 &lt; 3:45 且辅助函数构造正确。</div>
+                  </div>
+                </label>
+              </div>
+            </section>
+
+          </div>
+        </div>
+
+        <div class="footact">
+          <div class="pgnav"><kbd>J</kbd> 下一题 · <kbd>K</kbd> 上一题</div>
+          <div class="btns">
+            <button type="button" class="btn">加练同考点</button>
+            <button type="button" class="btn">原题原卷</button>
+            <button type="button" class="btn">收藏</button>
+            <button type="button" class="btn primary">排入明日复习</button>
+          </div>
+        </div>
+      </main>
+
+      <!-- ===== 右栏：断点档案 ===== -->
+      <aside class="col">
+        <div class="audhd">
+          <div class="colhd" style="padding: 0; background: transparent; border: none;">
+            <h2>断点档案</h2>
+            <span class="hint mono">dossier</span>
+          </div>
+        </div>
+
+        <div class="bp-dos">
+          <div class="bp-codebar">
+            <span class="bp-code">D-CAL-07</span>
+            <div class="bp-codebar-t">
+              <b>对抽象函数等式两边求导</b>
+              <small>L1 致命 · 第 3 次作答</small>
+            </div>
+          </div>
+          <div class="errorchips">
+            <span class="chip">概念边界</span>
+            <span class="chip weak">中值定理</span>
+          </div>
+        </div>
+
+        <div class="bp-sec">
+          <h3>修复时间线 <small>来自历史作答</small></h3>
+          <div class="bp-tl">
+            <div class="bp-tl-row">
+              <div class="bp-tl-d"><span class="num">09-03</span><span class="bp-tl-m bad">错</span></div>
+              <div class="bp-tl-bar"><i class="bad" style="width:100%"></i><span class="num">08:12</span></div>
+            </div>
+            <div class="bp-tl-row">
+              <div class="bp-tl-d"><span class="num">08-27</span><span class="bp-tl-m bad">错</span></div>
+              <div class="bp-tl-bar"><i class="bad" style="width:94%"></i><span class="num">07:39</span></div>
+            </div>
+            <div class="bp-tl-row">
+              <div class="bp-tl-d"><span class="num">08-11</span><span class="bp-tl-m ok">对</span></div>
+              <div class="bp-tl-bar"><i class="ok" style="width:47%"></i><span class="num">03:48</span></div>
+            </div>
+            <div class="bp-tl-row">
+              <div class="bp-tl-d"><span class="num">07-30</span><span class="bp-tl-m mid">半</span></div>
+              <div class="bp-tl-bar"><i class="mid" style="width:100%"></i><span class="num">11:17</span></div>
+            </div>
+            <div class="bp-tl-note">用时压缩到首次的 <b class="num">53%</b> · 未达 1/3，仍算没自动化</div>
+          </div>
+        </div>
+
+        <div class="bp-sec">
+          <h3>验收判据 <small>下次怎么算真会</small></h3>
+          <div class="bp-gate-txt">
+            不看解法独立重做，用时 &lt; 3:45 且辅助函数构造正确——才算这条断点闭合。
+          </div>
+          <div class="bp-gate">
+            <div class="bp-gate-row fail"><span class="bp-gate-i">✕</span><span class="bp-gate-l">本次结果正确</span><span class="bp-gate-v num">错误</span></div>
+            <div class="bp-gate-row fail"><span class="bp-gate-i">✕</span><span class="bp-gate-l">用时压到首次 1/3</span><span class="bp-gate-v num">53%</span></div>
+            <div class="bp-gate-row pending"><span class="bp-gate-i">○</span><span class="bp-gate-l">否定式规则能默写</span><span class="bp-gate-v num">待你自测</span></div>
+          </div>
+          <div class="bp-gate-bar"><i style="width:33%"></i></div>
+          <div class="bp-gate-foot">1 / 3 项达成 · 不得封盘</div>
+        </div>
+
+        <div class="bp-sec">
+          <h3>继续追问 <small>把上下文整包带走</small></h3>
+          <button type="button" class="bp-ai-btn">⧉ 复制追问上下文</button>
+          <div class="bp-ai-hint">含题面 / 我的入口 / 断点 / 已看过的解法（标注勿重复讲）/ 我要的识别规则</div>
+        </div>
+
+        <div class="bp-sec">
+          <h3>考场亲笔自省 <small>支持 LaTeX</small></h3>
+          <div class="notepad">
+            <div class="ttl"><span>✎ 便笺（自动按题号归档）</span><span class="mono kdb">⌘+S</span></div>
+            <textarea>看到「可导」就手痒，第 1 步就求导了。下次先问一句：这个式子是在哪个点上成立的？</textarea>
+            <div class="meta"><span>已存到题本</span><span class="save show">已自动同步到题本</span></div>
+          </div>
+        </div>
+      </aside>
+
+    </div>
+  </div>
+</div>
+</body>
+</html>

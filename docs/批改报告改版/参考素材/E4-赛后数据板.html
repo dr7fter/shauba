@@ -1,0 +1,328 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>批改报告 · E4 赛后数据板</title>
+<style>
+:root{
+  --canvas:#f5f7f5; --surface:#fff; --sunken:#f1f5f9; --paper:#fff;
+  --ink:#27322e; --muted:#6f7b75; --quiet:#98a19d;
+  --line:#dfe5e1; --line-strong:#a9c4b6;
+  --green:#738f80; --green-dark:#536d5e; --green-soft:#e8efea;
+  --success:#2f8561; --success-soft:#f1f8f4;
+  --warn:#b45309; --warn-soft:#fef3c7;
+  --danger:#b91c1c; --danger-soft:#fee2e2;
+  --gold:#a88d22; --gold-soft:#fdf7e7;
+  --board:#1e2a26; --board-soft:#2c3b35; --board-line:#3d4f47;
+  --font-ui:"Inter","Source Han Sans SC","Noto Sans SC","PingFang SC","Microsoft YaHei UI",sans-serif;
+  --font-mono:"JetBrains Mono","Fira Code","SF Mono",ui-monospace,monospace;
+  --fs-xs:10px; --fs-sm:11px; --fs-base:13px; --fs-md:14px; --fs-lg:16px; --fs-xl:20px; --fs-2xl:26px; --fs-3xl:36px;
+  --sp-1:4px; --sp-2:8px; --sp-3:12px; --sp-4:16px; --sp-5:20px; --sp-6:24px;
+  --r-xs:3px; --r-sm:5px; --r-md:7px; --r-lg:10px;
+}
+*{box-sizing:border-box;margin:0;padding:0}
+body{background:var(--canvas);color:var(--ink);font:var(--fs-base)/1.55 var(--font-ui);-webkit-font-smoothing:antialiased;padding:var(--sp-5)}
+.num{font-family:var(--font-mono);font-variant-numeric:tabular-nums}
+.wrap{max-width:1240px;margin:0 auto}
+.mono-kicker{font:600 var(--fs-xs)/1 var(--font-mono);letter-spacing:.14em;text-transform:uppercase;color:var(--quiet)}
+
+/* ===== 深色战报头（Leetify / 赛后面板语汇） ===== */
+.board{background:var(--board);color:#eef3f0;border-radius:var(--r-lg);padding:var(--sp-5) var(--sp-5) var(--sp-4);margin-bottom:var(--sp-4);position:relative;overflow:hidden}
+.board:after{content:"";position:absolute;inset:0;background:radial-gradient(120% 90% at 12% 0%,rgba(115,143,128,.28),transparent 60%);pointer-events:none}
+.board-top{display:flex;align-items:baseline;gap:var(--sp-4);position:relative;z-index:1}
+.board-title{font-size:var(--fs-xl);font-weight:700;letter-spacing:.02em}
+.board-sub{font:var(--fs-sm) var(--font-mono);color:#8fa79c}
+.board-sub b{color:#eef3f0}
+.sp{flex:1}
+
+.score-line{display:flex;align-items:flex-end;gap:var(--sp-6);margin-top:var(--sp-4);position:relative;z-index:1}
+.kill-box{display:flex;align-items:baseline;gap:var(--sp-3)}
+.kill-box .n{font:700 var(--fs-3xl)/1 var(--font-mono);letter-spacing:-.02em}
+.kill-box .d{font:var(--fs-md) var(--font-mono);color:#8fa79c}
+.kd{display:flex;gap:var(--sp-5);padding-bottom:6px}
+.kd-item{text-align:center;min-width:52px}
+.kd-item .k{font:600 var(--fs-xs)/1 var(--font-mono);letter-spacing:.1em;color:#8fa79c}
+.kd-item .v{font:700 var(--fs-lg)/1.4 var(--font-mono);color:#eef3f0}
+.kd-item.win .v{color:#7fd6a8}
+.kd-item.loss .v{color:#f08a7e}
+.kd-item.warnv .v{color:#f0c878}
+
+/* 三张高光卡 */
+.hl{display:grid;grid-template-columns:repeat(3,1fr);gap:var(--sp-3);margin-top:var(--sp-5);position:relative;z-index:1}
+.hl-card{background:rgba(255,255,255,.055);border:1px solid var(--board-line);border-radius:var(--r-md);padding:var(--sp-3) var(--sp-3) var(--sp-3) var(--sp-4)}
+.hl-card .tag{font:600 var(--fs-xs)/1 var(--font-mono);letter-spacing:.12em;padding:3px 7px;border-radius:var(--r-xs);display:inline-block;margin-bottom:var(--sp-2)}
+.tag.mvp{background:#3a2f12;color:#f5d67a}
+.tag.good{background:#16342a;color:#7fd6a8}
+.tag.bad{background:#3a1a17;color:#f08a7e}
+.hl-card .who{font:600 var(--fs-base) var(--font-ui);color:#eef3f0;margin-bottom:2px}
+.hl-card .why{font-size:var(--fs-sm);color:#9db3a9;line-height:1.5}
+
+/* ===== 统计条 ===== */
+.strip{display:grid;grid-template-columns:repeat(5,1fr);gap:1px;background:var(--line);border:1px solid var(--line);border-radius:var(--r-md);overflow:hidden;margin-bottom:var(--sp-4)}
+.strip div{background:var(--surface);padding:var(--sp-3) var(--sp-4)}
+.strip .k{font:600 var(--fs-xs)/1 var(--font-mono);letter-spacing:.1em;color:var(--quiet);display:block;margin-bottom:5px}
+.strip .v{font:700 var(--fs-lg)/1 var(--font-mono);color:var(--ink)}
+.strip .v small{font:var(--fs-sm) var(--font-ui);color:var(--muted);font-weight:500;margin-left:3px}
+.strip .v.bad{color:var(--danger)}
+.strip .v.warnv{color:var(--warn)}
+.strip .v.good{color:var(--success)}
+
+/* ===== 计分表 ===== */
+.panel{background:var(--surface);border:1px solid var(--line);border-radius:var(--r-lg);overflow:hidden;margin-bottom:var(--sp-4)}
+.panel-head{display:flex;align-items:center;gap:var(--sp-3);padding:var(--sp-3) var(--sp-4);border-bottom:1px solid var(--line);background:var(--sunken)}
+.panel-head h2{font-size:var(--fs-md);font-weight:650}
+.panel-head .hint{font-size:var(--fs-sm);color:var(--quiet)}
+table{width:100%;border-collapse:collapse}
+th{font:600 var(--fs-xs)/1 var(--font-mono);letter-spacing:.08em;color:var(--quiet);text-align:left;padding:9px var(--sp-3);border-bottom:1px solid var(--line);white-space:nowrap}
+td{padding:10px var(--sp-3);border-bottom:1px solid #eef2f0;font-size:var(--fs-base);vertical-align:middle}
+tbody tr:last-child td{border-bottom:0}
+tbody tr:hover{background:#fafcfb}
+tbody tr.alert{background:#fef7f6}
+tbody tr.alert:hover{background:#fdefed}
+td.id{font-family:var(--font-mono);color:var(--muted);font-size:var(--fs-sm)}
+td.cat{color:var(--ink)}
+td.dur{font-family:var(--font-mono);text-align:right;font-size:var(--fs-sm);white-space:nowrap}
+.pill{display:inline-block;font:600 var(--fs-xs)/1.5 var(--font-ui);padding:2px 8px;border-radius:var(--r-full);white-space:nowrap}
+.pill.win{background:var(--success-soft);color:var(--success)}
+.pill.half{background:var(--gold-soft);color:#7a6410}
+.pill.loss{background:var(--danger-soft);color:var(--danger)}
+.eff{width:86px}
+.eff-bar{height:5px;background:#eef2f0;border-radius:3px;overflow:hidden}
+.eff-bar i{display:block;height:100%;border-radius:3px}
+.eff-bar i.up{background:var(--success)}
+.eff-bar i.mid{background:var(--gold)}
+.eff-bar i.down{background:var(--danger)}
+.eff-txt{font:var(--fs-xs) var(--font-mono);color:var(--quiet);margin-top:3px}
+.fix{font-size:var(--fs-sm);color:var(--muted)}
+.fix b{color:var(--danger);font-weight:600}
+.fix.ok{color:var(--success)}
+
+/* ===== 错误热力（按解题步骤定位失分位置） ===== */
+.heat{display:grid;grid-template-columns:120px repeat(4,1fr);gap:var(--sp-2);align-items:center}
+.heat .hd{font:600 var(--fs-xs)/1 var(--font-mono);letter-spacing:.06em;color:var(--quiet);text-align:center;padding-bottom:2px}
+.heat .rowl{font-size:var(--fs-sm);color:var(--muted);text-align:right;padding-right:var(--sp-2)}
+.heat .cell{border-radius:var(--r-sm);padding:9px 0;text-align:center;font:600 var(--fs-sm) var(--font-mono);color:var(--ink);background:var(--sunken)}
+.heat .cell.c1{background:#f1f8f4;color:var(--success)}
+.heat .cell.c2{background:var(--gold-soft);color:#7a6410}
+.heat .cell.c3{background:#fbd9d2;color:var(--danger)}
+.heat .cell.c0{color:#c3ccc8;background:#fafcfb}
+
+/* ===== 失误清单 ===== */
+.wd{display:grid;grid-template-columns:1fr 1fr;gap:var(--sp-4);padding:var(--sp-4)}
+.wd-col h3{font:600 var(--fs-xs)/1 var(--font-mono);letter-spacing:.1em;color:var(--quiet);margin-bottom:var(--sp-3)}
+.wd-item{display:flex;gap:var(--sp-3);padding:9px 0;border-bottom:1px dashed var(--line)}
+.wd-item:last-child{border-bottom:0}
+.wd-item .ic{flex:0 0 18px;font-size:13px;line-height:1.5}
+.wd-item .t{font-size:var(--fs-sm);color:var(--ink);line-height:1.5}
+.wd-item .t em{font-style:normal;font-family:var(--font-mono);color:var(--muted)}
+
+.act{display:flex;gap:var(--sp-3);padding:var(--sp-4);border-top:1px solid var(--line);background:var(--sunken)}
+.btn{border:1px solid var(--line-strong);background:var(--surface);color:var(--green-dark);font:600 var(--fs-sm) var(--font-ui);padding:8px 14px;border-radius:var(--r-sm);cursor:pointer}
+.btn.pri{background:var(--green);border-color:var(--green);color:#fff}
+.foot{text-align:center;font-size:var(--fs-sm);color:var(--quiet);margin-top:var(--sp-4)}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <!-- 战报头 -->
+  <div class="board">
+    <div class="board-top">
+      <div class="board-title">本组战报 · 8 题</div>
+      <div class="board-sub">考场组 <b>#2026-09-03-A</b> · 高数+线代 · 总耗时 <b>30:17</b></div>
+      <div class="sp"></div>
+      <div class="board-sub">判定 <b>4 攻克 / 1 半克 / 3 失守</b></div>
+    </div>
+
+    <div class="score-line">
+      <div class="kill-box">
+        <span class="n">50%</span>
+        <span class="d">攻克率</span>
+      </div>
+      <div class="sp"></div>
+      <div class="kd">
+        <div class="kd-item win"><span class="k">K</span><span class="v">4</span></div>
+        <div class="kd-item loss"><span class="k">D</span><span class="v">3</span></div>
+        <div class="kd-item warnv"><span class="k">A</span><span class="v">1</span></div>
+        <div class="kd-item"><span class="k">ADR</span><span class="v">3.6</span></div>
+        <div class="kd-item"><span class="k">HS%</span><span class="v">38</span></div>
+      </div>
+    </div>
+
+    <div class="hl">
+      <div class="hl-card">
+        <span class="tag mvp">MVP</span>
+        <div class="who">#1982 · 泰勒多项式</div>
+        <div class="why">难度 3、首次 254″ 独立做对，是本组唯一硬啃下来的 d3 题</div>
+      </div>
+      <div class="hl-card">
+        <span class="tag good">CLUTCH</span>
+        <div class="who">#10587 · 二重积分</div>
+        <div class="why">808″ → 45″，降到 1/18，唯一达到「真掌握」判据的题</div>
+      </div>
+      <div class="hl-card">
+        <span class="tag bad">白给</span>
+        <div class="who">#7076 · 含根式二重积分</div>
+        <div class="why">115″ → 53″ 仍错。比第一次快一倍还照错 = 错误路径已固化</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- 统计条 -->
+  <div class="strip">
+    <div><span class="k">正确率</span><span class="v num warnv">50<small>%</small></span></div>
+    <div><span class="k">真掌握</span><span class="v num">3<small>/8</small></span></div>
+    <div><span class="k">路径固化</span><span class="v num bad">2<small>题</small></span></div>
+    <div><span class="k">假掌握</span><span class="v num warnv">1<small>题</small></span></div>
+    <div><span class="k">超止损线</span><span class="v num bad">3<small>题 &gt;8′</small></span></div>
+  </div>
+
+  <!-- 计分表 -->
+  <div class="panel">
+    <div class="panel-head">
+      <h2>逐题计分板</h2>
+      <span class="hint">降幅 = 复习耗时 ÷ 首次耗时，低于 1/3 才算真掌握</span>
+      <div class="sp"></div>
+      <span class="mono-kicker">SCOREBOARD</span>
+    </div>
+    <table>
+      <thead>
+        <tr>
+          <th style="width:64px">#</th>
+          <th>考点</th>
+          <th style="width:74px">判定</th>
+          <th style="width:78px">首次</th>
+          <th style="width:78px">本次</th>
+          <th style="width:104px">降幅</th>
+          <th>断点 / 备注</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr class="alert">
+          <td class="id">#7076</td>
+          <td class="cat">二重积分 · 含根式</td>
+          <td><span class="pill loss">失守</span></td>
+          <td class="dur">1′55″</td>
+          <td class="dur">0′53″</td>
+          <td><div class="eff"><div class="eff-bar"><i class="down" style="width:46%"></i></div><div class="eff-txt">0.46 · 仍错 ⚠</div></div></td>
+          <td class="fix"><b>路径固化</b>：根号内为分式，未做整式换元就直接三角换元</td>
+        </tr>
+        <tr class="alert">
+          <td class="id">#10590</td>
+          <td class="cat">一元积分 · 分部</td>
+          <td><span class="pill loss">失守</span></td>
+          <td class="dur">11′17″</td>
+          <td class="dur">0′57″</td>
+          <td><div class="eff"><div class="eff-bar"><i class="down" style="width:8%"></i></div><div class="eff-txt">0.08 · 仍错 ⚠</div></div></td>
+          <td class="fix"><b>路径固化</b>：分部方向选反，幂函数没往 d 里放</td>
+        </tr>
+        <tr>
+          <td class="id">#1982</td>
+          <td class="cat">级数 · 泰勒多项式</td>
+          <td><span class="pill loss">失守</span></td>
+          <td class="dur">4′14″</td>
+          <td class="dur">4′14″</td>
+          <td><div class="eff"><div class="eff-bar"><i class="mid" style="width:100%"></i></div><div class="eff-txt">首次 · 无对照</div></div></td>
+          <td class="fix">同题已做 4 次，<b>小样本不算硬伤</b>，换题再验</td>
+        </tr>
+        <tr>
+          <td class="id">#1052</td>
+          <td class="cat">线代 · 抽象逆矩阵</td>
+          <td><span class="pill half">半克</span></td>
+          <td class="dur">20′57″</td>
+          <td class="dur">10′56″</td>
+          <td><div class="eff"><div class="eff-bar"><i class="mid" style="width:52%"></i></div><div class="eff-txt">0.52 · 未达标</div></div></td>
+          <td class="fix">只降一半，<b>假掌握</b>：步骤背下来了，入口没识别</td>
+        </tr>
+        <tr>
+          <td class="id">#148</td>
+          <td class="cat">线代 · 抽象逆</td>
+          <td><span class="pill win">攻克</span></td>
+          <td class="dur">2′18″</td>
+          <td class="dur">2′18″</td>
+          <td><div class="eff"><div class="eff-bar"><i class="up" style="width:100%"></i></div><div class="eff-txt">首次 · 达标 &lt;140″</div></div></td>
+          <td class="fix ok">抽象逆验收通过（判据 &lt;140″）</td>
+        </tr>
+        <tr>
+          <td class="id">#10578</td>
+          <td class="cat">一元积分 · 换元</td>
+          <td><span class="pill win">攻克</span></td>
+          <td class="dur">1′45″</td>
+          <td class="dur">0′12″</td>
+          <td><div class="eff"><div class="eff-bar"><i class="up" style="width:11%"></i></div><div class="eff-txt">0.11 ✅</div></div></td>
+          <td class="fix ok">降到 1/9，已固化</td>
+        </tr>
+        <tr>
+          <td class="id">#7090</td>
+          <td class="cat">多元微分 · 链式</td>
+          <td><span class="pill win">攻克</span></td>
+          <td class="dur">12′03″</td>
+          <td class="dur">3′11″</td>
+          <td><div class="eff"><div class="eff-bar"><i class="up" style="width:26%"></i></div><div class="eff-txt">0.26 ✅</div></div></td>
+          <td class="fix ok">降到 1/4，已固化</td>
+        </tr>
+        <tr>
+          <td class="id">#10587</td>
+          <td class="cat">二重积分 · 次序交换</td>
+          <td><span class="pill win">攻克</span></td>
+          <td class="dur">13′28″</td>
+          <td class="dur">0′45″</td>
+          <td><div class="eff"><div class="eff-bar"><i class="up" style="width:6%"></i></div><div class="eff-txt">0.06 ✅</div></div></td>
+          <td class="fix ok">降到 1/18，本组最大提速</td>
+        </tr>
+      </tbody>
+    </table>
+  </div>
+
+  <!-- 高光 / 失误 -->
+  <div class="panel">
+    <div class="panel-head"><h2>本组高光与失误</h2><div class="sp"></div><span class="mono-kicker">HIGHLIGHTS / WRONG-DOINGS</span></div>
+    <div class="wd">
+      <div class="wd-col">
+        <h3>✓ HIGHLIGHTS</h3>
+        <div class="wd-item"><span class="ic">🏅</span><span class="t">独立啃下 d3 难度题 <em>#1982</em>，没靠提示</span></div>
+        <div class="wd-item"><span class="ic">⚡</span><span class="t"><em>#10587</em> 从 13′28″ 压到 45″，方法入口已自动化</span></div>
+        <div class="wd-item"><span class="ic">🎯</span><span class="t"><em>#148</em> 抽象逆 138″ 达标，验收线 &lt;140″</span></div>
+        <div class="wd-item"><span class="ic">📈</span><span class="t">3 题复习耗时降到首次 1/3 以下 = 真掌握</span></div>
+      </div>
+      <div class="wd-col">
+        <h3>✕ WRONG-DOINGS</h3>
+        <div class="wd-item"><span class="ic">🔁</span><span class="t"><b>路径固化 ×2</b>：<em>#7076</em>、<em>#10590</em> 复习比首次快 2–12 倍仍照错</span></div>
+        <div class="wd-item"><span class="ic">⏱</span><span class="t"><b>超 8′ 硬止损 ×3</b>：<em>#1052</em> 21′、<em>#7090</em> 12′、<em>#10587</em> 13′</span></div>
+        <div class="wd-item"><span class="ic">🎭</span><span class="t"><b>假掌握 ×1</b>：<em>#1052</em> 只降 52%，会背步骤不会识别</span></div>
+        <div class="wd-item"><span class="ic">📉</span><span class="t">8 题里 5 题耗时超过 d1 预算 3.2′，速度普遍偏慢</span></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- 失分位置热力 -->
+  <div class="panel">
+    <div class="panel-head"><h2>失分位置热力</h2><span class="hint">按解题步骤统计断点落在哪一步（数字 = 断点数）</span><div class="sp"></div><span class="mono-kicker">BREAKPOINT HEATMAP</span></div>
+    <div style="padding:var(--sp-4)">
+      <div class="heat">
+        <div></div><div class="hd">设式 / 建模</div><div class="hd">变换 / 换元</div><div class="hd">运算 / 推导</div><div class="hd">结论 / 检验</div>
+        <div class="rowl">错 3 题</div>
+        <div class="cell c3">2</div><div class="cell c3">2</div><div class="cell c2">1</div><div class="cell c0">0</div>
+        <div class="rowl">半对 1 题</div>
+        <div class="cell c0">0</div><div class="cell c2">1</div><div class="cell c2">1</div><div class="cell c0">0</div>
+        <div class="rowl">对 4 题</div>
+        <div class="cell c1">0</div><div class="cell c1">0</div><div class="cell c1">0</div><div class="cell c1">0</div>
+      </div>
+      <div style="margin-top:var(--sp-3);font-size:var(--fs-sm);color:var(--muted)">
+        <b style="color:var(--ink)">读法</b>：断点集中在「设式」与「换元」两步，运算环节几乎没有错 —— 病灶是<b>方法入口检索失败</b>，不是计算能力。
+      </div>
+    </div>
+  </div>
+
+  <div class="act">
+    <button class="btn pri">排入明日复习（3 题）</button>
+    <button class="btn">固化题加练否定式规则（2 题）</button>
+    <button class="btn">复制本组战报给 AI</button>
+    <div class="sp"></div>
+    <button class="btn">导出 PNG</button>
+  </div>
+
+  <div class="foot">E4 · 赛后数据板｜数据取自你库里真实题号 #7076 / #10590 / #1982 / #1052 / #148 / #10578 / #7090 / #10587</div>
+</div>
+</body>
+</html>

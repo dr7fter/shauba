@@ -1,0 +1,418 @@
+<!DOCTYPE html>
+<html lang="zh-CN" data-theme="warm">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>批改报告 · E2 分叉对照</title>
+<style>
+:root{
+  --canvas:#faf6ee; --surface:#fdfaf2; --sunken:#f6f1e6; --paper:#fdfaf2;
+  --ink:#29241e; --muted:#796e62; --quiet:#9e9386; --on-color:#fffdf8;
+  --line:#e8ded2; --line-strong:#cbb694;
+  --line-success:#a9c4a4; --line-warn:#ddc08c; --line-danger:#dcb4ab; --line-info:#aec2cc;
+  --line-violet:#cfc4de; --line-gold:#dcc396;
+  --green:#49785a; --green-dark:#2f523c; --green-soft:#eef3eb;
+  --success:#49785a; --success-strong:#3c6549; --success-soft:#eef3eb;
+  --ink-on-soft:#24402f;
+  --warn:#b45309; --warn-strong:#78350f; --warn-soft:#f6ead2;
+  --danger:#a24f47; --danger-strong:#6d2320; --danger-soft:#f4e6e2;
+  --info:#2f627d; --info-soft:#e7edf0;
+  --violet:#6a5fa8; --violet-strong:#4a41b8; --violet-soft:#f2edfa;
+  --gold:#8f7a2a; --gold-strong:#5f4408; --gold-soft:#f8efd8;
+  --overlay-ink-1:rgba(70,55,40,.14); --overlay-ink-2:rgba(70,55,40,.06);
+  --shadow-1:0 5px 18px rgba(70,55,40,.05);
+  --shadow-2:0 12px 30px rgba(60,45,30,.18);
+  --font-ui:"Inter","Source Han Sans SC","Noto Sans SC","PingFang SC","Microsoft YaHei UI",-apple-system,sans-serif;
+  --font-stem:"LXGW WenKai Screen","LXGW WenKai","霞鹜文楷","Noto Serif SC","Songti SC",serif;
+  --font-mono:"JetBrains Mono","Fira Code","SF Mono",ui-monospace,monospace;
+  --fs-xs:11px; --fs-sm:12px; --fs-base:13px; --fs-md:14px; --fs-lg:16px;
+  --fs-xl:18px; --fs-2xl:22px; --fs-stem:20px;
+  --sp-1:4px; --sp-2:8px; --sp-3:12px; --sp-4:16px; --sp-5:20px; --sp-6:24px; --sp-8:32px;
+  --r-xs:4px; --r-sm:6px; --r-md:8px; --r-lg:12px; --r-full:999px;
+  --dur-1:120ms;
+}
+*{box-sizing:border-box;margin:0;padding:0}
+body{background:var(--canvas);color:var(--ink);font:var(--fs-base)/1.6 var(--font-ui);-webkit-font-smoothing:antialiased;padding:var(--sp-5)}
+.num{font-family:var(--font-mono);font-variant-numeric:tabular-nums}
+.stem{font-family:var(--font-stem)}
+.wrap{max-width:1320px;margin:0 auto}
+
+.top{display:flex;align-items:center;gap:var(--sp-4);background:var(--surface);border:1px solid var(--line);border-radius:var(--r-lg);padding:var(--sp-3) var(--sp-4);margin-bottom:var(--sp-3);box-shadow:var(--shadow-1)}
+.top .ttl{font-size:var(--fs-md);font-weight:650}
+.top .meta{font-size:var(--fs-sm);color:var(--quiet)}
+.top .sp{flex:1}
+.seg{display:inline-flex;background:var(--sunken);border-radius:var(--r-md);padding:2px}
+.seg button{border:0;background:transparent;font:500 var(--fs-sm) var(--font-ui);color:var(--muted);padding:5px 12px;border-radius:var(--r-sm);cursor:pointer}
+.seg button.on{background:var(--surface);color:var(--ink);font-weight:600;box-shadow:var(--shadow-1)}
+.ib{width:30px;height:30px;border:1px solid var(--line);background:var(--surface);border-radius:var(--r-md);color:var(--muted);cursor:pointer;font-size:12px}
+
+.grid{display:grid;grid-template-columns:250px minmax(0,1fr) 300px;gap:var(--sp-3);align-items:start}
+.col{background:var(--surface);border:1px solid var(--line);border-radius:var(--r-lg);overflow:hidden;box-shadow:var(--shadow-1)}
+.hd{padding:10px var(--sp-4);background:var(--sunken);border-bottom:1px solid var(--line);display:flex;align-items:center;justify-content:space-between;gap:8px}
+.hd h2{font-size:var(--fs-base);font-weight:650}
+.hd .hint{font-size:var(--fs-xs);color:var(--quiet);font-family:var(--font-mono)}
+
+/* 左栏：题索引 + 分叉步 + 耗时压缩 */
+.pitem{display:grid;grid-template-columns:1fr auto;gap:2px var(--sp-2);padding:9px var(--sp-4);cursor:pointer;border-left:2px solid transparent;border-bottom:1px solid var(--line)}
+.pitem:hover{background:var(--sunken)}
+.pitem.on{background:var(--danger-soft);border-left-color:var(--danger)}
+.pitem.ok.on{background:var(--success-soft);border-left-color:var(--success)}
+.pitem .q{font-size:var(--fs-base);font-weight:600}
+.pitem .c{font-size:var(--fs-xs);color:var(--muted);grid-column:1;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.pitem .fk{font-size:10.5px;font-weight:700;color:var(--danger);background:var(--surface);border:1px solid var(--line-danger);border-radius:var(--r-xs);padding:0 5px;justify-self:start;grid-column:1}
+.pitem .fk.n{color:var(--success);border-color:var(--line-success)}
+.pitem .rt{text-align:right;grid-row:1/4;grid-column:2;align-self:center;line-height:1.3}
+.pitem .rt b{display:block;font-size:var(--fs-sm);font-family:var(--font-mono)}
+.pitem .rt .cmp{font-size:10px;color:var(--quiet);font-family:var(--font-mono)}
+.pitem .rt .cmp b{color:var(--danger)}
+.pitem .bars{display:flex;gap:2px;align-items:flex-end;height:16px;margin-top:3px}
+.pitem .bars i{width:4px;background:var(--line-strong);border-radius:1px;display:block}
+.pitem .bars i.now{background:var(--danger)}
+.leg{padding:8px var(--sp-4);font-size:var(--fs-xs);color:var(--quiet);line-height:1.7;border-bottom:1px solid var(--line)}
+
+/* 中：题干 + 分叉树 + 对照表 */
+.qhd{padding:var(--sp-4) var(--sp-5);border-bottom:1px solid var(--line);background:var(--paper)}
+.qhd .path{font-size:var(--fs-xs);color:var(--muted);display:flex;gap:8px;align-items:center;margin-bottom:5px}
+.qhd .path .id{font-family:var(--font-mono);color:var(--green-dark);font-weight:600}
+.qtitle{font-size:var(--fs-xl);font-weight:650;margin-bottom:var(--sp-2)}
+.chips{display:flex;gap:5px;flex-wrap:wrap}
+.chip{font-size:var(--fs-xs);font-weight:600;padding:2px 7px;border-radius:var(--r-xs)}
+.chip.err{background:var(--danger-soft);color:var(--danger);border:1px solid var(--line-danger)}
+.chip.mute{background:var(--sunken);color:var(--muted);border:1px solid var(--line)}
+.qbd{padding:var(--sp-5)}
+.stembox{font-family:var(--font-stem);font-size:var(--fs-stem);line-height:1.8;background:var(--paper);border:1px solid var(--line);border-left:3px solid var(--green);border-radius:var(--r-md);padding:var(--sp-4) var(--sp-5);margin-bottom:var(--sp-4)}
+
+/* 入口分叉树 */
+.forkmap{border:1px solid var(--line);border-radius:var(--r-md);background:var(--sunken);padding:var(--sp-3) var(--sp-4);margin-bottom:var(--sp-4)}
+.forkmap .cap{font-size:var(--fs-xs);font-weight:700;letter-spacing:.05em;color:var(--quiet);margin-bottom:var(--sp-2)}
+.fm{display:grid;grid-template-columns:auto 1fr;gap:0 var(--sp-3);align-items:stretch}
+.fm .root{grid-row:1/3;align-self:center;background:var(--surface);border:1px solid var(--line-strong);border-radius:var(--r-sm);padding:6px 9px;font-size:var(--fs-sm);font-weight:600;text-align:center;line-height:1.4}
+.fm .root small{display:block;font-size:10.5px;color:var(--quiet);font-weight:400;font-family:var(--font-mono)}
+.branch{position:relative;padding:5px 0 5px var(--sp-5);margin:2px 0;border-radius:var(--r-sm)}
+.branch::before{content:"";position:absolute;left:0;top:50%;width:var(--sp-4);height:1px;background:var(--line-strong)}
+.branch.bad{background:var(--danger-soft);border:1px solid var(--line-danger)}
+.branch.good{background:var(--success-soft);border:1px solid var(--line-success)}
+.branch .bt{font-size:var(--fs-base);font-weight:650;display:flex;align-items:center;gap:6px}
+.branch.bad .bt{color:var(--danger-strong)}
+.branch.good .bt{color:var(--success-strong)}
+.branch .tag{font-size:10.5px;font-weight:700;padding:0 5px;border-radius:var(--r-xs)}
+.branch.bad .tag{background:var(--danger);color:var(--on-color)}
+.branch.good .tag{background:var(--success);color:var(--on-color)}
+.branch .bd{font-size:var(--fs-xs);color:var(--muted);margin-top:2px;font-family:var(--font-stem)}
+.fm .spine{grid-row:1/3;width:var(--sp-4);position:relative;align-self:stretch;margin-left:-8px}
+.fm .spine::before{content:"";position:absolute;left:0;top:20%;bottom:50%;width:1px;background:var(--line-strong)}
+.fm .spine::after{content:"";position:absolute;left:0;top:50%;bottom:20%;width:1px;background:var(--line-strong)}
+
+/* 对照表 */
+.cmphead{display:grid;grid-template-columns:1fr 42px 1fr;gap:0;margin-bottom:var(--sp-2)}
+.cmphead .h{font-size:var(--fs-xs);font-weight:700;letter-spacing:.04em;padding:5px 10px;border-radius:var(--r-sm)}
+.cmphead .h.mine{background:var(--danger-soft);color:var(--danger-strong);border:1px solid var(--line-danger)}
+.cmphead .h.std{background:var(--success-soft);color:var(--success-strong);border:1px solid var(--line-success)}
+.row{display:grid;grid-template-columns:1fr 42px 1fr;gap:0;border-top:1px solid var(--line)}
+.row:first-of-type{border-top:0}
+.row .cell{padding:9px 11px;font-family:var(--font-stem);font-size:var(--fs-md);line-height:1.75}
+.row .cell .sn{display:block;font:700 var(--fs-xs) var(--font-ui);color:var(--quiet);letter-spacing:.04em;margin-bottom:3px}
+.row .mid{display:flex;align-items:center;justify-content:center;position:relative}
+.row .mid::before{content:"";position:absolute;top:0;bottom:0;width:1px;background:var(--line)}
+.row .mid .dot{width:20px;height:20px;border-radius:50%;display:grid;place-items:center;font:700 11px var(--font-ui);background:var(--surface);border:1px solid var(--line);color:var(--quiet);z-index:1}
+.row.fork{background:var(--danger-soft)}
+.row.fork .mid .dot{background:var(--danger);border-color:var(--danger);color:var(--on-color);font-size:12px}
+.row.fork .cell{font-weight:600}
+.row.after{opacity:.62}
+.row.after .cell{color:var(--muted)}
+.row.win{background:var(--success-soft)}
+.row.win .mid .dot{background:var(--success);border-color:var(--success);color:var(--on-color)}
+.row .cell mark{background:var(--warn-soft);color:var(--warn-strong);padding:0 3px;border-radius:2px;font-weight:700}
+.row .cell .kill{color:var(--danger-strong);font-weight:700;text-decoration:line-through;text-decoration-color:var(--danger);text-decoration-thickness:2px}
+
+/* 断点结论条 */
+.verdictline{display:flex;gap:var(--sp-3);align-items:flex-start;background:var(--ink);color:var(--on-color);border-radius:var(--r-md);padding:var(--sp-3) var(--sp-4);margin-top:var(--sp-4)}
+.verdictline .vk{font-size:var(--fs-xs);font-weight:700;letter-spacing:.05em;color:var(--gold-bright,#ffdf9e);flex:none;padding-top:2px}
+.verdictline .vt{font-family:var(--font-stem);font-size:var(--fs-md);line-height:1.8}
+.verdictline .vt b{color:#ffb4a2;font-weight:700}
+
+.actbar{padding:var(--sp-3) var(--sp-5);background:var(--sunken);border-top:1px solid var(--line);display:flex;align-items:center;justify-content:space-between;gap:var(--sp-3)}
+.actbar .nav{font-size:var(--fs-xs);color:var(--quiet);display:flex;gap:5px;align-items:center}
+.actbar kbd{font-family:var(--font-mono);background:var(--surface);border:1px solid var(--line);border-radius:var(--r-xs);padding:1px 5px;font-size:10.5px}
+.actbar .btns{display:flex;gap:6px}
+.btn{font:500 var(--fs-sm) var(--font-ui);padding:6px 12px;border:1px solid var(--line);background:var(--surface);border-radius:var(--r-md);color:var(--ink);cursor:pointer}
+.btn.pri{background:var(--green);border-color:var(--green);color:var(--on-color);font-weight:600}
+
+/* 右：维度对比 + 手法库 */
+.sec{padding:var(--sp-4);border-bottom:1px solid var(--line)}
+.sec h3{font-size:var(--fs-base);font-weight:650;margin-bottom:var(--sp-2);display:flex;justify-content:space-between;align-items:center;gap:8px}
+.sec h3 small{font-size:var(--fs-xs);color:var(--quiet);font-weight:400}
+.dim{margin-bottom:var(--sp-3)}
+.dim .dn{display:flex;justify-content:space-between;align-items:baseline;font-size:var(--fs-xs);margin-bottom:3px}
+.dim .dn .lb{color:var(--muted);font-weight:600}
+.dim .dn .vs{font-family:var(--font-mono);color:var(--quiet)}
+.dim .dn .v{font-family:var(--font-mono);font-weight:700;font-size:var(--fs-base)}
+.dim .dn .v.down{color:var(--danger)}
+.dim .dn .v.up{color:var(--success)}
+.dbar{position:relative;height:6px;background:var(--overlay-ink-1);border-radius:3px;overflow:hidden}
+.dbar i{position:absolute;top:0;bottom:0;border-radius:3px;display:block}
+.dbar .base{left:0;background:var(--line-strong)}
+.dbar .cur{background:var(--green)}
+.dbar .cur.down{background:var(--danger)}
+.dbar .cur.up{background:var(--success)}
+.dnote{font-size:var(--fs-xs);color:var(--quiet);line-height:1.6;margin-top:5px;background:var(--sunken);border-radius:var(--r-sm);padding:6px 8px}
+.dnote b{color:var(--danger);font-weight:700}
+
+.tk{display:flex;align-items:center;gap:8px;padding:7px 0;border-top:1px solid var(--line)}
+.tk:first-of-type{border-top:0}
+.tk .ic{width:22px;height:22px;border-radius:var(--r-xs);display:grid;place-items:center;font:700 11px var(--font-ui);flex:none}
+.tk .ic.miss{background:var(--danger-soft);color:var(--danger);border:1px solid var(--line-danger)}
+.tk .ic.wrong{background:var(--warn-soft);color:var(--warn-strong);border:1px solid var(--line-warn)}
+.tk .ic.hit{background:var(--success-soft);color:var(--success);border:1px solid var(--line-success)}
+.tk .nm{flex:1;font-size:var(--fs-base)}
+.tk .nm .s{display:block;font-size:var(--fs-xs);color:var(--quiet)}
+.tk .mk{font-size:10.5px;font-weight:700;font-family:var(--font-mono)}
+.tk .mk.miss{color:var(--danger)}
+.tk .mk.wrong{color:var(--warn)}
+.tk .mk.hit{color:var(--success)}
+
+.foot{text-align:center;font-size:var(--fs-xs);color:var(--quiet);margin-top:var(--sp-4);line-height:1.8}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <div class="top">
+    <span class="ttl">批改报告</span>
+    <span class="meta">2026-09-02 · 8 题 · 分叉于第 1 步的有 2 题</span>
+    <span class="sp"></span>
+    <div class="seg"><button class="on">卷面对照</button><button>长卷通览</button></div>
+    <button class="ib" title="草稿">▤</button><button class="ib" title="刷新">↻</button><button class="ib" title="关闭">✕</button>
+  </div>
+
+  <div class="grid">
+
+    <!-- 左：题索引，行内直接显示"分叉于第几步" -->
+    <aside class="col">
+      <div class="hd"><h2>题目索引</h2><span class="hint">J / K</span></div>
+      <div class="leg">左列灰点为首次耗时，红点为本次。<br>缩得快却照错 = 错误路径自动化。</div>
+
+      <div class="pitem on">
+        <div class="q num">#7076</div>
+        <div class="c">一元积分 · 含根式</div>
+        <div class="fk">① 落笔即分叉</div>
+        <div class="rt"><b>0′53″</b><span class="cmp">115″→<b>53″</b></span>
+          <div class="bars"><i style="height:15px"></i><i class="now" style="height:7px"></i></div>
+        </div>
+      </div>
+      <div class="pitem">
+        <div class="q num">#10590</div>
+        <div class="c">多元微分 · 复合函数求导</div>
+        <div class="fk">① 落笔即分叉</div>
+        <div class="rt"><b>0′57″</b><span class="cmp">677″→<b>57″</b></span>
+          <div class="bars"><i style="height:16px"></i><i class="now" style="height:3px"></i></div>
+        </div>
+      </div>
+      <div class="pitem">
+        <div class="q num">#1982</div>
+        <div class="c">一元微分 · 泰勒多项式</div>
+        <div class="fk">③ 阶数取错</div>
+        <div class="rt"><b>6′12″</b><span class="cmp">第 4 次 · 1/4</span>
+          <div class="bars"><i style="height:9px"></i><i class="now" style="height:12px"></i></div>
+        </div>
+      </div>
+      <div class="pitem">
+        <div class="q num">#1052</div>
+        <div class="c">一元积分 · 变限积分</div>
+        <div class="fk n">④ 收尾慢，路径对</div>
+        <div class="rt"><b>10′56″</b><span class="cmp">1257″→656″</span>
+          <div class="bars"><i style="height:16px"></i><i class="now" style="height:9px"></i></div>
+        </div>
+      </div>
+      <div class="pitem ok">
+        <div class="q num">#148</div>
+        <div class="c">线代 · 抽象逆</div>
+        <div class="fk n">无分叉</div>
+        <div class="rt"><b>2′12″</b><span class="cmp">达标</span>
+          <div class="bars"><i style="height:8px"></i><i class="now" style="height:8px"></i></div>
+        </div>
+      </div>
+      <div class="pitem ok">
+        <div class="q num">#10578</div>
+        <div class="c">一元积分 · 分部积分</div>
+        <div class="fk n">无分叉</div>
+        <div class="rt"><b>0′12″</b><span class="cmp">真掌握</span>
+          <div class="bars"><i style="height:6px"></i><i class="now" style="height:2px"></i></div>
+        </div>
+      </div>
+      <div class="pitem ok">
+        <div class="q num">#7090</div>
+        <div class="c">线代 · 含参方程组</div>
+        <div class="fk n">无分叉</div>
+        <div class="rt"><b>3′11″</b><span class="cmp">已固化</span>
+          <div class="bars"><i style="height:10px"></i><i class="now" style="height:9px"></i></div>
+        </div>
+      </div>
+      <div class="pitem ok">
+        <div class="q num">#10587</div>
+        <div class="c">一元积分 · 换元法</div>
+        <div class="fk n">无分叉</div>
+        <div class="rt"><b>0′45″</b><span class="cmp">真掌握</span>
+          <div class="bars"><i style="height:7px"></i><i class="now" style="height:5px"></i></div>
+        </div>
+      </div>
+    </aside>
+
+    <!-- 中：分叉对照 -->
+    <main class="col">
+      <div class="qhd">
+        <div class="path"><span class="id">#7076</span><span>高等数学 / 一元函数积分学 / 含根式 · 根号加比根号减</span></div>
+        <div class="qtitle">含根式分式积分</div>
+        <div class="chips">
+          <span class="chip err">错 · 分叉于第 1 步</span>
+          <span class="chip mute num">本次 0′53″ · 首次 1′55″</span>
+        </div>
+      </div>
+
+      <div class="qbd">
+        <div class="stembox">求 $\displaystyle\int_0^1 \frac{\sqrt{x+1}}{\sqrt{x+1}+\sqrt{1-x}}\,\mathrm{d}x$.</div>
+
+        <!-- 入口分叉树 -->
+        <div class="forkmap">
+          <div class="cap">入口分叉 · 你在这里选了 A</div>
+          <div class="fm">
+            <div class="root">题干结构<small>两个根号</small></div>
+            <div class="branch bad">
+              <div class="bt"><span class="tag">你走的</span>A · 三角换元 $x=\sin^2 t$</div>
+              <div class="bd">根号未消灭，被积式变三角有理式，越算越繁 → ✕ 死路</div>
+            </div>
+            <div class="branch good">
+              <div class="bt"><span class="tag">正解</span>B · 整体换元 $t=\sqrt{x+1}$</div>
+              <div class="bd">一次整式 → 整式换元；再由 $f(x)+f(1-x)=1$ 一步得 $I=\tfrac12$</div>
+            </div>
+          </div>
+        </div>
+
+        <!-- 双栏对照 -->
+        <div class="cmphead">
+          <div class="h mine">我的推导（按草稿还原）</div>
+          <div></div>
+          <div class="h std">标准路径</div>
+        </div>
+
+        <div class="row fork">
+          <div class="cell"><span class="sn">① 换元选择</span><span class="kill">设 $x=\sin^2 t$</span></div>
+          <div class="mid"><span class="dot">⤬</span></div>
+          <div class="cell"><span class="sn">① 换元选择</span>整体设 $t^2=x+1$</div>
+        </div>
+
+        <div class="row after">
+          <div class="cell"><span class="sn">② 代入化简</span>$\mathrm{d}x=2\sin t\cos t\,\mathrm{d}t$，<mark>根号仍在</mark>，分子分母各带 $\sqrt{1+\sin^2t}$、$\sqrt{1-\sin^2t}$</div>
+          <div class="mid"><span class="dot">·</span></div>
+          <div class="cell"><span class="sn">② 代入化简</span>$\mathrm{d}x=2t\,\mathrm{d}t$，根号整体被吸收</div>
+        </div>
+
+        <div class="row after">
+          <div class="cell"><span class="sn">③ 计算</span>三角有理式，通分后无法闭合，到此停笔交卷</div>
+          <div class="mid"><span class="dot">·</span></div>
+          <div class="cell"><span class="sn">③ 观察对称性</span>$x\mapsto 1-x$ 时两项互换，$f(x)+f(1-x)=1$</div>
+        </div>
+
+        <div class="row win">
+          <div class="cell"><span class="sn">④ 结果</span>未得出</div>
+          <div class="mid"><span class="dot">✓</span></div>
+          <div class="cell"><span class="sn">④ 结果</span>$2I=\int_0^1 1\,\mathrm{d}x=1$，故 $I=\dfrac12$</div>
+        </div>
+
+        <div class="verdictline">
+          <span class="vk">断点</span>
+          <span class="vt">第 ① 步选 A 之后，后面三步全是<b>无效功</b>：结构越算越坏，不存在"算到底也能对"的可能。所以这道题要练的不是计算，是<b>落笔前那 30 秒</b>。</span>
+        </div>
+      </div>
+
+      <div class="actbar">
+        <span class="nav"><kbd>J</kbd> 下一题 <kbd>K</kbd> 上一题</span>
+        <span class="btns">
+          <button class="btn">▤ 对照草稿图</button>
+          <button class="btn">⧉ 复制给 AI</button>
+          <button class="btn">只练第 ① 步</button>
+          <button class="btn pri">排入明日复习</button>
+        </span>
+      </div>
+    </main>
+
+    <!-- 右：维度对比（修正"用全卷均值当单题分"）+ 手法库 -->
+    <aside class="col">
+      <div class="hd"><h2>本题 vs 我的基线</h2><span class="hint">n=30</span></div>
+
+      <div class="sec">
+        <h3>维度对比 <small>本题 / 30 场基线</small></h3>
+
+        <div class="dim">
+          <div class="dn"><span class="lb">策略洞察</span><span class="vs">2.1 / 5.9</span><span class="v down">▼ 3.8</span></div>
+          <div class="dbar"><i class="base" style="width:59%"></i><i class="cur down" style="width:21%"></i></div>
+        </div>
+        <div class="dim">
+          <div class="dn"><span class="lb">方法调用</span><span class="vs">3.4 / 6.1</span><span class="v down">▼ 2.7</span></div>
+          <div class="dbar"><i class="base" style="width:61%"></i><i class="cur down" style="width:34%"></i></div>
+        </div>
+        <div class="dim">
+          <div class="dn"><span class="lb">计算</span><span class="vs">8.2 / 6.8</span><span class="v up">▲ 1.4</span></div>
+          <div class="dbar"><i class="base" style="width:68%"></i><i class="cur up" style="width:82%"></i></div>
+        </div>
+        <div class="dim">
+          <div class="dn"><span class="lb">速度</span><span class="vs">9.0 / 6.2</span><span class="v up">▲ 2.8</span></div>
+          <div class="dbar"><i class="base" style="width:62%"></i><i class="cur up" style="width:90%"></i></div>
+        </div>
+
+        <div class="dnote">速度 <b>9.0</b> 而策略洞察 <b>2.1</b>：<br>你在用<b>熟练度掩盖入口盲区</b>——写得越快，错得越果断。</div>
+      </div>
+
+      <div class="sec">
+        <h3>手法调用审计 <small>本题</small></h3>
+        <div class="tk">
+          <div class="ic miss">未</div>
+          <div class="nm">整体换元 $t=\sqrt{\cdot}$<span class="s">应调用 · 未调用</span></div>
+          <div class="mk miss">✗</div>
+        </div>
+        <div class="tk">
+          <div class="ic miss">未</div>
+          <div class="nm">对称性 $f(x)+f(a-x)$<span class="s">应调用 · 未调用</span></div>
+          <div class="mk miss">✗</div>
+        </div>
+        <div class="tk">
+          <div class="ic wrong">错</div>
+          <div class="nm">三角换元<span class="s">本题禁止调用</span></div>
+          <div class="mk wrong">✗</div>
+        </div>
+        <div class="tk">
+          <div class="ic hit">对</div>
+          <div class="nm">分部积分<span class="s">历史已固化 · #10578</span></div>
+          <div class="mk hit">✓</div>
+        </div>
+      </div>
+
+      <div class="sec" style="border-bottom:0">
+        <h3>同类题对照 <small>只差入口</small></h3>
+        <div class="tk">
+          <div class="ic hit">✓</div>
+          <div class="nm">#10587<span class="s">换元法 · 45″ 正确</span></div>
+          <div class="mk hit">对</div>
+        </div>
+        <div class="tk">
+          <div class="ic miss">✗</div>
+          <div class="nm">#7076<span class="s">本次 · 53″ 仍错</span></div>
+          <div class="mk miss">错</div>
+        </div>
+        <div class="tk">
+          <div class="ic miss">✗</div>
+          <div class="nm">#10590<span class="s">复合求导 · 同类入口</span></div>
+          <div class="mk miss">错</div>
+        </div>
+        <div class="dnote" style="margin-top:var(--sp-3)">#10587 证明能力存在，#7076 / #10590 证明识别不稳。差的不是会不会，是<b>什么时候调</b>。</div>
+      </div>
+    </aside>
+  </div>
+
+  <p class="foot">
+    <b>E2 · 卷面分叉对照</b>——主张：学习者是在纸上算题的，报告就该像批改卷子：左「我的推导」对右「标准路径」，中间标出分叉点，之后的步骤灰显为无效功。<br>
+    右栏修正现状 bug：单题维度取 <code>grade.dimensions</code> 与 30 场基线对比（现状误用全卷均值，每题数字相同）。
+  </p>
+</div>
+</body>
+</html>

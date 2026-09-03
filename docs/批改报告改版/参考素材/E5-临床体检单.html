@@ -1,0 +1,331 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>批改报告 · E5 临床体检单</title>
+<style>
+:root{
+  --canvas:#f5f7f5; --surface:#fff; --sunken:#f1f5f9; --line:#dfe5e1; --line-strong:#a9c4b6;
+  --ink:#27322e; --muted:#6f7b75; --quiet:#98a19d;
+  --green:#738f80; --green-dark:#536d5e; --green-soft:#e8efea;
+  --success:#2f8561; --success-soft:#f1f8f4;
+  --warn:#b45309; --warn-soft:#fdf3e3;
+  --danger:#b91c1c; --danger-soft:#fee8e6;
+  --font-ui:"Inter","Source Han Sans SC","Noto Sans SC","PingFang SC","Microsoft YaHei UI",sans-serif;
+  --font-mono:"JetBrains Mono","Fira Code","SF Mono",ui-monospace,monospace;
+  --font-stem:"LXGW WenKai Screen","LXGW WenKai","霞鹜文楷","Noto Serif SC",serif;
+  --fs-xs:10px; --fs-sm:11px; --fs-base:13px; --fs-md:14px; --fs-lg:16px; --fs-xl:19px; --fs-2xl:24px;
+  --sp-1:4px; --sp-2:8px; --sp-3:12px; --sp-4:16px; --sp-5:20px; --sp-6:24px;
+  --r-xs:3px; --r-sm:5px; --r-md:7px; --r-lg:10px;
+}
+*{box-sizing:border-box;margin:0;padding:0}
+body{background:var(--canvas);color:var(--ink);font:var(--fs-base)/1.6 var(--font-ui);-webkit-font-smoothing:antialiased;padding:var(--sp-5)}
+.num{font-family:var(--font-mono);font-variant-numeric:tabular-nums}
+.wrap{max-width:1120px;margin:0 auto}
+.kicker{font:600 var(--fs-xs)/1 var(--font-mono);letter-spacing:.14em;text-transform:uppercase;color:var(--quiet)}
+
+/* 单据头 */
+.sheet{background:var(--surface);border:1px solid var(--line);border-radius:var(--r-lg);overflow:hidden;margin-bottom:var(--sp-4)}
+.sheet-head{display:flex;align-items:center;gap:var(--sp-4);padding:var(--sp-4) var(--sp-5);border-bottom:1px solid var(--line)}
+.sheet-head h1{font-size:var(--fs-xl);font-weight:700;letter-spacing:.01em}
+.sheet-head .sub{font-size:var(--fs-sm);color:var(--quiet)}
+.sp{flex:1}
+
+/* 判定条 */
+.verdict{display:flex;align-items:center;gap:var(--sp-4);padding:var(--sp-4) var(--sp-5);background:linear-gradient(90deg,var(--danger-soft),var(--surface) 62%);border-bottom:1px solid var(--line)}
+.verdict .seal{width:52px;height:52px;border-radius:50%;background:var(--danger);color:#fff;display:flex;align-items:center;justify-content:center;flex-direction:column;line-height:1.15}
+.verdict .seal b{font:700 var(--fs-md) var(--font-ui)}
+.verdict .seal span{font:600 var(--fs-xs) var(--font-mono);opacity:.85}
+.verdict .txt h2{font-size:var(--fs-lg);font-weight:700;color:var(--danger-strong,#7f1d1d);margin-bottom:3px}
+.verdict .txt p{font-size:var(--fs-base);color:var(--muted);line-height:1.55}
+.verdict .txt p b{color:var(--ink)}
+.verdict .actions{display:flex;flex-direction:column;gap:6px}
+
+/* 指标单 */
+.lab{padding:var(--sp-2) 0}
+.lab-row{display:grid;grid-template-columns:1fr 1fr;gap:0;border-bottom:1px solid #eef2f0}
+.lab-row:last-child{border-bottom:0}
+.lab-item{display:flex;align-items:center;gap:var(--sp-4);padding:var(--sp-3) var(--sp-5);border-right:1px solid #eef2f0}
+.lab-name{flex:0 0 128px}
+.lab-name b{display:block;font-size:var(--fs-base);font-weight:600}
+.lab-name small{display:block;font:var(--fs-xs) var(--font-mono);color:var(--quiet);letter-spacing:.04em;margin-top:1px}
+.lab-val{flex:0 0 92px;text-align:right}
+.lab-val .n{font:700 var(--fs-2xl)/1 var(--font-mono);letter-spacing:-.02em}
+.lab-val .n.hi{color:var(--danger)}
+.lab-val .n.lo{color:var(--warn)}
+.lab-val .n.ok{color:var(--success)}
+.lab-val .u{font:var(--fs-sm) var(--font-ui);color:var(--muted);margin-left:2px}
+.lab-arrow{flex:0 0 22px;text-align:center;font:700 var(--fs-md) var(--font-mono)}
+.lab-arrow.hi{color:var(--danger)}
+.lab-arrow.lo{color:var(--warn)}
+.lab-arrow.ok{color:var(--success)}
+.lab-gauge{flex:1;min-width:80px}
+.gauge{position:relative;height:7px;background:var(--sunken);border-radius:4px}
+.gauge .band{position:absolute;top:-4px;bottom:-4px;background:var(--green-soft);border-left:1px solid var(--line-strong);border-right:1px solid var(--line-strong);border-radius:2px}
+.gauge .pin{position:absolute;top:50%;width:11px;height:11px;margin:-5.5px 0 0 -5.5px;border-radius:50%;background:var(--ink);border:2px solid #fff;box-shadow:0 1px 3px rgba(0,0,0,.18)}
+.gauge .pin.hi{background:var(--danger)}
+.gauge .pin.lo{background:var(--warn)}
+.gauge .pin.ok{background:var(--success)}
+.gauge-txt{display:flex;justify-content:space-between;font:var(--fs-xs) var(--font-mono);color:var(--quiet);margin-top:5px}
+.lab-note{flex:0 0 168px;font-size:var(--fs-sm);color:var(--muted);line-height:1.45}
+.lab-note b{color:var(--ink);font-weight:600}
+
+/* 异常聚合 */
+.abn{display:flex;gap:var(--sp-2);flex-wrap:wrap;padding:var(--sp-4) var(--sp-5);border-top:1px solid var(--line);background:var(--sunken)}
+.abn-chip{display:inline-flex;align-items:center;gap:6px;background:var(--surface);border:1px solid var(--line);border-radius:var(--r-full);padding:5px 11px;font-size:var(--fs-sm)}
+.abn-chip i{width:7px;height:7px;border-radius:50%;display:inline-block}
+.abn-chip .c{font-family:var(--font-mono);font-weight:700;color:var(--ink)}
+.abn-chip.red i{background:var(--danger)}
+.abn-chip.amber i{background:var(--warn)}
+.abn-chip.green i{background:var(--success)}
+
+/* 明细表 */
+.panel{background:var(--surface);border:1px solid var(--line);border-radius:var(--r-lg);overflow:hidden;margin-bottom:var(--sp-4)}
+.panel-head{display:flex;align-items:center;gap:var(--sp-3);padding:var(--sp-3) var(--sp-5);border-bottom:1px solid var(--line);background:var(--sunken)}
+.panel-head h2{font-size:var(--fs-md);font-weight:650}
+.panel-head .hint{font-size:var(--fs-sm);color:var(--quiet)}
+table{width:100%;border-collapse:collapse}
+th{font:600 var(--fs-xs)/1 var(--font-mono);letter-spacing:.08em;color:var(--quiet);text-align:left;padding:9px var(--sp-4);border-bottom:1px solid var(--line)}
+td{padding:11px var(--sp-4);border-bottom:1px solid #eef2f0;vertical-align:middle;font-size:var(--fs-base)}
+tbody tr:last-child td{border-bottom:0}
+tbody tr.flag{background:#fef8f7}
+td.id{font-family:var(--font-mono);color:var(--muted);font-size:var(--fs-sm);white-space:nowrap}
+td.dur{font-family:var(--font-mono);font-size:var(--fs-sm);white-space:nowrap;text-align:right}
+.res{display:inline-block;font:600 var(--fs-sm)/1.5 var(--font-ui);padding:2px 9px;border-radius:var(--r-full)}
+.res.neg{background:var(--danger-soft);color:var(--danger)}
+.res.weak{background:var(--warn-soft);color:var(--warn)}
+.res.pos{background:var(--success-soft);color:var(--success)}
+.find{font-size:var(--fs-sm);color:var(--muted);line-height:1.5}
+.find b{color:var(--danger);font-weight:600}
+.find em{font-style:normal;font-family:var(--font-mono);color:var(--ink)}
+
+/* 医嘱 */
+.rx{padding:var(--sp-4) var(--sp-5)}
+.rx-item{display:flex;gap:var(--sp-4);padding:var(--sp-3) 0;border-bottom:1px dashed var(--line)}
+.rx-item:last-child{border-bottom:0}
+.rx-no{flex:0 0 26px;height:26px;border-radius:50%;background:var(--green-soft);color:var(--green-dark);font:700 var(--fs-sm)/26px var(--font-mono);text-align:center}
+.rx-body{flex:1}
+.rx-body .t{font-size:var(--fs-md);font-weight:650;margin-bottom:3px}
+.rx-body .t span{font:600 var(--fs-sm) var(--font-mono);color:var(--green-dark);margin-left:6px}
+.rx-body .d{font-size:var(--fs-sm);color:var(--muted);line-height:1.6}
+.rx-body .d code{font-family:var(--font-mono);background:var(--sunken);padding:1px 5px;border-radius:var(--r-xs);color:var(--ink);font-size:var(--fs-sm)}
+.rx-dose{flex:0 0 150px;text-align:right;font:var(--fs-sm) var(--font-mono);color:var(--quiet);line-height:1.7}
+.rx-dose b{display:block;color:var(--ink);font-size:var(--fs-base)}
+
+.btn{border:1px solid var(--line-strong);background:var(--surface);color:var(--green-dark);font:600 var(--fs-sm) var(--font-ui);padding:7px 13px;border-radius:var(--r-sm);cursor:pointer}
+.btn.pri{background:var(--green);border-color:var(--green);color:#fff}
+.btn.sm{padding:5px 10px;font-size:var(--fs-sm)}
+.foot{text-align:center;font-size:var(--fs-sm);color:var(--quiet);margin-top:var(--sp-4)}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <div class="sheet">
+    <div class="sheet-head">
+      <div>
+        <h1>刷题体检单</h1>
+        <div class="sub">送检：2026-09-03 组卷 A · 8 题（高数 6 / 线代 2） · 总耗时 30′17″</div>
+      </div>
+      <div class="sp"></div>
+      <div class="kicker">LAB REPORT</div>
+    </div>
+
+    <!-- 判定条 -->
+    <div class="verdict">
+      <div class="seal"><b>异常</b><span>2 项</span></div>
+      <div class="txt">
+        <h2>方法入口检索失败（非知识盲区）</h2>
+        <p>核心异常是 <b>2 题错误路径已固化</b>：复习比首次快 2–12 倍仍照错。运算环节断点数为 0，说明<b>不是计算能力问题</b>，是「看见结构→检索不出标准动作」。</p>
+      </div>
+      <div class="sp"></div>
+      <div class="actions">
+        <button class="btn pri">按医嘱执行（3 项）</button>
+        <button class="btn">复制给 AI 追问</button>
+      </div>
+    </div>
+
+    <!-- 指标 -->
+    <div class="lab">
+      <div class="lab-row">
+        <div class="lab-item">
+          <div class="lab-name"><b>正确率</b><small>ACCURACY</small></div>
+          <div class="lab-val"><span class="n lo">50</span><span class="u">%</span></div>
+          <div class="lab-arrow lo">↓</div>
+          <div class="lab-gauge">
+            <div class="gauge"><span class="band" style="left:60%;width:15%"></span><i class="pin lo" style="left:50%"></i></div>
+            <div class="gauge-txt"><span>0</span><span>参考 60–75%</span><span>100</span></div>
+          </div>
+          <div class="lab-note">低于参考区间下限，但<b>不是本次主要问题</b></div>
+        </div>
+        <div class="lab-item" style="border-right:0">
+          <div class="lab-name"><b>真掌握</b><small>TRUE MASTERY</small></div>
+          <div class="lab-val"><span class="n lo">3</span><span class="u">/8</span></div>
+          <div class="lab-arrow lo">↓</div>
+          <div class="lab-gauge">
+            <div class="gauge"><span class="band" style="left:62%;width:38%"></span><i class="pin lo" style="left:37.5%"></i></div>
+            <div class="gauge-txt"><span>0</span><span>参考 ≥5 题</span><span>8</span></div>
+          </div>
+          <div class="lab-note">判据：复习耗时 ≤ 首次 1/3</div>
+        </div>
+      </div>
+
+      <div class="lab-row">
+        <div class="lab-item">
+          <div class="lab-name"><b>路径固化</b><small>PATH FIXATION</small></div>
+          <div class="lab-val"><span class="n hi">2</span><span class="u">题</span></div>
+          <div class="lab-arrow hi">↑</div>
+          <div class="lab-gauge">
+            <div class="gauge"><span class="band" style="left:0;width:8%"></span><i class="pin hi" style="left:25%"></i></div>
+            <div class="gauge-txt"><span>0</span><span>参考 0 题</span><span>8</span></div>
+          </div>
+          <div class="lab-note"><b>本次最严重异常</b>，需在入口用否定式规则拦截</div>
+        </div>
+        <div class="lab-item" style="border-right:0">
+          <div class="lab-name"><b>耗时降幅中位</b><small>TIME RATIO</small></div>
+          <div class="lab-val"><span class="n ok">0.35</span></div>
+          <div class="lab-arrow ok">·</div>
+          <div class="lab-gauge">
+            <div class="gauge"><span class="band" style="left:0;width:33%"></span><i class="pin ok" style="left:35%"></i></div>
+            <div class="gauge-txt"><span>0</span><span>参考 ≤0.33</span><span>1</span></div>
+          </div>
+          <div class="lab-note">贴近上限，两极分化：3 题 ≤0.26，2 题 &gt;0.5</div>
+        </div>
+      </div>
+
+      <div class="lab-row">
+        <div class="lab-item">
+          <div class="lab-name"><b>超止损线</b><small>OVER 8MIN</small></div>
+          <div class="lab-val"><span class="n hi">3</span><span class="u">题</span></div>
+          <div class="lab-arrow hi">↑</div>
+          <div class="lab-gauge">
+            <div class="gauge"><span class="band" style="left:0;width:12%"></span><i class="pin hi" style="left:37.5%"></i></div>
+            <div class="gauge-txt"><span>0</span><span>参考 ≤1 题</span><span>8</span></div>
+          </div>
+          <div class="lab-note">&gt;8′ 正确率仅 42%，硬止损未生效</div>
+        </div>
+        <div class="lab-item" style="border-right:0">
+          <div class="lab-name"><b>证据覆盖</b><small>EVIDENCE</small></div>
+          <div class="lab-val"><span class="n ok">6</span><span class="u">/8</span></div>
+          <div class="lab-arrow ok">·</div>
+          <div class="lab-gauge">
+            <div class="gauge"><span class="band" style="left:75%;width:25%"></span><i class="pin ok" style="left:75%"></i></div>
+            <div class="gauge-txt"><span>0</span><span>参考 ≥7 题</span><span>8</span></div>
+          </div>
+          <div class="lab-note">2 题缺 codex 批改输出，结论暂不采信</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- 异常聚合 -->
+    <div class="abn">
+      <span class="abn-chip red"><i></i>路径固化 <span class="c">2</span></span>
+      <span class="abn-chip red"><i></i>超 8′ 硬止损 <span class="c">3</span></span>
+      <span class="abn-chip amber"><i></i>假掌握 <span class="c">1</span></span>
+      <span class="abn-chip amber"><i></i>半对 <span class="c">1</span></span>
+      <span class="abn-chip amber"><i></i>同题重复 ≥4 次 <span class="c">1</span></span>
+      <span class="abn-chip green"><i></i>已固化 <span class="c">3</span></span>
+      <span class="abn-chip green"><i></i>独立攻克 d3 <span class="c">1</span></span>
+    </div>
+  </div>
+
+  <!-- 明细 -->
+  <div class="panel">
+    <div class="panel-head">
+      <h2>逐题检查结果</h2>
+      <span class="hint">按异常程度排序，正常的排最后</span>
+      <div class="sp"></div>
+      <span class="kicker">ITEM DETAIL</span>
+    </div>
+    <table>
+      <thead>
+        <tr><th style="width:70px">题号</th><th>检查项</th><th style="width:76px">首次</th><th style="width:76px">本次</th><th style="width:96px">比值</th><th style="width:88px">结果</th><th>所见</th></tr>
+      </thead>
+      <tbody>
+        <tr class="flag">
+          <td class="id">#7076</td><td>二重积分 · 含根式</td><td class="dur">1′55″</td><td class="dur">0′53″</td><td class="dur">0.46</td>
+          <td><span class="res neg">固化</span></td>
+          <td class="find"><b>看到根号内为分式，禁止直接三角换元</b>——先整式换元 <em>t=√(x+1)</em>，再走 x↔1−x 对称得 1/2</td>
+        </tr>
+        <tr class="flag">
+          <td class="id">#10590</td><td>一元积分 · 分部</td><td class="dur">11′17″</td><td class="dur">0′57″</td><td class="dur">0.08</td>
+          <td><span class="res neg">固化</span></td>
+          <td class="find"><b>幂函数禁止留在 u 位</b>——分部方向选反，应把幂函数放进 d 后降次</td>
+        </tr>
+        <tr>
+          <td class="id">#1052</td><td>线代 · 抽象逆矩阵</td><td class="dur">20′57″</td><td class="dur">10′56″</td><td class="dur">0.52</td>
+          <td><span class="res weak">假掌握</span></td>
+          <td class="find">只降到一半；步骤背下来了，但「凑 <em>AB=E</em> 形式」的入口没识别 → 需逼着调用，讲一遍没用</td>
+        </tr>
+        <tr>
+          <td class="id">#1982</td><td>级数 · 泰勒多项式</td><td class="dur">4′14″</td><td class="dur">4′14″</td><td class="dur">—</td>
+          <td><span class="res weak">小样本</span></td>
+          <td class="find">同题已做 4 次，25% 正确率来自「同题重复」而非考点薄弱，<b>换题再验</b></td>
+        </tr>
+        <tr>
+          <td class="id">#148</td><td>线代 · 抽象逆</td><td class="dur">2′18″</td><td class="dur">2′18″</td><td class="dur">—</td>
+          <td><span class="res pos">达标</span></td>
+          <td class="find">138″ 通过抽象逆验收线（&lt;140″），方程组不是重灾区</td>
+        </tr>
+        <tr>
+          <td class="id">#10578</td><td>一元积分 · 换元</td><td class="dur">1′45″</td><td class="dur">0′12″</td><td class="dur">0.11</td>
+          <td><span class="res pos">已固化</span></td>
+          <td class="find">降到 1/9，方法入口已自动化</td>
+        </tr>
+        <tr>
+          <td class="id">#7090</td><td>多元微分 · 链式</td><td class="dur">12′03″</td><td class="dur">3′11″</td><td class="dur">0.26</td>
+          <td><span class="res pos">已固化</span></td>
+          <td class="find">降到 1/4；首次超 8′ 止损线，本次已收敛</td>
+        </tr>
+        <tr>
+          <td class="id">#10587</td><td>二重积分 · 次序交换</td><td class="dur">13′28″</td><td class="dur">0′45″</td><td class="dur">0.06</td>
+          <td><span class="res pos">已固化</span></td>
+          <td class="find">降到 1/18，本组最大提速</td>
+        </tr>
+      </tbody>
+    </table>
+  </div>
+
+  <!-- 医嘱 -->
+  <div class="panel">
+    <div class="panel-head"><h2>医嘱</h2><span class="hint">按优先级排序，全部可直接执行</span><div class="sp"></div><span class="kicker">PRESCRIPTION</span></div>
+    <div class="rx">
+      <div class="rx-item">
+        <div class="rx-no">1</div>
+        <div class="rx-body">
+          <div class="t">给 2 道固化题写入否定式拦截规则<span>最高优先级</span></div>
+          <div class="d">固化题「讲一遍」无效，必须在入口用否定式拦截：<code>看到根号内为分式 → 禁止直接三角换元</code>、<code>分部积分中幂函数 → 禁止留在 u 位</code>。写成便签贴在卷首，做题前先读一遍。</div>
+        </div>
+        <div class="rx-dose"><b>2 题</b>今日 & 明晨各 1 次</div>
+      </div>
+      <div class="rx-item">
+        <div class="rx-no">2</div>
+        <div class="rx-body">
+          <div class="t">#1052 改为「逼着调用」而非复习</div>
+          <div class="d">该题为「见过不敢用」型，讲一遍没用。取 3 道同型抽象逆题，限时 8′ 内必须写出「凑 <em>AB=E</em>」那一步，写不出就判失守并记录。</div>
+        </div>
+        <div class="rx-dose"><b>3 题</b>限时 8′/题</div>
+      </div>
+      <div class="rx-item">
+        <div class="rx-no">3</div>
+        <div class="rx-body">
+          <div class="t">启用 8′ 硬止损，本组 3 题超标</div>
+          <div class="d">止损线（n=180）：2–5′ 正确率 63%、5–8′ 53%、8–15′ 42%、&gt;15′ <b>0%</b>。超过 8′ 直接判失守并进入断点复盘，不继续硬算。</div>
+        </div>
+        <div class="rx-dose"><b>长期</b>下次组卷生效</div>
+      </div>
+      <div class="rx-item">
+        <div class="rx-no">4</div>
+        <div class="rx-body">
+          <div class="t">#1982 换题复检，勿按硬伤处理</div>
+          <div class="d">同题重复 4 次造成的小样本假象。换 2 道泰勒多项式新题，若仍错再归入硬伤。</div>
+        </div>
+        <div class="rx-dose"><b>2 题</b>7 天后抽检</div>
+      </div>
+    </div>
+  </div>
+
+  <div class="foot">E5 · 临床体检单｜参考区间取自刷吧历史基线与止损线统计（n=180）</div>
+</div>
+</body>
+</html>

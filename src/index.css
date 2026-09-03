@@ -2,6 +2,7 @@
 @import "./styles/ui.css";
 @import "./styles/achievement.css";
 @import "./styles/animations.css";
+@import "./styles/report.css";
 
 :root {
   font-family: var(--font-ui);

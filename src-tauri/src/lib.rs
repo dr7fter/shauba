@@ -11813,6 +11813,51 @@ pub struct AttemptHistoryEntry {
     pub error_code: Option<String>,
 }
 
+/// 做对题按板块的用时中位数（只取 [5s,1200s] 有效区间的 correct 作答）。
+/// 报告「用时 vs 你的基准」展示层专用；不参与 rating/ELO 计算（03 分册管辖）。
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct CategoryTimeBaseline {
+    category_path: String,
+    median_seconds: i64,
+    sample_count: i64,
+}
+
+fn category_time_baselines(conn: &Connection) -> rusqlite::Result<Vec<CategoryTimeBaseline>> {
+    let mut stmt = conn.prepare(
+        "SELECT q.category_path, a.duration_seconds
+           FROM attempts a JOIN questions q ON q.id = a.question_id
+          WHERE a.outcome = 'correct' AND a.duration_seconds BETWEEN 5 AND 1200
+          ORDER BY q.category_path, a.duration_seconds",
+    )?;
+    let rows = stmt
+        .query_map([], |row| Ok((row.get::<_, String>(0)?, row.get::<_, i64>(1)?)))?
+        .collect::<rusqlite::Result<Vec<_>>>()?;
+    let mut out: Vec<CategoryTimeBaseline> = Vec::new();
+    let mut cursor = 0;
+    while cursor < rows.len() {
+        let mut end = cursor;
+        while end < rows.len() && rows[end].0 == rows[cursor].0 {
+            end += 1;
+        }
+        let group = &rows[cursor..end];
+        // 已按用时升序；取上中位数，基准宁严勿宽
+        out.push(CategoryTimeBaseline {
+            category_path: rows[cursor].0.clone(),
+            median_seconds: group[group.len() / 2].1,
+            sample_count: group.len() as i64,
+        });
+        cursor = end;
+    }
+    Ok(out)
+}
+
+#[tauri::command]
+fn get_category_time_baselines(state: State<AppState>) -> Result<Vec<CategoryTimeBaseline>, String> {
+    let conn = state.db.lock().map_err(|e| e.to_string())?;
+    category_time_baselines(&conn).map_err(|e| e.to_string())
+}
+
 /// 只读查询：取若干题的学习状态元信息（最新病因类 / 复做日期 / 药方），
 /// 供批改报告的错题卡 chip 与顶部总诊断使用。查不到即为 None，前端留空不编造。
 #[tauri::command]
@@ -12503,6 +12548,7 @@ pub fn run() {
             get_mistake_timeline,
             get_question_attempt_history,
             get_questions_learning_meta,
+            get_category_time_baselines,
             get_app_version,
             get_system_proxy,
             get_user_profile,
@@ -15379,6 +15425,46 @@ mod tests {
         assert_eq!(restored.attempt_mode, "review");
         assert_eq!(restored.queue.len(), 2);
         assert_eq!(restored.queue[1].question.stem, "当前数据库题干");
+    }
+
+    #[test]
+    fn category_time_baselines_use_correct_attempts_within_sane_range_only() {
+        let conn = Connection::open_in_memory().unwrap();
+        conn.execute_batch(
+            "CREATE TABLE questions(id INTEGER PRIMARY KEY, category_path TEXT NOT NULL);
+             CREATE TABLE attempts(
+               id INTEGER PRIMARY KEY, question_id INTEGER NOT NULL,
+               attempted_at TEXT NOT NULL, duration_seconds INTEGER NOT NULL,
+               outcome TEXT
+             );
+             INSERT INTO questions VALUES
+               (1,'高等数学/一元函数积分学'),(2,'高等数学/一元函数积分学'),(3,'线性代数/矩阵'),
+               (4,'高等数学/一元函数积分学'),(5,'高等数学/一元函数积分学'),(6,'高等数学/一元函数积分学');
+             INSERT INTO attempts(question_id,attempted_at,duration_seconds,outcome) VALUES
+               (1,'t',100,'correct'),
+               (2,'t',200,'correct'),
+               (4,'t',300,'correct'),
+               (5,'t',2,'correct'),
+               (6,'t',99999,'correct'),
+               (1,'t',50,'wrong'),
+               (3,'t',420,'correct');",
+        )
+        .unwrap();
+        let baselines = category_time_baselines(&conn).unwrap();
+        assert_eq!(baselines.len(), 2);
+        let calculus = baselines
+            .iter()
+            .find(|b| b.category_path == "高等数学/一元函数积分学")
+            .unwrap();
+        // 只取 100/200/300：2s 与 99999s 脏数据剔除，wrong 不计入
+        assert_eq!(calculus.sample_count, 3);
+        assert_eq!(calculus.median_seconds, 200);
+        let linalg = baselines
+            .iter()
+            .find(|b| b.category_path == "线性代数/矩阵")
+            .unwrap();
+        assert_eq!(linalg.sample_count, 1);
+        assert_eq!(linalg.median_seconds, 420);
     }
 
     #[test]

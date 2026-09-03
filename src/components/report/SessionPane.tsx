@@ -1,5 +1,6 @@
 import { CS_RATING_MAX, csRatingAccent, formatElapsed, gradeOutcomeKey } from '../../utils'
-import type { ReportViewModel } from '../../domain/reportViewModel'
+import { timeBaselineFor, type ReportViewModel } from '../../domain/reportViewModel'
+import type { CategoryTimeBaseline, Question } from '../../types'
 
 const BAR_COLOR = { correct: 'var(--success)', partial: 'var(--warn)', wrong: 'var(--danger)', uncertain: 'var(--muted)' }
 
@@ -9,7 +10,15 @@ const BAR_COLOR = { correct: 'var(--success)', partial: 'var(--warn)', wrong: 'v
  * 雷达图、逐题 rating、考场预测全部搬到这里——它们不参与复盘当下的决策，
  * 放在主屏只会抢走注意力。
  */
-export function SessionPane({ vm }: { vm: ReportViewModel }) {
+export function SessionPane({
+  vm,
+  questions,
+  timeBaselines,
+}: {
+  vm: ReportViewModel
+  questions: Record<number, Question>
+  timeBaselines: Record<string, Pick<CategoryTimeBaseline, 'medianSeconds' | 'sampleCount'>>
+}) {
   const { grades, ratingScores, counts, accuracy, averageRatingScore, ratingDimensions } = vm
   const avgDuration = grades.length ? Math.round(vm.totalDuration / grades.length) : 0
   /* 含水量：lucky/detour 独立计数，不动正确率与 ELO 口径（2026-09-04 拍板） */
@@ -58,6 +67,19 @@ export function SessionPane({ vm }: { vm: ReportViewModel }) {
           const outcome = gradeOutcomeKey(grade)
           const accent = csRatingAccent(score)
           const width = score != null ? Math.min(100, Math.max(4, (score / CS_RATING_MAX) * 100)) : 0
+          /* 用时 vs 基准：样本 ≥3 用个人中位，否则 ≈ 标注回退题型基准 */
+          const question = questions[grade.questionId]
+          const baseline = timeBaselineFor(question?.categoryPath, question?.questionType, timeBaselines)
+          const delta =
+            grade.duration > 0 && baseline.seconds > 0 ? grade.duration - baseline.seconds : null
+          const baselineHint =
+            delta == null
+              ? undefined
+              : `${baseline.personal ? '对比你在该板块做对题的中位用时' : '样本不足 3 题，对比题型通用基准'}（${formatElapsed(baseline.seconds * 1000)}）`
+          const deltaText =
+            delta == null
+              ? ''
+              : `${baseline.personal ? '' : '≈'}${delta >= 0 ? '+' : '-'}${formatElapsed(Math.abs(delta) * 1000)}`
           return (
             <div className="rp-bar-row" key={`rate-${grade.questionId}-${index}`}>
               <span className="rp-w16 rp-quiet">{index + 1}</span>
@@ -68,6 +90,13 @@ export function SessionPane({ vm }: { vm: ReportViewModel }) {
               <span className="rp-w40">{score != null ? score.toFixed(2) : '—'}</span>
               <span className="rp-w42 rp-quiet">
                 {formatElapsed((grade.duration ?? 0) * 1000)}
+              </span>
+              <span
+                className="rp-w56 rp-quiet"
+                style={delta != null && delta > 0 ? { color: 'var(--warn-strong)' } : undefined}
+                title={baselineHint}
+              >
+                {deltaText}
               </span>
               {accent === 'donk' ? <span title="高光突破">👑</span> : null}
             </div>

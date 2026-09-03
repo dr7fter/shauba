@@ -750,6 +750,13 @@ export type QuestionLearningMeta = {
   nextAction: string | null
   reviewStage: string | null
 }
+
+/** 做对题板块用时中位数（只取 [5s,1200s] 有效区间；展示层专用，不参与 rating/ELO） */
+export type CategoryTimeBaseline = {
+  categoryPath: string
+  medianSeconds: number
+  sampleCount: number
+}
 export type LearningCenterTrack =
   | 'repair'
   | 'consolidate'

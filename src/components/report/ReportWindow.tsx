@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { addDailyPlanItem, getQuestionAttemptHistory, getQuestionsLearningMeta, saveNote } from '../../api'
+import { addDailyPlanItem, getCategoryTimeBaselines, getQuestionAttemptHistory, getQuestionsLearningMeta, saveNote } from '../../api'
 import { benchmarkSeconds, formatElapsed, gradeOutcomeKey } from '../../utils'
 import {
   buildBreakpointGroups,
@@ -317,6 +317,29 @@ export function ReportWindow({
     [vm.grades, groups, learningMetas, questions],
   )
 
+  /* 个人化用时基准：报告打开时拉一次（全库统计，与具体哪场无关） */
+  const [timeBaselines, setTimeBaselines] = useState<
+    Record<string, { medianSeconds: number; sampleCount: number }>
+  >({})
+  useEffect(() => {
+    let alive = true
+    void getCategoryTimeBaselines()
+      .then((rows) => {
+        if (!alive) return
+        const map: Record<string, { medianSeconds: number; sampleCount: number }> = {}
+        for (const row of Array.isArray(rows) ? rows : []) {
+          map[row.categoryPath] = { medianSeconds: row.medianSeconds, sampleCount: row.sampleCount }
+        }
+        setTimeBaselines(map)
+      })
+      .catch(() => {
+        if (alive) setTimeBaselines({})
+      })
+    return () => {
+      alive = false
+    }
+  }, [])
+
   const reportDate = new Date(report.confirmedAt ?? report.createdAt ?? Date.now())
   const taskLabel =
     reportOrigin.kind === 'codex-batch' ? reportOrigin.taskId : reportOrigin.sessionId
@@ -426,7 +449,9 @@ export function ReportWindow({
                 )
               ) : null}
 
-              {tab === 'session' ? <SessionPane vm={vm} /> : null}
+              {tab === 'session' ? (
+                <SessionPane vm={vm} questions={questions} timeBaselines={timeBaselines} />
+              ) : null}
               {tab === 'dossier' ? <DossierPane groups={groups} /> : null}
             </main>
           </div>

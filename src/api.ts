@@ -2,7 +2,7 @@ import { invoke } from '@tauri-apps/api/core'
 import { check, type Update } from '@tauri-apps/plugin-updater'
 import { relaunch } from '@tauri-apps/plugin-process'
 import { mockBootstrap, mockCategories, mockInbox, mockMastery, mockQuestions, mockRecommendations } from './mock'
-import type { BootstrapData, CategoryNode, CodexTask, DailyLog, DailyTrendPoint, EloStatus, TagClosure, ExportResult, FailedInboxItem, InboxItem, InboxSummary, InsightPoint, MasteryChapter, MasteryNode, MistakeDayGroup, PracticeSessionState, Question, QuestionPage, RatingDistribution, RecommendationBatch, RecommendedQuestion, ReviewHistory, ReviewPlan, SeasonStatus, SessionScoreboard, UserStreak, WeaknessRadar, PressureSession, GradingReport, TacticalDashboardData, UserProfileSettings, AttemptHighlight, ConfirmInboxResult, SeasonLadder, HighlightMoment, PeriodOverview, UndoLastAttemptResult, FriendSyncConfig, FriendSyncRemoteSnapshot, LearningCenterSnapshot, DailyPlan, DailyPlanItem, AutoCheckPlanResult, AttemptHistoryEntry, QuestionLearningMeta } from './types'
+import type { BootstrapData, CategoryNode, CodexTask, DailyLog, DailyTrendPoint, EloStatus, TagClosure, ExportResult, FailedInboxItem, InboxItem, InboxSummary, InsightPoint, MasteryChapter, MasteryNode, MistakeDayGroup, PracticeSessionState, Question, QuestionPage, RatingDistribution, RecommendationBatch, RecommendedQuestion, ReviewHistory, ReviewPlan, SeasonStatus, SessionScoreboard, UserStreak, WeaknessRadar, PressureSession, GradingReport, TacticalDashboardData, UserProfileSettings, AttemptHighlight, ConfirmInboxResult, SeasonLadder, HighlightMoment, PeriodOverview, UndoLastAttemptResult, FriendSyncConfig, FriendSyncRemoteSnapshot, LearningCenterSnapshot, DailyPlan, DailyPlanItem, AutoCheckPlanResult, AttemptHistoryEntry, QuestionLearningMeta, CategoryTimeBaseline } from './types'
 import { createPracticeSessionPayload } from './domain/evidence'
 
 const isTauri = () => '__TAURI_INTERNALS__' in window
@@ -699,6 +699,10 @@ export async function getQuestionsLearningMeta(
 ): Promise<QuestionLearningMeta[]> {
   if (questionIds.length === 0) return []
   return invoke('get_questions_learning_meta', { questionIds })
+}
+
+export async function getCategoryTimeBaselines(): Promise<CategoryTimeBaseline[]> {
+  return invoke('get_category_time_baselines')
 }
 
 export async function getDailyPlan(planDate: string): Promise<DailyPlan> {

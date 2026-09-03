@@ -1,5 +1,6 @@
 import type {
   AttemptHistoryEntry,
+  CategoryTimeBaseline,
   GradingReport,
   GradingReportOrigin,
   PressureSession,
@@ -651,6 +652,21 @@ export function buildSessionDigest(
   return { distribution, overtimeCount, clusterLine, oneThingLine }
 }
 
+/**
+ * 个人化用时基准（WP7）：该板块做对题样本 ≥ 3 时用自己的中位用时；
+ * 否则回退题型通用基准并标记 personal=false——展示层据此加 ≈ 标注，不冒充个人数据。
+ */
+export function timeBaselineFor(
+  categoryPath: string | null | undefined,
+  questionType: string | null | undefined,
+  baselines: Record<string, Pick<CategoryTimeBaseline, 'medianSeconds' | 'sampleCount'>>,
+): { seconds: number; personal: boolean } {
+  const hit = categoryPath ? baselines[categoryPath] : undefined
+  if (hit && hit.sampleCount >= 3 && hit.medianSeconds > 0) {
+    return { seconds: hit.medianSeconds, personal: true }
+  }
+  return { seconds: benchmarkSeconds(questionType), personal: false }
+}
 /**
  * 侧栏价值排序（WP6）：错 > 半 > 待确认 > 对；同级 severity L1 > L2 > L3；
  * 同 code/标题的聚类代表题优先；原始顺序兜底。

@@ -7,6 +7,7 @@ import {
   buildBreakpointGroups,
   buildSessionDigest,
   sortIndicesByValue,
+  timeBaselineFor,
 } from '../src/domain/reportViewModel.ts'
 import { predictedExamScore } from '../src/utils.ts'
 
@@ -381,4 +382,25 @@ test('sortIndicesByValue orders wrong before correct, L1 before L2, clustered fi
   ]
 
   assert.deepEqual(sortIndicesByValue(grades), [2, 3, 1, 0])
+})
+
+test('timeBaselineFor prefers personal median at 3+ samples, falls back to type benchmark otherwise', () => {
+  const baselines = { '高等数学/一元函数积分学': { medianSeconds: 240, sampleCount: 5 } }
+
+  assert.deepEqual(
+    timeBaselineFor('高等数学/一元函数积分学', 'single_choice', baselines),
+    { seconds: 240, personal: true },
+  )
+  // 其他板块无数据 → 题型通用基准，标记非个人
+  assert.deepEqual(
+    timeBaselineFor('线性代数/矩阵', 'single_choice', baselines),
+    { seconds: 180, personal: false },
+  )
+  // 样本不足 3 同样回退，不冒充个人基准
+  assert.deepEqual(
+    timeBaselineFor('高等数学/一元函数积分学', 'single_choice', {
+      '高等数学/一元函数积分学': { medianSeconds: 240, sampleCount: 2 },
+    }),
+    { seconds: 180, personal: false },
+  )
 })

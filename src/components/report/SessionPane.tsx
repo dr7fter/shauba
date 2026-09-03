@@ -12,6 +12,9 @@ const BAR_COLOR = { correct: 'var(--success)', partial: 'var(--warn)', wrong: 'v
 export function SessionPane({ vm }: { vm: ReportViewModel }) {
   const { grades, ratingScores, counts, accuracy, averageRatingScore, ratingDimensions } = vm
   const avgDuration = grades.length ? Math.round(vm.totalDuration / grades.length) : 0
+  /* 含水量：lucky/detour 独立计数，不动正确率与 ELO 口径（2026-09-04 拍板） */
+  const luckyCount = grades.filter((grade) => grade.methodSoundness === 'lucky').length
+  const detourCount = grades.filter((grade) => grade.methodSoundness === 'detour').length
 
   return (
     <div className="rp-view">
@@ -38,6 +41,13 @@ export function SessionPane({ vm }: { vm: ReportViewModel }) {
           <small>均 {formatElapsed(avgDuration * 1000)} / 题</small>
         </div>
       </div>
+
+      {luckyCount + detourCount > 0 ? (
+        <div className="rp-soundness-note">
+          本场对题含水量：碰对 {luckyCount} 题 · 绕路 {detourCount} 题
+          <span className="rp-quiet">（独立计数，不影响上方正确率）</span>
+        </div>
+      ) : null}
 
       <div className="rp-h">逐题 Rating</div>
       {grades.length === 0 ? (

@@ -701,6 +701,8 @@ export type QuestionGrade = {
   weaknessTags?: string[]
   advice?: string | null
   betterSolution?: string | null
+  /** 方法可靠性：lucky=结果对但方法不可复现 / detour=对但绕路；仅 correct 题可能出现 */
+  methodSoundness?: 'sound' | 'lucky' | 'detour' | null
   confidence?: number | null
   rating?: number | null
   ratingTier?: string | null

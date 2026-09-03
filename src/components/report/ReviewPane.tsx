@@ -1,6 +1,7 @@
 import { useMemo } from 'react'
 import { MathText } from '../MathText'
 import { ReportSection } from './ReportSection'
+import { Icon } from '../ui/Icon'
 import { formatElapsed, type GradeOutcome } from '../../utils'
 import type { BreakpointGroup, GradeFlow } from '../../domain/reportViewModel'
 import type { AttemptHistoryEntry, Question, QuestionGrade } from '../../types'
@@ -137,6 +138,18 @@ export function ReviewPane({
           <span className="question-id-badge">#{grade.questionId}</span>
           <span>{question?.categoryPath || '未分类'}</span>
           <span className={OUTCOME_CHIP[outcome]}>{OUTCOME_LABEL[outcome]}</span>
+          {outcome === 'correct' && grade.methodSoundness === 'lucky' ? (
+            <span className="reason-chip explore rp-sound-chip rp-lucky" title="结果对，但方法不可复现（特殊值 / 代选项 / 跳步）">
+              <Icon name="dice" />
+              碰对
+            </span>
+          ) : null}
+          {outcome === 'correct' && grade.methodSoundness === 'detour' ? (
+            <span className="reason-chip explore rp-sound-chip rp-detour" title="解法正确但绕路，有更省时的路径">
+              <Icon name="route" />
+              绕路
+            </span>
+          ) : null}
           {flow.errorCode ? (
             <span className="question-id-badge">{flow.errorCode}</span>
           ) : null}

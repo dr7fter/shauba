@@ -1,4 +1,5 @@
 import { formatElapsed, type GradeOutcome } from '../../utils'
+import { Icon, type IconName } from '../ui/Icon'
 
 export type RailRow = {
   index: number
@@ -9,11 +10,11 @@ export type RailRow = {
   durationSec: number
 }
 
-const MARK: Record<GradeOutcome, { text: string; cls: string; label: string }> = {
-  correct:   { text: '✓', cls: 'm-ok',  label: '正确' },
-  partial:   { text: '◐', cls: 'm-mid', label: '部分正确' },
-  wrong:     { text: '✕', cls: 'm-bad', label: '错误' },
-  uncertain: { text: '·', cls: 'm-mid', label: '待确认' },
+const MARK: Record<GradeOutcome, { icon: IconName; cls: string; label: string }> = {
+  correct:   { icon: 'check', cls: 'm-ok',  label: '正确' },
+  partial:   { icon: 'half',  cls: 'm-mid', label: '部分正确' },
+  wrong:     { icon: 'x',     cls: 'm-bad', label: '错误' },
+  uncertain: { icon: 'dot',   cls: 'm-mid', label: '待确认' },
 }
 
 /**
@@ -56,7 +57,7 @@ export function QuestionRail({
             >
               <span className="rp-idx">{row.index + 1}</span>
               <span className={`rp-mark ${mark.cls}`} title={mark.label} aria-label={mark.label}>
-                {mark.text}
+                <Icon name={mark.icon} />
               </span>
               <span className="rp-main">
                 <span className="rp-cat">{row.categoryShort}</span>

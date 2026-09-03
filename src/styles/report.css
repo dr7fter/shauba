@@ -137,8 +137,6 @@
   width: 19px;
   height: 19px;
   border-radius: var(--r-full);
-  font-size: 11px;
-  font-weight: 700;
   line-height: 1;
 }
 
@@ -310,9 +308,10 @@
 
 .rp-tri {
   flex: none;
-  width: 11px;
+  display: grid;
+  place-items: center;
+  width: var(--icon-sm);
   color: var(--quiet);
-  font-size: 9px;
   transition: transform 0.14s ease;
 }
 

@@ -1,4 +1,5 @@
 import type { ReactNode } from 'react'
+import { Icon } from '../ui/Icon'
 
 /**
  * 报告的折叠段（macOS disclosure + Codex 的等宽序号）。
@@ -40,7 +41,7 @@ export function ReportSection({
         }}
       >
         <span className="rp-tri" aria-hidden="true">
-          ▶
+          <Icon name="chevron" />
         </span>
         <span className="rp-sec-n">{String(n).padStart(2, '0')}</span>
         <span className="rp-sec-t">{title}</span>

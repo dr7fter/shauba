@@ -11,6 +11,7 @@ import { QuestionRail, type RailRow } from './QuestionRail'
 import { ReviewPane } from './ReviewPane'
 import { SessionPane } from './SessionPane'
 import { DossierPane } from './DossierPane'
+import { Icon } from '../ui/Icon'
 import type {
   AttemptHistoryEntry,
   GradingReport,
@@ -336,7 +337,7 @@ export function ReportWindow({
             onClick={onClose}
             aria-label="关闭报告"
           >
-            ✕
+            <Icon name="x" />
           </button>
         </div>
 

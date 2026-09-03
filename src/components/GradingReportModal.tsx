@@ -2,11 +2,10 @@ import {
   Activity,
   ArrowRight,
   ClipboardCheck,
-  Clock3,
   LoaderCircle,
   Sparkles,
 } from 'lucide-react'
-import { AnimatePresence } from 'framer-motion'
+import { AnimatePresence, motion } from 'framer-motion'
 import { useEffect, useRef, useState, useMemo, useCallback } from 'react'
 import {
   addDailyPlanItem,
@@ -32,7 +31,6 @@ import {
   buildGradeFlow,
   buildReportViewModel,
   dimensionInsight,
-  filterReportEntries,
   gradeDimensionRows,
   type BreakpointSeverity,
 } from '../domain/reportViewModel'
@@ -172,13 +170,11 @@ export function PressureLearningReportView({
   const [detailQuestion, setDetailQuestion] = useState<Question | null>(null)
   const [favoriteMap, setFavoriteMap] = useState<Record<number, boolean>>({})
   const [toastMsg, setToastMsg] = useState<string | null>(null)
-  const [questionFilter, setQuestionFilter] = useState<'needs-attention' | 'all' | 'correct'>('needs-attention')
   const [ratingEvidenceOpen, setRatingEvidenceOpen] = useState(false)
   const [userNotes, setUserNotes] = useState<Record<number, string>>({})
   const [noteSaving, setNoteSaving] = useState<Record<number, boolean>>({})
   const [noteSavedNotice, setNoteSavedNotice] = useState<Record<number, boolean>>({})
   const [planAdded, setPlanAdded] = useState<Record<number, boolean>>({})
-  const [viewMode, setViewMode] = useState<'workbench' | 'overview'>('workbench')
   const [railFilter, setRailFilter] = useState<'all' | 'needs-attention'>('needs-attention')
   const [attemptHistory, setAttemptHistory] = useState<AttemptHistoryEntry[]>([])
   /** 第 04 步「正确入口」的呈现方式：推导式 / E2 左右对照式 */
@@ -187,6 +183,9 @@ export function PressureLearningReportView({
   const [solutionRevealed, setSolutionRevealed] = useState(false)
   const [copyPanelOpen, setCopyPanelOpen] = useState(false)
   const [copied, setCopied] = useState(false)
+  /** 游戏化开场：先进场看战况数据，进入后只剩纯学习报告 */
+  const [introOpen, setIntroOpen] = useState(true)
+  const [introPaused, setIntroPaused] = useState(false)
 
   const onCloseRef = useRef(onClose)
   onCloseRef.current = onClose
@@ -221,7 +220,6 @@ export function PressureLearningReportView({
     ungradedIds,
     kastRate,
     examPrediction,
-    attentionEntries,
     worstGradeEntry,
     verdictText,
   } = viewModel
@@ -326,7 +324,7 @@ export function PressureLearningReportView({
         return
       }
 
-      if (!isInput && viewMode === 'workbench') {
+      if (!isInput) {
         if (event.key === 'j' || event.key === 'ArrowDown') {
           event.preventDefault()
           handleNextQuestion()
@@ -338,7 +336,7 @@ export function PressureLearningReportView({
     }
     window.addEventListener('keydown', handleKeyDown)
     return () => window.removeEventListener('keydown', handleKeyDown)
-  }, [viewMode, detailQuestion, handleNextQuestion, handlePrevQuestion])
+  }, [detailQuestion, handleNextQuestion, handlePrevQuestion])
 
   const handleToggleFav = async (qId: number) => {
     try {
@@ -414,9 +412,25 @@ export function PressureLearningReportView({
   }
 
   const { correct: correctCount, partial: partialCount, wrong: wrongCount } = counts
+
+  /** 开场高光：只统计真实产生的评级，一次都没触发就是 0，不编造 */
+  const highlightCounts = {
+    donk: ratingScores.filter((score) => score != null && csRatingAccent(score) === 'donk').length,
+    clutch: ratingScores.filter((score) => score != null && csRatingAccent(score) === 'clutch').length,
+  }
+
+  useEffect(() => {
+    if (!introOpen || introPaused) return
+    const timer = window.setTimeout(() => setIntroOpen(false), 5000)
+    return () => window.clearTimeout(timer)
+  }, [introOpen, introPaused])
+
+  const replayIntro = useCallback(() => {
+    setIntroPaused(false)
+    setIntroOpen(true)
+  }, [])
   const reportTime = report.confirmedAt ?? report.createdAt
   const reportDate = new Date(reportTime < 1_000_000_000_000 ? reportTime * 1000 : reportTime)
-  const visibleEntries = filterReportEntries(grades, questionFilter)
 
   const activeEntry = grades[selectedGradeIndex]
     ? { grade: grades[selectedGradeIndex], index: selectedGradeIndex }
@@ -605,9 +619,114 @@ export function PressureLearningReportView({
       onClick={onClose}
     >
       <div
-        className={`pressure-report-wrap ${viewMode === 'workbench' ? 'workbench-mode-wrap' : 'overview-mode-wrap'} plan-d-shell`}
+        className="pressure-report-wrap workbench-mode-wrap plan-d-shell"
         onClick={(e) => e.stopPropagation()}
       >
+        <AnimatePresence>
+          {introOpen && (
+            <motion.div
+              className="gi-overlay"
+              role="dialog"
+              aria-label="本场战报"
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0, transition: { duration: 0.26 } }}
+              transition={{ duration: 0.22 }}
+              onMouseEnter={() => setIntroPaused(true)}
+              onMouseLeave={() => setIntroPaused(false)}
+            >
+              <motion.div
+                className="gi-card"
+                initial={{ y: 18, scale: 0.97 }}
+                animate={{ y: 0, scale: 1 }}
+                exit={{ y: -10, scale: 0.98, transition: { duration: 0.24 } }}
+                transition={{ type: 'spring', stiffness: 260, damping: 24 }}
+              >
+                <div className="gi-kicker">
+                  <Sparkles size={13} /> 本场战报 · 数一全真复盘
+                </div>
+                <h2 className="gi-verdict">
+                  <MathText value={verdictText} />
+                </h2>
+
+                <div className="gi-score-row">
+                  <div className="gi-score-main">
+                    <span className="gi-score-num">
+                      {accuracy != null ? accuracy : '—'}
+                      <i>%</i>
+                    </span>
+                    <span className="gi-score-label">正确率</span>
+                  </div>
+                  <div className={`gi-tier tone-${ratingTone ?? 'neutral'}`}>
+                    <span className="gi-tier-name">{ratingTier ?? '暂无段位'}</span>
+                    <span className="gi-tier-rating">
+                      Rating {averageRatingScore != null ? averageRatingScore.toFixed(2) : '—'}
+                    </span>
+                  </div>
+                </div>
+
+                <div className="gi-chips" aria-label="核心指标">
+                  <span className="gi-chip">
+                    <b className="num">{correctCount}</b>
+                    <em>正确</em>
+                  </span>
+                  <span className="gi-chip warn">
+                    <b className="num">{partialCount}</b>
+                    <em>部分</em>
+                  </span>
+                  <span className="gi-chip bad">
+                    <b className="num">{wrongCount}</b>
+                    <em>错误</em>
+                  </span>
+                  <span className="gi-chip">
+                    <b className="num">{kastRate != null ? `${kastRate}%` : '—'}</b>
+                    <em>KAST</em>
+                  </span>
+                  <span className="gi-chip">
+                    <b className="num">{formatElapsed(totalDuration * 1000)}</b>
+                    <em>总耗时</em>
+                  </span>
+                  <span className="gi-chip">
+                    <b className="num">{evidenceCoverage}/{gradedCount}</b>
+                    <em>六维证据</em>
+                  </span>
+                </div>
+
+                {highlightCounts.donk + highlightCounts.clutch > 0 && (
+                  <div className="gi-highlights">
+                    {highlightCounts.donk > 0 && (
+                      <span className="gi-high donk">👑 DONK 级秒杀 × {highlightCounts.donk}</span>
+                    )}
+                    {highlightCounts.clutch > 0 && (
+                      <span className="gi-high clutch">⚡ 高难度突破 × {highlightCounts.clutch}</span>
+                    )}
+                  </div>
+                )}
+
+                {ungradedIds.length > 0 && (
+                  <p className="gi-note">
+                    另有 {ungradedIds.length} 题未获批改证据，未计入正确率
+                  </p>
+                )}
+
+                <div className="gi-foot">
+                  <button
+                    type="button"
+                    className="gi-enter"
+                    onClick={() => setIntroOpen(false)}
+                  >
+                    进入复盘
+                    <ArrowRight size={15} />
+                  </button>
+                  <span className="gi-hint">
+                    {introPaused ? '已暂停，移开鼠标继续倒计时' : '5 秒后自动进入 · 悬停可暂停'}
+                  </span>
+                </div>
+              </motion.div>
+            </motion.div>
+          )}
+        </AnimatePresence>
+
         <div className="wrap">
           
           {/* ---------- 顶栏 Topbar ---------- */}
@@ -621,19 +740,14 @@ export function PressureLearningReportView({
               </span>
             </div>
             <div className="tabs">
+              <span className="tab active">步骤推导演盘</span>
               <button
                 type="button"
-                className={`tab ${viewMode === 'workbench' ? 'active' : ''}`}
-                onClick={() => setViewMode('workbench')}
+                className="tab gi-replay-tab"
+                title="重看本场开场数据"
+                onClick={replayIntro}
               >
-                步骤推导演盘
-              </button>
-              <button
-                type="button"
-                className={`tab ${viewMode === 'overview' ? 'active' : ''}`}
-                onClick={() => setViewMode('overview')}
-              >
-                长卷通览
+                重看开场
               </button>
             </div>
             <div className="right">
@@ -815,7 +929,7 @@ export function PressureLearningReportView({
           )}
 
           {/* ---------- 双模态主区域 ---------- */}
-          {viewMode === 'workbench' ? (
+          {
             <div className="grid">
               
               {/* ============ LEFT: 成绩卡与题目索引 ============ */}
@@ -1438,143 +1552,7 @@ export function PressureLearningReportView({
               </aside>
 
             </div>
-          ) : (
-            /* ---------- 长卷通览模式 ---------- */
-            <div className="examination-overview-scroll plan-d-overview">
-              <section className="report-hero-card" aria-label="战况精报" style={{ background: '#fff', border: '1px solid var(--line)', borderRadius: 10, padding: 20 }}>
-                <div className="report-hero-top-row">
-                  <div className="report-hero-headline">
-                    <span className="report-hero-kicker"><Sparkles size={13} /> 5 秒战况定性 · 数一全真复盘精报</span>
-                    <h3 style={{ fontSize: 18, fontWeight: 700, margin: '6px 0', color: 'var(--t1)' }}>
-                      <MathText value={verdictText} />
-                    </h3>
-                    <p style={{ fontSize: 12, color: 'var(--t2)' }}>
-                      已批改 {gradedCount} / {totalCount} 题 · 正确 {correctCount}，部分 {partialCount}，错误 {wrongCount}
-                      {ungradedIds.length > 0 ? ` · 另有 ${ungradedIds.length} 题未获证据` : ''}
-                    </p>
-                  </div>
-
-                  <div className="report-hero-metrics" aria-label="核心指标">
-                    <div className="hero-metric-chip highlight">
-                      <span className="chip-num num">{accuracy != null ? `${accuracy}%` : '—'}</span>
-                      <span className="chip-label">正确率</span>
-                    </div>
-                    <div className="hero-metric-chip">
-                      <span className="chip-num num" style={{ color: 'var(--ok)' }}>{averageRatingScore != null ? averageRatingScore.toFixed(2) : '—'}</span>
-                      <span className="chip-label">{ratingTier ? `${ratingTier} 档` : 'Rating'}</span>
-                    </div>
-                    <div className="hero-metric-chip">
-                      <span className="chip-num num">{formatElapsed(totalDuration * 1000)}</span>
-                      <span className="chip-label">均题 {formatElapsed(averageDuration * 1000)}</span>
-                    </div>
-                    <div className="hero-metric-chip">
-                      <span className="chip-num num">{evidenceCoverage}/{gradedCount}</span>
-                      <span className="chip-label">{kastRate != null ? `KAST ${kastRate}%` : '证据覆盖'}</span>
-                    </div>
-                  </div>
-                </div>
-              </section>
-
-              {/* 逐题列表 */}
-              <section className="report-questions" style={{ marginTop: 14 }}>
-                <div className="report-questions-title-row" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 10 }}>
-                  <div>
-                    <h3 style={{ fontSize: 14, fontWeight: 600 }}>逐题步骤诊断与断点复盘</h3>
-                  </div>
-                  <div className="pfilter">
-                    <button
-                      type="button"
-                      className={`f ${questionFilter === 'needs-attention' ? 'active' : ''}`}
-                      onClick={() => setQuestionFilter('needs-attention')}
-                    >
-                      待攻坚 ({attentionEntries.length})
-                    </button>
-                    <button
-                      type="button"
-                      className={`f ${questionFilter === 'all' ? 'active' : ''}`}
-                      onClick={() => setQuestionFilter('all')}
-                    >
-                      全部 ({grades.length})
-                    </button>
-                    <button
-                      type="button"
-                      className={`f ${questionFilter === 'correct' ? 'active' : ''}`}
-                      onClick={() => setQuestionFilter('correct')}
-                    >
-                      完全正确 ({correctCount})
-                    </button>
-                  </div>
-                </div>
-
-                <div className="report-question-layout">
-                  <div className="report-question-list">
-                    {visibleEntries.map(({ grade, index }) => {
-                      const question = questions[grade.questionId]
-                      const tone = gradeTone(grade)
-                      const durInfo = getQuestionDurationInfo(grade)
-
-                      return (
-                        <article
-                          id={`report-q-${index}`}
-                          key={`${grade.questionId}-${index}`}
-                          className={`tactical-q-item ${tone.key}`}
-                          style={{ background: '#fff', border: '1px solid var(--line)', borderRadius: 10, padding: 14, marginBottom: 10 }}
-                        >
-                          <header className="report-question-header" style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 8 }}>
-                            <div>
-                              <span style={{ fontWeight: 700, fontSize: 13, marginRight: 8 }}>
-                                § {index + 1} · #{grade.questionId}
-                              </span>
-                              {question && (
-                                <span style={{ fontSize: 11.5, color: 'var(--t2)' }}>
-                                  {question.categoryPath}
-                                </span>
-                              )}
-                            </div>
-                            <div>
-                              <span className={`tag ${tone.key === 'correct' ? 'ok' : tone.key === 'partial' ? 'warn' : 'bad'}`} style={{ marginRight: 6 }}>
-                                {tone.label}
-                              </span>
-                              <span className="num" style={{ fontSize: 11.5, color: 'var(--t3)' }}>
-                                <Clock3 size={11} style={{ display: 'inline', verticalAlign: 'middle' }} /> {formatElapsed(durInfo.duration * 1000)}
-                              </span>
-                            </div>
-                          </header>
-
-                          {question && (
-                            <div style={{ fontSize: 13.5, lineHeight: 1.7, background: 'var(--bg)', padding: 10, borderRadius: 6, marginBottom: 8 }}>
-                              <MathText value={question.stem} />
-                            </div>
-                          )}
-
-                          {grade.earliestError && (
-                            <div className="redmark" style={{ marginBottom: 6 }}>
-                              <div className="lbl"><span className="ttl">⚠ 最早断点</span></div>
-                              <p><MathText value={grade.earliestError} /></p>
-                            </div>
-                          )}
-
-                          {grade.betterSolution && (
-                            <details className="fold" style={{ marginBottom: 0 }}>
-                              <summary>标准解法</summary>
-                              <div className="fb"><MathText value={grade.betterSolution} /></div>
-                            </details>
-                          )}
-                        </article>
-                      )
-                    })}
-                  </div>
-                </div>
-              </section>
-
-              {/* 底部完成按钮 */}
-              <footer style={{ display: 'flex', justifyContent: 'center', marginTop: 20 }}>
-                <button className="btn primary" style={{ padding: '10px 24px', fontSize: 13 }} onClick={onClose}>
-                  <ArrowRight size={14} /> 完成本次考场复盘
-                </button>
-              </footer>
-            </div>
-          )}
+          }
 
         </div>
       </div>

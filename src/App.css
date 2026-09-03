@@ -13597,7 +13597,7 @@
   flex: 0 0 auto;
   width: 46px;
   height: 46px;
-  border-radius: 50%;
+  border-radius: var(--r-full);
   border: 2px solid var(--danger);
   color: var(--danger);
   display: flex;
@@ -13807,7 +13807,7 @@
 .plan-d-shell .bp-mini .d {
   width: 6px;
   height: 6px;
-  border-radius: 50%;
+  border-radius: var(--r-full);
   flex: 0 0 auto;
 }
 
@@ -14164,7 +14164,7 @@
 .plan-d-shell .bp-fork-row .mid .dot {
   width: 22px;
   height: 22px;
-  border-radius: 50%;
+  border-radius: var(--r-full);
   border: 1px solid var(--line-danger);
   background: var(--danger-soft);
   color: var(--danger);
@@ -14447,7 +14447,7 @@
   flex: 0 0 auto;
   width: 16px;
   height: 16px;
-  border-radius: 50%;
+  border-radius: var(--r-full);
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -14563,4 +14563,219 @@
     padding-top: var(--sp-3);
     flex-wrap: wrap;
   }
+}
+
+/* ==========================================================================
+   批改报告 · 游戏化开场窗口（进场动画，进入后只剩纯学习报告）
+   配色/圆角/阴影一律走令牌，本块不出现硬编码 hex 与 !important。
+   ========================================================================== */
+
+.plan-d-shell .gi-overlay {
+  /* 报告区是整页滚动容器，用 fixed 才能保证滚动时开场层仍盖住全屏 */
+  position: fixed;
+  inset: 0;
+  z-index: var(--z-modal);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: var(--sp-4);
+  background: var(--scrim);
+  backdrop-filter: blur(6px);
+  --gi-hero: 56px;
+}
+
+.plan-d-shell .gi-card {
+  width: 100%;
+  max-width: 560px;
+  background: var(--paper);
+  border: 1px solid var(--line);
+  border-radius: var(--r-lg);
+  box-shadow: var(--shadow-3);
+  padding: 22px 24px 18px;
+}
+
+.plan-d-shell .gi-kicker {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: var(--fs-xs);
+  letter-spacing: 0.14em;
+  color: var(--accent);
+  text-transform: uppercase;
+}
+
+.plan-d-shell .gi-verdict {
+  margin: 10px 0 16px;
+  font-size: var(--fs-xl);
+  line-height: 1.4;
+  font-weight: 700;
+  color: var(--t1);
+}
+
+/* 主数字 + 段位 */
+.plan-d-shell .gi-score-row {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: var(--sp-4);
+  padding-bottom: 16px;
+  border-bottom: 1px solid var(--line-soft);
+}
+
+.plan-d-shell .gi-score-main {
+  display: flex;
+  align-items: baseline;
+  gap: 4px;
+}
+
+.plan-d-shell .gi-score-num {
+  font-size: var(--gi-hero);
+  font-weight: 700;
+  line-height: 1;
+  letter-spacing: -0.02em;
+  color: var(--t1);
+}
+
+.plan-d-shell .gi-score-num i {
+  font-style: normal;
+  font-size: var(--fs-lg);
+  color: var(--t2);
+}
+
+.plan-d-shell .gi-score-label {
+  font-size: var(--fs-sm);
+  color: var(--t2);
+}
+
+.plan-d-shell .gi-tier {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 2px;
+  padding: 6px 12px;
+  border-radius: var(--r-full);
+  background: var(--green-soft);
+}
+
+.plan-d-shell .gi-tier-name {
+  font-size: var(--fs-base);
+  font-weight: 700;
+  color: var(--ink);
+}
+
+.plan-d-shell .gi-tier-rating {
+  font-size: var(--fs-xs);
+  color: var(--t2);
+}
+
+/* 指标芯片 */
+.plan-d-shell .gi-chips {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+  margin: 16px 0 0;
+}
+
+.plan-d-shell .gi-chip {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+  padding: 9px 6px;
+  border: 1px solid var(--line-soft);
+  border-radius: var(--r-md);
+  background: var(--card);
+}
+
+.plan-d-shell .gi-chip b {
+  font-size: var(--fs-lg);
+  font-weight: 700;
+  line-height: 1.2;
+  color: var(--t1);
+}
+
+.plan-d-shell .gi-chip em {
+  font-style: normal;
+  font-size: var(--fs-xs);
+  color: var(--t2);
+}
+
+.plan-d-shell .gi-chip.warn b {
+  color: var(--warn);
+}
+
+.plan-d-shell .gi-chip.bad b {
+  color: var(--red);
+}
+
+/* 高光标记：只有真的触发过才渲染 */
+.plan-d-shell .gi-highlights {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 12px;
+}
+
+.plan-d-shell .gi-high {
+  padding: 4px 10px;
+  border-radius: var(--r-full);
+  font-size: var(--fs-xs);
+  font-weight: 600;
+}
+
+.plan-d-shell .gi-high.donk {
+  background: var(--warn-bg);
+  color: var(--warn);
+}
+
+.plan-d-shell .gi-high.clutch {
+  background: var(--ok-bg);
+  color: var(--ok);
+}
+
+.plan-d-shell .gi-note {
+  margin: 12px 0 0;
+  font-size: var(--fs-xs);
+  color: var(--t2);
+}
+
+/* 底部动作 */
+.plan-d-shell .gi-foot {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--sp-3);
+  margin-top: 16px;
+  padding-top: 14px;
+  border-top: 1px solid var(--line-soft);
+}
+
+.plan-d-shell .gi-enter {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 9px 18px;
+  border: 1px solid var(--line);
+  border-radius: var(--r-full);
+  background: var(--ink);
+  color: var(--paper);
+  font-size: var(--fs-sm);
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.plan-d-shell .gi-hint {
+  font-size: var(--fs-xs);
+  color: var(--t3);
+}
+
+/* 顶栏「重看开场」：进场后仍可回看战况数据 */
+.plan-d-shell .gi-replay-tab {
+  padding: 5px 12px;
+  border: 1px solid var(--line);
+  border-radius: var(--r-full);
+  background: transparent;
+  color: var(--t2);
+  font-size: var(--fs-xs);
+  cursor: pointer;
 }

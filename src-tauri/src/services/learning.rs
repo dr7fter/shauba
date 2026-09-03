@@ -32,6 +32,8 @@ pub struct AttemptEvidenceInput {
     pub occurred_at: String,
     pub normalized_error_class: Option<String>,
     pub next_action: Option<String>,
+    /// 方法可靠性（受控词表 sound/lucky/detour）；仅对 outcome=correct 有意义，其余为 None
+    pub method_soundness: Option<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -44,6 +46,7 @@ pub struct DiagnosisInput {
     pub error_tags: Vec<String>,
     pub weakness_tags: Vec<String>,
     pub earliest_error: Option<String>,
+    pub method_soundness: Option<String>,
     pub confidence: f64,
     pub is_variant: bool,
     pub is_delayed_review: bool,
@@ -165,6 +168,7 @@ pub fn init_schema(conn: &Connection) -> rusqlite::Result<()> {
         ("learning_evidence", "normalized_error_class", "TEXT NOT NULL DEFAULT 'uncertain'"),
         ("learning_evidence", "next_action", "TEXT NOT NULL DEFAULT 'manual_check'"),
         ("learning_evidence", "projection_applied", "INTEGER NOT NULL DEFAULT 0"),
+        ("learning_evidence", "method_soundness", "TEXT"),
         ("learning_diagnoses", "attempt_id", "INTEGER"),
         ("learning_diagnoses", "normalized_error_class", "TEXT NOT NULL DEFAULT 'uncertain'"),
         ("learning_diagnoses", "next_action", "TEXT NOT NULL DEFAULT 'manual_check'"),
@@ -175,6 +179,7 @@ pub fn init_schema(conn: &Connection) -> rusqlite::Result<()> {
         ("learning_diagnoses", "is_variant", "INTEGER NOT NULL DEFAULT 0"),
         ("learning_diagnoses", "is_delayed_review", "INTEGER NOT NULL DEFAULT 0"),
         ("learning_diagnoses", "semantic_fingerprint", "TEXT NOT NULL DEFAULT ''"),
+        ("learning_diagnoses", "method_soundness", "TEXT"),
         ("review_tasks", "stage", "TEXT NOT NULL DEFAULT 'diagnosed'"),
         ("review_tasks", "status", "TEXT NOT NULL DEFAULT 'pending'"),
         ("review_tasks", "next_action", "TEXT NOT NULL DEFAULT 'manual_check'"),
@@ -254,6 +259,7 @@ pub fn normalize_error_class(error_tags: &[String], verdict: Option<&str>) -> &'
     if joined.contains("瞄准")
         || joined.contains("计算")
         || joined.contains("笔误")
+        || joined.contains("抄错")
         || joined.contains("sign")
         || joined.contains("arithmetic")
     {
@@ -277,6 +283,18 @@ pub fn normalize_error_class(error_tags: &[String], verdict: Option<&str>) -> &'
         "uncertain"
     } else {
         "mixed"
+    }
+}
+
+/// methodSoundness 受控词表：sound=方法可复现 / lucky=结果对但方法不可复现
+/// （特殊值代入、代选项、直觉跳步）/ detour=对但绕路（超时硬算）。
+/// 词表外一律归 None——前端只按这三个值渲染，历史数据 NULL 是合法的「无数据」状态。
+pub fn normalize_method_soundness(raw: Option<&str>) -> Option<&'static str> {
+    match raw.map(str::trim).map(str::to_ascii_lowercase).as_deref() {
+        Some("sound") => Some("sound"),
+        Some("lucky") => Some("lucky"),
+        Some("detour") => Some("detour"),
+        _ => None,
     }
 }
 
@@ -426,6 +444,7 @@ fn record_codex_adjudication_with_projection(
             )
             .into(),
         ),
+        method_soundness: input.diagnosis.method_soundness.clone(),
     };
     record_evidence_at_with_projection(
         conn,
@@ -495,6 +514,7 @@ fn record_evidence_at_with_projection(
         .next_action
         .as_deref()
         .unwrap_or_else(|| next_action_for(class, outcome, confidence, variant, delayed));
+    let method_soundness = normalize_method_soundness(input.method_soundness.as_deref());
     let weight = adoption_weight(confidence, outcome);
     let correct = outcome == "correct";
     let mastery_signal = match outcome {
@@ -513,8 +533,8 @@ fn record_evidence_at_with_projection(
         "INSERT OR IGNORE INTO learning_evidence(
            evidence_key,task_id,question_id,attempt_id,category_key,source,evidence_kind,supersedes_attempt_id,
            outcome,confidence,adoption_weight,mastery_signal,fluency_signal,transfer_signal,retention_signal,
-           is_variant,is_delayed_review,normalized_error_class,next_action,occurred_at,created_at,projection_applied
-         ) VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14,?15,?16,?17,?18,?19,?20,?21,0)",
+           is_variant,is_delayed_review,normalized_error_class,next_action,method_soundness,occurred_at,created_at,projection_applied
+         ) VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14,?15,?16,?17,?18,?19,?20,?21,?22,0)",
         params![
             &input.evidence_key,
             input.task_id.as_deref(),
@@ -535,6 +555,7 @@ fn record_evidence_at_with_projection(
             if delayed { 1 } else { 0 },
             class,
             next_action,
+            method_soundness,
             &input.occurred_at,
             created_at,
         ],
@@ -890,6 +911,7 @@ pub fn upsert_diagnosis(
         input.is_variant,
         input.is_delayed_review,
     );
+    let method_soundness = normalize_method_soundness(input.method_soundness.as_deref());
     let now = if input.created_at.is_empty() {
         Local::now().to_rfc3339()
     } else {
@@ -915,14 +937,14 @@ pub fn upsert_diagnosis(
 
     if inserted {
         conn.execute(
-            "INSERT INTO learning_diagnoses(task_id,question_id,attempt_id,category_key,verdict,normalized_error_class,next_action,earliest_error,error_tags_json,weakness_tags_json,confidence,is_variant,is_delayed_review,semantic_fingerprint,created_at,updated_at)
-             VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14,?15,?15)",
-            params![&input.task_id,input.question_id,input.attempt_id,&input.category_key,&input.verdict,class,next_action,&input.earliest_error,serde_json::to_string(&input.error_tags).unwrap_or_else(|_| "[]".into()),serde_json::to_string(&input.weakness_tags).unwrap_or_else(|_| "[]".into()),confidence,if input.is_variant {1}else{0},if input.is_delayed_review {1}else{0},&fingerprint,&now],
+            "INSERT INTO learning_diagnoses(task_id,question_id,attempt_id,category_key,verdict,normalized_error_class,next_action,earliest_error,error_tags_json,weakness_tags_json,confidence,is_variant,is_delayed_review,semantic_fingerprint,method_soundness,created_at,updated_at)
+             VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14,?16,?15,?15)",
+            params![&input.task_id,input.question_id,input.attempt_id,&input.category_key,&input.verdict,class,next_action,&input.earliest_error,serde_json::to_string(&input.error_tags).unwrap_or_else(|_| "[]".into()),serde_json::to_string(&input.weakness_tags).unwrap_or_else(|_| "[]".into()),confidence,if input.is_variant {1}else{0},if input.is_delayed_review {1}else{0},&fingerprint,&now,method_soundness],
         )?;
     } else if semantic_changed {
         conn.execute(
-            "UPDATE learning_diagnoses SET attempt_id=COALESCE(?1,attempt_id),category_key=?2,verdict=?3,normalized_error_class=?4,next_action=?5,earliest_error=?6,error_tags_json=?7,weakness_tags_json=?8,confidence=?9,is_variant=?10,is_delayed_review=?11,semantic_fingerprint=?12,updated_at=?13 WHERE task_id=?14 AND question_id=?15",
-            params![input.attempt_id,&input.category_key,&input.verdict,class,next_action,&input.earliest_error,serde_json::to_string(&input.error_tags).unwrap_or_else(|_| "[]".into()),serde_json::to_string(&input.weakness_tags).unwrap_or_else(|_| "[]".into()),confidence,if input.is_variant {1}else{0},if input.is_delayed_review {1}else{0},&fingerprint,&now,&input.task_id,input.question_id],
+            "UPDATE learning_diagnoses SET attempt_id=COALESCE(?1,attempt_id),category_key=?2,verdict=?3,normalized_error_class=?4,next_action=?5,earliest_error=?6,error_tags_json=?7,weakness_tags_json=?8,confidence=?9,is_variant=?10,is_delayed_review=?11,semantic_fingerprint=?12,method_soundness=?13,updated_at=?14 WHERE task_id=?15 AND question_id=?16",
+            params![input.attempt_id,&input.category_key,&input.verdict,class,next_action,&input.earliest_error,serde_json::to_string(&input.error_tags).unwrap_or_else(|_| "[]".into()),serde_json::to_string(&input.weakness_tags).unwrap_or_else(|_| "[]".into()),confidence,if input.is_variant {1}else{0},if input.is_delayed_review {1}else{0},&fingerprint,method_soundness,&now,&input.task_id,input.question_id],
         )?;
     } else if legacy_missing_fingerprint {
         // Older rows have no semantic baseline. Backfill only that baseline and an
@@ -1019,6 +1041,7 @@ mod tests {
             occurred_at: at.into(),
             normalized_error_class: None,
             next_action: None,
+            method_soundness: None,
         }
     }
 
@@ -1338,11 +1361,51 @@ mod tests {
             error_tags: vec!["概念盲区".into()],
             weakness_tags: vec!["定积分".into()],
             earliest_error: Some("第 2 行".into()),
+            method_soundness: None,
             confidence: 0.95,
             is_variant: false,
             is_delayed_review: false,
             created_at: "2026-08-20T10:00:00+08:00".into(),
         }
+    }
+
+    #[test]
+    fn method_soundness_vocabulary_is_closed() {
+        assert_eq!(normalize_method_soundness(Some("sound")), Some("sound"));
+        assert_eq!(normalize_method_soundness(Some("lucky")), Some("lucky"));
+        assert_eq!(normalize_method_soundness(Some(" DETOUR ")), Some("detour"));
+        assert_eq!(normalize_method_soundness(Some("special_value")), None);
+        assert_eq!(normalize_method_soundness(Some("")), None);
+        assert_eq!(normalize_method_soundness(None), None);
+    }
+
+    #[test]
+    fn copy_slip_error_maps_to_aiming() {
+        let tags = vec!["符号抄错".to_string()];
+        assert_eq!(normalize_error_class(&tags, None), "aiming");
+    }
+
+    #[test]
+    fn evidence_persists_method_soundness() {
+        let conn = conn();
+        let mut input = attempt(
+            "with-soundness",
+            1,
+            "practice",
+            "correct",
+            "2026-09-04T10:00:00+08:00",
+            0.95,
+        );
+        input.method_soundness = Some("lucky".into());
+        record_attempt_evidence(&conn, input).unwrap();
+        let stored: Option<String> = conn
+            .query_row(
+                "SELECT method_soundness FROM learning_evidence WHERE evidence_key='with-soundness'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(stored.as_deref(), Some("lucky"));
     }
 
     #[test]
@@ -1587,6 +1650,7 @@ mod tests {
             error_tags: vec!["概念盲区".into()],
             weakness_tags: vec![],
             earliest_error: None,
+            method_soundness: None,
             confidence: 0.95,
             is_variant: false,
             is_delayed_review: false,

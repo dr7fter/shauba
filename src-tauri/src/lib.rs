@@ -303,6 +303,8 @@ struct BatchAttempt {
     advice: Option<String>,
     #[serde(default)]
     better_solution: Option<String>,
+    #[serde(default)]
+    method_soundness: Option<String>,
     confidence: f64,
     #[serde(default)]
     rating: Option<f64>,
@@ -398,6 +400,8 @@ struct CodexPayload {
     advice: Option<String>,
     #[serde(default)]
     better_solution: Option<String>,
+    #[serde(default)]
+    method_soundness: Option<String>,
     #[serde(default)]
     confidence: f64,
     #[serde(default)]
@@ -2152,6 +2156,7 @@ fn save_analysis_signal_raw(
         error_tags: payload.error_tags.clone(),
         weakness_tags: payload.weakness_tags.clone(),
         earliest_error: payload.earliest_error.clone(),
+        method_soundness: payload.method_soundness.clone(),
         confidence: payload.confidence,
         is_variant,
         is_delayed_review,
@@ -2586,6 +2591,7 @@ fn apply_batch_payload_in_tx(
             weakness_tags: attempt.weakness_tags.clone(),
             advice: attempt.advice.clone(),
             better_solution: attempt.better_solution.clone(),
+            method_soundness: attempt.method_soundness.clone(),
             confidence: attempt.confidence,
             recommended_question_ids: vec![],
             recommendation_reason: None,
@@ -2936,6 +2942,7 @@ fn build_pressure_grading_report(
             "weaknessTags": attempt.weakness_tags,
             "advice": attempt.advice,
             "betterSolution": attempt.better_solution,
+            "methodSoundness": services::learning::normalize_method_soundness(attempt.method_soundness.as_deref()),
             "confidence": attempt.confidence.clamp(0.0, 1.0),
             "rating": final_rating,
             "ratingTier": attempt.rating_tier,
@@ -7506,6 +7513,7 @@ fn record_attempt_row(conn: &Connection, input: &AttemptInput) -> Result<i64, St
             occurred_at: now.to_rfc3339(),
             normalized_error_class: None,
             next_action: None,
+            method_soundness: None,
         },
     ) {
         eprintln!(

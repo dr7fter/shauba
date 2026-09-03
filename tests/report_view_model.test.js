@@ -4,6 +4,9 @@ import {
   buildReportViewModel,
   filterReportEntries,
   buildGradeFlow,
+  buildBreakpointGroups,
+  buildSessionDigest,
+  sortIndicesByValue,
 } from '../src/domain/reportViewModel.ts'
 import { predictedExamScore } from '../src/utils.ts'
 
@@ -304,4 +307,78 @@ test('buildGradeFlow falls back to feedback and betterSolution for the fork', ()
   assert.equal(flow.fork.myPath, '分布函数法')
   assert.equal(flow.fork.standardPath, '严格单调直接套公式法')
   assert.equal(flow.killLine, '分布函数三段讨论写漏区间')
+})
+
+// ============ WP6 总诊断与价值排序 ============
+
+test('buildSessionDigest clusters same errorCode and picks the negation rule as the one thing', () => {
+  const wrongWithCode = (questionId) => grade(questionId, {
+    correct: false,
+    result: 'wrong',
+    verdict: 'incorrect',
+    errorTags: ['概念盲区'],
+    diagnosis: {
+      errorCode: 'E-027',
+      title: '根式换元入口缺失',
+      severity: 'L1',
+      rule: { negation: '根号复合禁止三角换元', positive: '整体设 t' },
+    },
+  })
+  const grades = [grade(1), wrongWithCode(2), wrongWithCode(3)]
+  const groups = buildBreakpointGroups(grades, [])
+  const digest = buildSessionDigest(grades, groups, {}, {})
+
+  assert.equal(digest.distribution, '3 题：对 1 / 错 2')
+  assert.ok(digest.clusterLine.includes('2 题死在同一个动作'))
+  assert.equal(digest.oneThingLine, '📌 本次只带走一件：根号复合禁止三角换元')
+})
+
+test('buildSessionDigest leads with error-class mode when it covers multiple wrongs', () => {
+  const wrong = (questionId, tag) => grade(questionId, {
+    correct: false,
+    result: 'wrong',
+    verdict: 'incorrect',
+    errorTags: [tag],
+  })
+  const grades = [grade(1), wrong(2, '计算笔误'), wrong(3, '瞄准失误')]
+  const metas = {
+    2: { questionId: 2, errorClass: 'aiming', nextReviewAt: null, nextAction: null, reviewStage: null },
+    3: { questionId: 3, errorClass: 'aiming', nextReviewAt: null, nextAction: null, reviewStage: null },
+  }
+  const digest = buildSessionDigest(grades, buildBreakpointGroups(grades, []), metas, {})
+
+  assert.ok(digest.clusterLine.startsWith('病因聚类：瞄准失误 × 2 题'))
+})
+
+test('buildSessionDigest counts overtime against per-question benchmark and stays silent on clean sessions', () => {
+  const grades = [
+    grade(1, { duration: 400 }),
+    grade(2, { duration: 60 }),
+    grade(3, { duration: 100 }),
+  ]
+  const questions = { 1: { questionType: 'single_choice' }, 2: { questionType: 'single_choice' }, 3: { questionType: 'single_choice' } }
+  const digest = buildSessionDigest(grades, buildBreakpointGroups(grades, []), {}, questions)
+
+  assert.equal(digest.overtimeCount, 1)
+  assert.ok(digest.distribution.includes('1 题超时'))
+  assert.equal(digest.clusterLine, null)
+  assert.equal(digest.oneThingLine, null)
+})
+
+test('sortIndicesByValue orders wrong before correct, L1 before L2, clustered first', () => {
+  const clustered = (questionId) => grade(questionId, {
+    correct: false,
+    result: 'wrong',
+    verdict: 'incorrect',
+    errorTags: ['概念盲区'],
+    diagnosis: { errorCode: 'E-027', title: '根式换元入口缺失', severity: 'L1' },
+  })
+  const grades = [
+    grade(10),                                              // 0 correct，垫底
+    grade(11, { correct: false, result: 'wrong', verdict: 'incorrect', errorTags: ['方法绕路'] }), // 1 错但 L2
+    clustered(12),                                          // 2 错 L1 聚类
+    clustered(13),                                          // 3 错 L1 聚类
+  ]
+
+  assert.deepEqual(sortIndicesByValue(grades), [2, 3, 1, 0])
 })

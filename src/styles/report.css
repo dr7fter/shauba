@@ -503,21 +503,59 @@
   line-height: 1.85;
 }
 
-/* 方法可靠性 chip（碰对/绕路）：素底胶囊 + 彩色图标，彩色只给图标不给底 */
-.rp-sound-chip {
+/* 图标 chip（病因/碰对/绕路/复做）：素底胶囊 + 彩色图标，彩色只给图标不给底 */
+.rp-icon-chip {
   display: inline-flex;
   align-items: center;
   gap: 4px;
 }
 
-.rp-sound-chip.rp-lucky { color: var(--gold-strong); }
-.rp-sound-chip.rp-detour { color: var(--cyan-strong); }
+.rp-icon-chip.ic-cyan { color: var(--cyan-strong); }
+.rp-icon-chip.ic-violet { color: var(--violet-strong); }
+.rp-icon-chip.ic-gold { color: var(--gold-strong); }
+.rp-icon-chip.ic-green { color: var(--green-dark); }
 
 /* 本场含水量计数行：挂在 insight-summary 下方，弱一档 */
 .rp-soundness-note {
   margin-top: 8px;
   font-size: var(--fs-xs);
   color: var(--muted);
+}
+
+/* 顶部总诊断：三行卡片，「带走」行用墨色压住——整份报告只强调一件事 */
+.rp-digest {
+  margin-bottom: 14px;
+  padding: 12px 15px;
+  border: 1px solid var(--line);
+  border-radius: var(--r-md);
+  background: var(--surface);
+  box-shadow: var(--shadow-1);
+}
+
+.rp-digest-row {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  font-size: var(--fs-sm);
+  line-height: 1.75;
+  color: var(--muted);
+}
+
+.rp-digest-row + .rp-digest-row {
+  margin-top: 2px;
+}
+
+.rp-digest-k {
+  flex: none;
+  min-width: 30px;
+  font-family: var(--font-mono);
+  font-size: var(--fs-xs);
+  color: var(--quiet);
+}
+
+.rp-digest-key {
+  color: var(--ink);
+  font-weight: 600;
 }
 
 /* 次要说明文字：不抢主内容，统一走 --quiet */

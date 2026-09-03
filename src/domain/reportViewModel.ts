@@ -5,6 +5,7 @@ import type {
   PressureSession,
   Question,
   QuestionGrade,
+  QuestionLearningMeta,
 } from '../types'
 import {
   averageCsRating,
@@ -555,4 +556,134 @@ export function dimensionInsight(rows: GradeDimensionRow[]): string | null {
     'strategyInsight>computation': '思路清晰，但关键演算脱漏',
   }
   return templates[pair] ?? `${top.label} ${Math.round(top.value)} 远高于 ${bottom.label} ${Math.round(bottom.value)}`
+}
+
+// ============ WP6 总诊断与价值排序（2026-09-04）============
+
+/** 病因类的中文标签与图标基调（扩展色，与严重度/对错正交） */
+export const ERROR_CLASS_CHIP_META: Record<
+  string,
+  { label: string; icon: 'crosshair' | 'book' | 'route'; tone: 'cyan' | 'violet' | 'gold' }
+> = {
+  aiming: { label: '瞄准失误', icon: 'crosshair', tone: 'cyan' },
+  concept: { label: '概念盲区', icon: 'book', tone: 'violet' },
+  tactics: { label: '战术绕路', icon: 'route', tone: 'gold' },
+}
+
+/** 药方词表的中文标签（与 review_tasks.next_action 一一对应） */
+export const NEXT_ACTION_LABELS: Record<string, string> = {
+  practice_variant: '变式练',
+  review_concept: '回看概念',
+  quick_retry: '快速重做',
+  timed_retry: '限时重做',
+  manual_check: '人工确认',
+}
+
+export type SessionDigest = {
+  /** 分布行（必给）：「8 题：对 5 / 半 1 / 错 2 · 2 题超时」 */
+  distribution: string
+  overtimeCount: number
+  /** 聚类行：断点级结论优先，其次病因类众数；凑不出来就是 null（不硬编） */
+  clusterLine: string | null
+  /** 一件事：最大断点组中 severity 最高题的否定式规则；没有就 null */
+  oneThingLine: string | null
+}
+
+const SEVERITY_ORDER: Record<BreakpointSeverity, number> = { L1: 0, L2: 1, L3: 2 }
+
+function severityRank(severity: BreakpointSeverity | null): number {
+  return severity != null ? SEVERITY_ORDER[severity] : 3
+}
+
+/**
+ * 顶部总诊断三行。纪律：整份报告只强调一件事——
+ * 聚类与一件事任一行凑不出可靠内容就留空，绝不用「各题都不错」凑数。
+ */
+export function buildSessionDigest(
+  grades: QuestionGrade[],
+  groups: BreakpointGroup[],
+  metas: Record<number, QuestionLearningMeta>,
+  questions: Record<number, Question>,
+): SessionDigest {
+  const counts = countOutcomes(grades)
+  const overtimeCount = grades.filter((grade) => {
+    const bench = benchmarkSeconds(questions[grade.questionId]?.questionType)
+    return bench > 0 && grade.duration > bench
+  }).length
+  const parts = [`${grades.length} 题：对 ${counts.correct}`]
+  if (counts.partial > 0) parts.push(`半 ${counts.partial}`)
+  parts.push(`错 ${counts.wrong}`)
+  if (counts.uncertain > 0) parts.push(`待确认 ${counts.uncertain}`)
+  const distribution =
+    parts.join(' / ') + (overtimeCount > 0 ? ` · ${overtimeCount} 题超时` : '')
+
+  // 聚类行：病因类众数（"4 道里 3 道是计算"这层洞察）为主，断点级结论拼在后面
+  const headline = breakpointHeadline(groups)
+  const tally = new Map<string, number>()
+  for (const grade of grades) {
+    const outcome = gradeOutcomeKey(grade)
+    if (outcome !== 'wrong' && outcome !== 'partial') continue
+    const chip = ERROR_CLASS_CHIP_META[metas[grade.questionId]?.errorClass ?? '']
+    if (chip) tally.set(chip.label, (tally.get(chip.label) ?? 0) + 1)
+  }
+  const topClass = [...tally.entries()].sort((a, b) => b[1] - a[1])[0]
+  let clusterLine: string | null
+  if (topClass && topClass[1] >= 2) {
+    clusterLine =
+      `病因聚类：${topClass[0]} × ${topClass[1]} 题` +
+      (headline ? `；${headline}` : '——今晚真正要修的是这一类，不是某一题')
+  } else {
+    clusterLine = headline
+  }
+
+  // 一件事：最大断点组（已按 relapse > new、成员数排序）中 severity 最高题的否定式规则
+  let oneThingLine: string | null = null
+  const topGroup = groups[0]
+  if (topGroup) {
+    const ruled = topGroup.indices
+      .map((index) => buildGradeFlow(grades[index]))
+      .filter((flow) => flow.rule?.negation)
+      .sort((a, b) => severityRank(a.severity) - severityRank(b.severity))
+    const rule = ruled[0]?.rule?.negation
+    if (rule) oneThingLine = `📌 本次只带走一件：${rule}`
+  }
+
+  return { distribution, overtimeCount, clusterLine, oneThingLine }
+}
+
+/**
+ * 侧栏价值排序（WP6）：错 > 半 > 待确认 > 对；同级 severity L1 > L2 > L3；
+ * 同 code/标题的聚类代表题优先；原始顺序兜底。
+ * 只用本批次数据，不依赖历史异步到达——排序在页面加载后保持稳定。
+ */
+export function sortIndicesByValue(grades: QuestionGrade[]): number[] {
+  const clusterKeyOf = (grade: QuestionGrade): string | null => {
+    const flow = buildGradeFlow(grade)
+    return flow.errorCode ? `code:${flow.errorCode}` : flow.title ? `tag:${flow.title}` : null
+  }
+  const tally = new Map<string, number>()
+  for (const grade of grades) {
+    if (gradeOutcomeKey(grade) === 'correct') continue
+    const key = clusterKeyOf(grade)
+    if (key) tally.set(key, (tally.get(key) ?? 0) + 1)
+  }
+  const outcomeRank = { wrong: 0, partial: 1, uncertain: 2, correct: 3 } as const
+  return grades
+    .map((grade, index) => ({ grade, index }))
+    .sort((a, b) => {
+      const byOutcome =
+        outcomeRank[gradeOutcomeKey(a.grade)] - outcomeRank[gradeOutcomeKey(b.grade)]
+      if (byOutcome !== 0) return byOutcome
+      const bySeverity =
+        severityRank(buildGradeFlow(a.grade).severity) -
+        severityRank(buildGradeFlow(b.grade).severity)
+      if (bySeverity !== 0) return bySeverity
+      const keyA = clusterKeyOf(a.grade)
+      const keyB = clusterKeyOf(b.grade)
+      const clusterA = keyA != null && (tally.get(keyA) ?? 0) >= 2 ? 0 : 1
+      const clusterB = keyB != null && (tally.get(keyB) ?? 0) >= 2 ? 0 : 1
+      if (clusterA !== clusterB) return clusterA - clusterB
+      return a.index - b.index
+    })
+    .map((entry) => entry.index)
 }

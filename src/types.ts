@@ -741,6 +741,15 @@ export type GradingReport = {
   confirmedAt?: number | null
   createdAt: number
 }
+
+/** 学习引擎侧每题元信息：最新病因类 / 复做排期 / 药方（后端归一，查不到即 null） */
+export type QuestionLearningMeta = {
+  questionId: number
+  errorClass: 'none' | 'uncertain' | 'aiming' | 'concept' | 'tactics' | 'mixed' | null
+  nextReviewAt: string | null
+  nextAction: string | null
+  reviewStage: string | null
+}
 export type LearningCenterTrack =
   | 'repair'
   | 'consolidate'

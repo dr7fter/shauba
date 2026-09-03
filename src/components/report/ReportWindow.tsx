@@ -1,10 +1,12 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { addDailyPlanItem, getQuestionAttemptHistory, saveNote } from '../../api'
+import { addDailyPlanItem, getQuestionAttemptHistory, getQuestionsLearningMeta, saveNote } from '../../api'
 import { benchmarkSeconds, formatElapsed, gradeOutcomeKey } from '../../utils'
 import {
   buildBreakpointGroups,
   buildGradeFlow,
   buildReportViewModel,
+  buildSessionDigest,
+  sortIndicesByValue,
   type BreakpointGroup,
 } from '../../domain/reportViewModel'
 import { QuestionRail, type RailRow } from './QuestionRail'
@@ -18,6 +20,7 @@ import type {
   GradingReportOrigin,
   PressureSession,
   Question,
+  QuestionLearningMeta,
 } from '../../types'
 
 type TabKey = 'review' | 'session' | 'dossier'
@@ -104,6 +107,29 @@ export function ReportWindow({
     }
   }, [gradeQuestionIds])
 
+  /* 学习引擎元信息：病因类 / 复做排期 / 药方。查不到即空，前端留空不编造 */
+  const [learningMetas, setLearningMetas] = useState<Record<number, QuestionLearningMeta>>({})
+  useEffect(() => {
+    let alive = true
+    if (gradeQuestionIds.length === 0) {
+      setLearningMetas({})
+      return
+    }
+    void getQuestionsLearningMeta(gradeQuestionIds)
+      .then((rows) => {
+        if (!alive) return
+        const map: Record<number, QuestionLearningMeta> = {}
+        for (const row of Array.isArray(rows) ? rows : []) map[row.questionId] = row
+        setLearningMetas(map)
+      })
+      .catch(() => {
+        if (alive) setLearningMetas({})
+      })
+    return () => {
+      alive = false
+    }
+  }, [gradeQuestionIds])
+
   /* 已有便笺回填，避免把学员写过的自省冲掉 */
   useEffect(() => {
     const initial: Record<number, string> = {}
@@ -123,12 +149,18 @@ export function ReportWindow({
     if (vm.grades.length > 0) setSelectedIndex(firstAttention ?? vm.worstGradeEntry?.index ?? 0)
   }, [report, vm.grades.length, vm.attentionEntries, vm.worstGradeEntry])
 
+  /* 价值排序：侧栏与 j/k 都走这个顺序——最该看的题永远在最上面 */
+  const orderedIndices = useMemo(() => sortIndicesByValue(vm.grades), [vm.grades])
+
   const moveSelection = useCallback(
     (delta: number) => {
-      if (vm.grades.length === 0) return
-      setSelectedIndex((prev) => (prev + delta + vm.grades.length) % vm.grades.length)
+      if (orderedIndices.length === 0) return
+      setSelectedIndex((prev) => {
+        const pos = Math.max(0, orderedIndices.indexOf(prev))
+        return orderedIndices[(pos + delta + orderedIndices.length) % orderedIndices.length]
+      })
     },
-    [vm.grades.length],
+    [orderedIndices],
   )
 
   const toggleSection = useCallback((key: string) => {
@@ -262,7 +294,8 @@ export function ReportWindow({
 
   const railRows: RailRow[] = useMemo(
     () =>
-      vm.grades.map((grade, index) => {
+      orderedIndices.map((index) => {
+        const grade = vm.grades[index]
         const q = questions[grade.questionId]
         const fromSession = session?.questions?.find((item) => item.questionId === grade.questionId)
         return {
@@ -276,7 +309,12 @@ export function ReportWindow({
               : fromSession?.duration ?? 0,
         }
       }),
-    [vm.grades, questions, session],
+    [orderedIndices, vm.grades, questions, session],
+  )
+
+  const digest = useMemo(
+    () => buildSessionDigest(vm.grades, groups, learningMetas, questions),
+    [vm.grades, groups, learningMetas, questions],
   )
 
   const reportDate = new Date(report.confirmedAt ?? report.createdAt ?? Date.now())
@@ -365,6 +403,8 @@ export function ReportWindow({
                     benchmarkSec={benchmarkSeconds(activeQuestion?.questionType)}
                     history={activeHistory}
                     group={activeGroup}
+                    meta={learningMetas[activeGrade.questionId] ?? null}
+                    digest={digest}
                     note={notes[activeGrade.questionId] ?? ''}
                     sections={sections}
                     onToggleSection={toggleSection}

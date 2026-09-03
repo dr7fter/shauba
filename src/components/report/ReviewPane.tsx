@@ -1,10 +1,17 @@
 import { useMemo } from 'react'
 import { MathText } from '../MathText'
 import { ReportSection } from './ReportSection'
+import { SessionDigestView } from './SessionDigest'
 import { Icon } from '../ui/Icon'
 import { formatElapsed, type GradeOutcome } from '../../utils'
-import type { BreakpointGroup, GradeFlow } from '../../domain/reportViewModel'
-import type { AttemptHistoryEntry, Question, QuestionGrade } from '../../types'
+import {
+  ERROR_CLASS_CHIP_META,
+  NEXT_ACTION_LABELS,
+  type BreakpointGroup,
+  type GradeFlow,
+  type SessionDigest,
+} from '../../domain/reportViewModel'
+import type { AttemptHistoryEntry, Question, QuestionGrade, QuestionLearningMeta } from '../../types'
 
 const OUTCOME_LABEL: Record<GradeOutcome, string> = {
   correct: '正确',
@@ -69,6 +76,22 @@ function relapseSignal(
   }
 }
 
+/** 复做日期标签：今天/明天/后天/M月D日；无效日期返回 null 不显示 */
+function reviewDateLabel(value: string | null): string | null {
+  if (!value) return null
+  const date = new Date(value)
+  if (Number.isNaN(date.getTime())) return null
+  const today = new Date()
+  today.setHours(0, 0, 0, 0)
+  const target = new Date(date)
+  target.setHours(0, 0, 0, 0)
+  const days = Math.round((target.getTime() - today.getTime()) / 86400000)
+  if (days <= 0) return '复做 今天'
+  if (days === 1) return '复做 明天'
+  if (days === 2) return '复做 后天'
+  return `复做 ${date.getMonth() + 1} 月 ${date.getDate()} 日`
+}
+
 export function ReviewPane({
   question,
   grade,
@@ -78,6 +101,8 @@ export function ReviewPane({
   benchmarkSec,
   history,
   group,
+  meta,
+  digest,
   note,
   sections,
   onToggleSection,
@@ -96,6 +121,8 @@ export function ReviewPane({
   benchmarkSec: number
   history: AttemptHistoryEntry[]
   group: BreakpointGroup | null
+  meta: QuestionLearningMeta | null
+  digest: SessionDigest
   note: string
   sections: Record<string, boolean>
   onToggleSection: (key: string) => void
@@ -111,6 +138,11 @@ export function ReviewPane({
     () => relapseSignal(group, history, durationSec),
     [group, history, durationSec],
   )
+
+  /* 学习引擎元信息派生的三个 chip：病因类 / 复做排期 / 药方类型 */
+  const errorClassChip = meta?.errorClass ? ERROR_CLASS_CHIP_META[meta.errorClass] : null
+  const reviewLabel = reviewDateLabel(meta?.nextReviewAt ?? null)
+  const actionLabel = meta?.nextAction ? NEXT_ACTION_LABELS[meta.nextAction] ?? null : null
 
   const categoryShort =
     question?.categoryPath?.split('/').pop()?.trim() || grade.errorTags?.[0] || '本题'
@@ -133,21 +165,28 @@ export function ReviewPane({
 
   return (
     <div className="rp-view">
+      <SessionDigestView digest={digest} />
       <div className="rp-head">
         <div className="rp-meta">
           <span className="question-id-badge">#{grade.questionId}</span>
           <span>{question?.categoryPath || '未分类'}</span>
           <span className={OUTCOME_CHIP[outcome]}>{OUTCOME_LABEL[outcome]}</span>
           {outcome === 'correct' && grade.methodSoundness === 'lucky' ? (
-            <span className="reason-chip explore rp-sound-chip rp-lucky" title="结果对，但方法不可复现（特殊值 / 代选项 / 跳步）">
+            <span className="reason-chip explore rp-icon-chip ic-gold" title="结果对，但方法不可复现（特殊值 / 代选项 / 跳步）">
               <Icon name="dice" />
               碰对
             </span>
           ) : null}
           {outcome === 'correct' && grade.methodSoundness === 'detour' ? (
-            <span className="reason-chip explore rp-sound-chip rp-detour" title="解法正确但绕路，有更省时的路径">
+            <span className="reason-chip explore rp-icon-chip ic-cyan" title="解法正确但绕路，有更省时的路径">
               <Icon name="route" />
               绕路
+            </span>
+          ) : null}
+          {errorClassChip ? (
+            <span className={`reason-chip explore rp-icon-chip ic-${errorClassChip.tone}`} title="学习引擎归一的病因分类">
+              <Icon name={errorClassChip.icon} />
+              {errorClassChip.label}
             </span>
           ) : null}
           {flow.errorCode ? (
@@ -169,6 +208,17 @@ export function ReviewPane({
           <span className={`pace-pill ${paceClass}`}>
             {formatElapsed(durationSec * 1000)} / 预算 {formatElapsed(benchmarkSec * 1000)}
           </span>
+          {outcome !== 'correct' && reviewLabel ? (
+            <span className="reason-chip explore rp-icon-chip ic-green" title="学习引擎排定的复做日期">
+              <Icon name="rotate-ccw" />
+              {reviewLabel}
+            </span>
+          ) : null}
+          {outcome !== 'correct' && actionLabel ? (
+            <span className="reason-chip explore" title="学习引擎排定的下一步练习类型">
+              {actionLabel}
+            </span>
+          ) : null}
         </div>
         <h1 className="rp-h1">{categoryShort}</h1>
         {question?.stem ? (

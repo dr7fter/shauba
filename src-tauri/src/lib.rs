@@ -314,6 +314,18 @@ struct BatchAttempt {
     difficulty_multiplier: Option<f64>,
     #[serde(default)]
     dimensions: HashMap<String, RatingDimension>,
+    /// 断点诊断块；必须声明才会随 payload_json 留存。
+    #[serde(default)]
+    diagnosis: Option<GradingDiagnosis>,
+    /// 有效步骤分（0–100），partial / incorrect 必填，correct 与 uncertain 为 null。
+    #[serde(default)]
+    step_score: Option<f64>,
+    /// 次要病因，仅供报告展示；病因归一只看 error_tags 的第一个标签。
+    #[serde(default)]
+    secondary_tags: Vec<String>,
+    /// 本题草稿原件的绝对路径，按批改侧收到的顺序。App 不经手图片，只存路径 + 展示。
+    #[serde(default)]
+    draft_paths: Vec<String>,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
@@ -331,6 +343,59 @@ struct RatingDimension {
     technique_level: Option<i32>,
     #[serde(default)]
     independent_discovery: Option<String>,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone, Default)]
+#[serde(rename_all = "camelCase")]
+struct DiagnosisRule {
+    #[serde(default)]
+    negation: Option<String>,
+    #[serde(default)]
+    positive: Option<String>,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone, Default)]
+#[serde(rename_all = "camelCase")]
+struct DiagnosisFork {
+    #[serde(default)]
+    step: Option<i64>,
+    #[serde(default)]
+    label: Option<String>,
+    #[serde(default)]
+    my_path: Option<String>,
+    #[serde(default)]
+    standard_path: Option<String>,
+    #[serde(default)]
+    consequence: Option<String>,
+}
+
+/// 断点诊断块。`scan_inbox` 存进 `payload_json` 的是重新序列化后的 `CodexPayload`，
+/// 所以这里的每个字段都必须显式声明——未声明的字段会在入库时被丢掉，
+/// 报告的六段认知动线（入口 → 断点 → 死路 → 规则 → 正确入口）就退化成降级派生。
+#[derive(Debug, Serialize, Deserialize, Clone, Default)]
+#[serde(rename_all = "camelCase")]
+struct GradingDiagnosis {
+    #[serde(default)]
+    error_code: Option<String>,
+    #[serde(default)]
+    title: Option<String>,
+    #[serde(default)]
+    severity: Option<String>,
+    #[serde(default)]
+    my_entry: Option<String>,
+    #[serde(default)]
+    why_dead_end: Option<String>,
+    #[serde(default)]
+    rule: Option<DiagnosisRule>,
+    #[serde(default)]
+    fork: Option<DiagnosisFork>,
+    #[serde(default)]
+    acceptance: Option<String>,
+    #[serde(default)]
+    next_action: Option<String>,
+    /// `verdict = correct` 的固化卡字段：这条入口为什么在这道题上成立。
+    #[serde(default)]
+    why_it_worked: Option<String>,
 }
 
 #[derive(Debug)]
@@ -447,6 +512,15 @@ struct CodexPayload {
     base_quests: Vec<DailyPlanQuestPayload>,
     #[serde(default)]
     advanced_quests: Vec<DailyPlanQuestPayload>,
+    /// 单题批改的断点诊断块；与 BatchAttempt 同构，未声明则在入库时被丢弃。
+    #[serde(default)]
+    diagnosis: Option<GradingDiagnosis>,
+    #[serde(default)]
+    step_score: Option<f64>,
+    #[serde(default)]
+    secondary_tags: Vec<String>,
+    #[serde(default)]
+    draft_paths: Vec<String>,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone, Default)]
@@ -2453,6 +2527,14 @@ fn insert_codex_payload(conn: &Connection, payload: &CodexPayload) -> Result<(),
                     ));
                 }
             }
+            if let Some(score) = attempt.step_score {
+                if !(0.0..=100.0).contains(&score) {
+                    return Err(format!(
+                        "题号 {} 的 stepScore 必须是 0–100 或 null",
+                        attempt.question_id
+                    ));
+                }
+            }
             for (key, dimension) in &attempt.dimensions {
                 if let Some(score) = dimension.score {
                     if !(0.0..=100.0).contains(&score) {
@@ -2634,7 +2716,10 @@ fn apply_batch_payload_in_tx(
                             session_id: Some(payload.task_id.clone()),
                             diagnosis_id: Some(format!("{}-{}", payload.task_id, attempt.question_id)),
                             ai_rating: attempt.rating,
-                            difficulty_multiplier: attempt.difficulty_multiplier,
+                            difficulty_multiplier: Some(question_difficulty_multiplier(
+                                conn,
+                                attempt.question_id,
+                            )),
                             technique_level: attempt
                                 .dimensions
                                 .get("strategyInsight")
@@ -2676,7 +2761,10 @@ fn apply_batch_payload_in_tx(
                         session_id: Some(payload.task_id.clone()),
                         diagnosis_id: Some(format!("{}-{}", payload.task_id, attempt.question_id)),
                         ai_rating: attempt.rating,
-                        difficulty_multiplier: attempt.difficulty_multiplier,
+                        difficulty_multiplier: Some(question_difficulty_multiplier(
+                            conn,
+                            attempt.question_id,
+                        )),
                         technique_level: attempt
                             .dimensions
                             .get("strategyInsight")
@@ -2834,6 +2922,7 @@ fn batch_grade_class(attempt: &BatchAttempt) -> &'static str {
 }
 
 fn build_pressure_grading_report(
+    conn: &Connection,
     context: &PressureBatchContext,
     payload: &CodexPayload,
     now: i64,
@@ -2906,7 +2995,15 @@ fn build_pressure_grading_report(
                 .get("strategyInsight")
                 .and_then(|d| d.technique_level),
         };
-        let bench = 600;
+        let question_type: String = conn
+            .query_row(
+                "SELECT question_type FROM questions WHERE id=?1",
+                [question_id],
+                |row| row.get(0),
+            )
+            .unwrap_or_default();
+        let bench = services::rating::benchmark_seconds(&question_type);
+        let diff_multiplier = Some(question_difficulty_multiplier(conn, *question_id));
         let verdict_str = attempt.verdict.as_deref().unwrap_or(&attempt.result);
         let final_rating = if let Some(value) = attempt.rating.filter(|v| (AI_RATING_MIN..=AI_RATING_MAX).contains(v)) {
             value
@@ -2916,7 +3013,7 @@ fn build_pressure_grading_report(
                 &dims_evidence,
                 duration,
                 bench,
-                attempt.difficulty_multiplier,
+                diff_multiplier,
             )
         } else {
             services::rating::attempt_rating(
@@ -2945,9 +3042,12 @@ fn build_pressure_grading_report(
             "methodSoundness": services::learning::normalize_method_soundness(attempt.method_soundness.as_deref()),
             "confidence": attempt.confidence.clamp(0.0, 1.0),
             "rating": final_rating,
-            "ratingTier": attempt.rating_tier,
-            "difficultyMultiplier": attempt.difficulty_multiplier,
+            "difficultyMultiplier": diff_multiplier,
             "dimensions": attempt.dimensions,
+            "diagnosis": attempt.diagnosis,
+            "stepScore": attempt.step_score,
+            "secondaryTags": attempt.secondary_tags,
+            "draftPaths": attempt.draft_paths,
         }));
     }
 
@@ -3005,7 +3105,7 @@ fn save_pressure_batch_report(
 ) -> Result<String, String> {
     validate_pressure_batch_payload(context, payload)?;
     let now = Local::now().timestamp_millis();
-    let (status, report) = build_pressure_grading_report(context, payload, now);
+    let (status, report) = build_pressure_grading_report(conn, context, payload, now);
     let report_json = serde_json::to_string(&report).map_err(|e| e.to_string())?;
     let tx = conn.unchecked_transaction().map_err(|e| e.to_string())?;
     let updated = tx
@@ -9406,34 +9506,23 @@ fn create_codex_task(question_id: i64, state: State<AppState>) -> Result<CodexTa
         &source_mode,
     )?;
 
+    let bench_sec = services::rating::benchmark_seconds(&q.question_type);
     let type_label = match q.question_type.as_str() {
-        "single_choice" => "单选题 · 基准3分",
-        "multiple_choice" => "多选题 · 基准4分",
-        "fill_in" => "填空题 · 基准5分",
-        _ => "解答/证明题 · 基准10分",
-    };
-    let bench_sec = match q.question_type.as_str() {
-        "single_choice" => 180,
-        "multiple_choice" => 240,
-        "fill_in" => 300,
-        _ => 600,
+        "single_choice" => format!("单选题 · 基准{bench_sec}秒"),
+        "multiple_choice" => format!("多选题 · 基准{bench_sec}秒"),
+        "fill_in" => format!("填空题 · 基准{bench_sec}秒"),
+        _ => format!("解答/证明题 · 基准{bench_sec}秒"),
     };
     let dur_sec = latest_attempt_duration(&conn, question_id)?;
-    let timing_info = if let Some(sec) = dur_sec {
-        let m = sec / 60;
-        let s = sec % 60;
-        let pace_eval = if sec <= bench_sec / 2 {
-            "⚡ 极速秒杀"
-        } else if sec <= bench_sec {
-            "✓ 节奏标准"
-        } else if sec <= bench_sec * 3 / 2 {
-            "⏱ 稍有迟疑"
-        } else {
-            "⚠️ 耗时偏长(可能计算绕路)"
-        };
-        format!(" | ⏱ 作答耗时：{m}分{s:02}秒 [{pace_eval}]")
-    } else {
-        "".to_string()
+    // 题面只给客观数字。评价词（极速/迟疑/偏长）一律不写——那会让 AI 的 speed 与
+    // strategyInsight 向 App 给的情绪靠，而前端本来就已经独立算了一遍节奏。
+    let timing_info = match dur_sec {
+        Some(sec) => format!(
+            " | ⏱ 实际耗时 {}分{:02}秒（基准 {bench_sec} 秒）",
+            sec / 60,
+            sec % 60
+        ),
+        None => String::new(),
     };
 
     let prompt = format!(
@@ -9443,48 +9532,34 @@ fn create_codex_task(question_id: i64, state: State<AppState>) -> Result<CodexTa
 题目：{stem}
 参考答案：{answer}
 
-【战术批改指令与评分量规】：
-1. 致命断点定位：逐行核对草稿推导，定位【最早错误断点】（earliestError）。精准归类为以下三类之一并在 errorTags 标注：
-   - 🔴 瞄准失误 (计算笔误/符号写反) -> verdict: "partial", 保留有效步骤分 (ADR 65-80);
-   - 🟡 概念盲区 (定理前提遗漏/混淆充分必要) -> verdict: "incorrect", 严查概念边界;
-   - 🔵 战术绕路 (方法机械蛮干/超时严重) -> speed <= 60, 指出计算黑洞与冗余步骤.
-2. HLTV Rating 3.0 定位 (0.00-2.50，拉开区分度)：
-   - 0.50: 核心断裂/盲区; 0.80: 笨拙硬算且有笔误; 1.00: 常规达标; 1.15-1.25: 规范严密; 1.30-1.45: 巧解秒杀; 1.50-1.65: 压轴题突破; 2.00-2.45: Donk-tier 超神秒杀 (极罕见神级表现);
-   - 【硬约束规则】：若 verdict 为 incorrect，rating 严禁超过 0.65 (有大量正确步骤的笔误最高 0.80)；若超时 1.5 倍以上且做错，触发经济拖累惩罚。
-3. 六维能力打分准则 (0-100)：
-   - 每维评分必须在 evidence 中引用草稿具体推导行与公式证据，严禁无证据给分；
-   - 无法从草稿确认的维度，必须输出 score: null, confidence: 0, evidence: "uncertain", 严禁猜 75 分！
-   - 【六维独立性量规——六维必须独立于对错结果给分，严禁把六维锚定在 verdict 上】：
-     · 严谨性/计算力只看执行：草稿每处计算笔误/符号写反，该维从 90 起每处 −10 起步，与思路对错无关（做对但涂改三处 → 计算力 ≤ 65）；
-     · 方法使用/审题建模只看路径：使用该考点标准入口动作才 ≥ 75；绕路硬算、蛮力展开 → ≤ 55，即使最终做对；
-     · 策略洞察只看结构识别与优化空间：常规套路 ≤ 70；巧解/对称性/极端变换类 ≥ 85；
-     · 速度由实际耗时决定（题面已附基准），与对错无关；超基准 1.5 倍 → ≤ 55；
-     · 反「参与奖」：六维全部 ≥ 90 仅在「快且准且巧」同时成立时允许；常规做对的题至少一维 ≤ 75；
-     · 反「陪葬」：做错时思路正确的部分（瞄准失误），对应维按实际水平给分，methodUse/modeling 不因结果错误强制低于 40；
-     · 极差自检：输出前检查单题六维极差；极差 < 10 分仅当六维确实均衡时允许，否则视为锚定失效，必须重新对照证据打分。
-4. 考场极速秒杀思路 (betterSolution)：
-   - 严禁搬运繁琐教材长证明！必须提供考场极速解题技巧（Taylor展开、King变换、特征多项式、待定系数、几何投影等 30 秒秒解）；若原解法已最优填 null。
-5. 可执行修复动作 (advice)：给出一条明天即可落地刻意练习的专项战术动作。
-6. 断点诊断块 (diagnosis)：报告按「我的入口 → 断点 → 为什么是死路 → 识别规则 → 正确入口」的认知动线呈现，你必须逐项填实，严禁留空或复述题干：
-   - myEntry：学员落笔时的第一个动作（原话式一句，含 $LaTeX$），要描述他做了什么，不是他错在哪；
-   - whyDeadEnd：讲清这条路径为什么走不通——讲结构特征与原理，严禁复述计算步骤，严禁写成"应该这样做"；
-   - rule：先 negation 后 positive；negation 必须是「看到什么特征 → 禁止做什么」的硬约束句式（肯定式会被旧习惯覆盖，否定式才拦得住）；
-   - fork：step 填分叉发生在第几步（落笔即错填 1），myPath 与 standardPath 对照填写，consequence 写清走错之后会发生什么（如"越算越繁，不存在算到底也能对的可能"）；
-   - acceptance：一条可判定的验收判据（如「根号池 13 题零覆盖」），禁止"多做练习""加强理解"这类无法判定的空话；
-   - errorCode：该断点若在 characteristic.md 中已有编号（如 E-027）则回填，尚未编码的填 null；
-   - title / severity：断点名与 L1 致命 / L2 战术 / L3 精度分级；
-   - nextAction：明天就能做的一条动作，需能在 10 分钟内完成；
-   - verdict 为 correct 的题，diagnosis 整块填 null。
-7. 公式排版绝对要求：所有数学符号、变量、公式、计算式必须严格使用 $...$ 或 $$...$$ 包裹，严禁裸文本数学式。
-8. 学员微观画像与报告反馈：批改完成后，请依据草稿表现同步更新根目录 characteristic.md 中的微观断点追踪状态（追加新错误或升级已固化）；并在最终回复给学员的文字报告中，专门呈现【🌟 本轮战力突破 / 成功改正】与【⚠️ 本轮新增微观断点与补丁】。
+★ 先完整读 E:\刷吧\.agent\09-批改量规.md，未读不得回传。六维独立性量规、HLTV Rating 锚点、
+步骤分口径、断点诊断块写作纪律、correct 固化卡口径、公式排版要求全部在那份文件里，
+本提示词不再重复；两处冲突以量规文件为准。题面只给你客观数字，不给任何评价词——
+节奏好坏由你自己按 speed 维口径判定。
+
+【本次批改要做的事】：
+1. 定位【最早错误断点】(earliestError)，`errorTags` 只填 1 个主标签（三选一，取最早断点所属类）；
+   其余次要病因填 `secondaryTags`。
+2. 六维证据分 (0–100)：每维必须带 `evidence`，报告会把它原样上架给学员核对；
+   草稿无法确认的维度填 `score:null` + `confidence:0` + `evidence:"uncertain"`。
+   `strategyInsight` 另给 `techniqueLevel`（1–5）与 `independentDiscovery`
+   （confirmed|uncertain|prompted）。维度对象内不要写 advice。
+3. `stepScore`：partial / incorrect 必填有效步骤分（0–100 整数），correct / uncertain 填 null。
+4. `betterSolution`：考场极速秒杀思路，原解法已最优填 null。`advice`：一条明天可落地的动作。
+5. `diagnosis`：按量规第五节逐项填实。`verdict = correct` 时不要整块填 null，
+   改填三字段固化卡（myEntry + rule.positive + whyItWorked）。
+6. `draftPaths`：本题草稿图绝对路径数组，按你收到的顺序；没收到填 []，严禁编路径。
+7. 画像与反馈：按量规第一节的状态纪律更新根目录 characteristic.md
+   ——新增断点先落 [🟡 观察中]，**不许自行判定已固化**；并在回复学员的报告里
+   专门呈现【🌟 本轮战力突破 / 成功改正】与【⚠️ 本轮新增微观断点与补丁】。
 
 完成后请将结果写入这个绝对路径：
 {output}
 
-JSON 必须符合（UTF-8，公式用标准单个反斜杠 LaTeX）。结果必须包含 rating、ratingTier、difficultyMultiplier 和六维 dimensions；无法由草稿确认的维度使用 score:null、confidence:0，并明确写 uncertain：
-{{"schemaVersion":1,"kind":"analysis","taskId":"{task_id}","questionId":{question_id},"summary":"战术诊断摘要（含 $LaTeX$ 公式）","verdict":"correct|partial|incorrect|uncertain","earliestError":"最早断点行与数学式（含 $LaTeX$）或 null","errorTags":["计算笔误" | "概念边界" | "方法绕路"],"weaknessTags":["薄弱知识点"],"advice":"下一步修复动作（含 $LaTeX$ 公式）","betterSolution":"考场极速秒杀思路（含 $LaTeX$ 公式）或 null","confidence":0.95,"rating":1.00,"ratingTier":"S|A|B|C|D","difficultyMultiplier":1.0,"dimensions":{{"rigor":{{"score":88,"confidence":0.9,"evidence":"依据草稿步骤（含 $LaTeX$）","advice":"改进动作（含 $LaTeX$）"}},"computation":{{"score":72,"confidence":0.9,"evidence":"依据草稿步骤（含 $LaTeX$）"}},"modeling":{{"score":65,"confidence":0.9,"evidence":"依据草稿步骤（含 $LaTeX$）"}},"methodUse":{{"score":80,"confidence":0.9,"evidence":"依据草稿步骤（含 $LaTeX$）"}},"speed":{{"score":90,"confidence":0.9,"evidence":"基于实际耗时"}},"strategyInsight":{{"score":58,"confidence":0.8,"evidence":"依据结构识别（含 $LaTeX$）","techniqueLevel":3,"independentDiscovery":"uncertain"}}}},"diagnosis":{{"errorCode":"E-027 或 null","title":"根式换元入口缺失","severity":"L1|L2|L3","myEntry":"学员落笔时的第一个动作（含 $LaTeX$）","whyDeadEnd":"这条路径为什么走不通（讲原理，不讲步骤，含 $LaTeX$）","rule":{{"negation":"看到什么特征时禁止做什么","positive":"该做什么"}},"fork":{{"step":1,"label":"换元选择","myPath":"学员实际走的路径（含 $LaTeX$）","standardPath":"正确路径（含 $LaTeX$）","consequence":"走错之后的后果"}},"acceptance":"一条可判定的验收判据","nextAction":"明天就能做的一条动作"}},"recommendedQuestionIds":[],"recommendationReason":null}}
-strategyInsight 还必须包含 techniqueLevel（1–5）和 independentDiscovery（confirmed|uncertain|prompted）。不要输出 batchAttempts，单题只输出上面的 analysis 对象。
-不要修改题库源文件。"#,
+JSON 必须符合（UTF-8，公式用标准单个反斜杠 LaTeX）。缺 `dimensions` 会退回特征曲线评分，务必带全六维：
+{{"schemaVersion":1,"kind":"analysis","taskId":"{task_id}","questionId":{question_id},"summary":"战术诊断摘要（含 $LaTeX$ 公式）","verdict":"correct|partial|incorrect|uncertain","earliestError":"最早断点行与数学式（含 $LaTeX$）或 null","errorTags":["瞄准失误|概念盲区|战术绕路 三选一"],"secondaryTags":["次要病因，可空数组"],"weaknessTags":["薄弱知识点"],"advice":"下一步修复动作（含 $LaTeX$ 公式）","betterSolution":"考场极速秒杀思路（含 $LaTeX$ 公式）或 null","stepScore":72,"confidence":0.95,"rating":1.00,"dimensions":{{"rigor":{{"score":88,"confidence":0.9,"evidence":"依据草稿步骤（含 $LaTeX$）"}},"computation":{{"score":72,"confidence":0.9,"evidence":"依据草稿步骤（含 $LaTeX$）"}},"modeling":{{"score":65,"confidence":0.9,"evidence":"依据草稿步骤（含 $LaTeX$）"}},"methodUse":{{"score":80,"confidence":0.9,"evidence":"依据草稿步骤（含 $LaTeX$）"}},"speed":{{"score":90,"confidence":0.9,"evidence":"基于实际耗时与基准的比值"}},"strategyInsight":{{"score":58,"confidence":0.8,"evidence":"依据结构识别（含 $LaTeX$）","techniqueLevel":3,"independentDiscovery":"uncertain"}}}},"draftPaths":["E:\\\\刷吧\\\\photo\\\\1.png"],"diagnosis":{{"errorCode":"E-027 或 null","title":"根式换元入口缺失","severity":"L1|L2|L3","myEntry":"学员落笔时的第一个动作（含 $LaTeX$）","whyDeadEnd":"这条路径为什么走不通（讲原理，不讲步骤，含 $LaTeX$）","rule":{{"negation":"看到什么特征时禁止做什么","positive":"该做什么"}},"fork":{{"step":1,"label":"换元选择","myPath":"学员实际走的路径（含 $LaTeX$）","standardPath":"正确路径（含 $LaTeX$）","consequence":"走错之后的后果"}},"acceptance":"一条可判定的验收判据","nextAction":"明天就能做的一条动作","whyItWorked":null}},"recommendedQuestionIds":[],"recommendationReason":null}}
+correct 题的 diagnosis 形如 {{"myEntry":"...","rule":{{"positive":"..."}},"whyItWorked":"..."}}，其余字段填 null。
+不要输出 batchAttempts，单题只输出上面的 analysis 对象。不要修改题库源文件。"#,
         stem = q.stem,
         answer = q.correct_answer,
         output = output.to_string_lossy()
@@ -9516,34 +9591,22 @@ fn build_codex_batch_task_prompt(
         .iter()
         .enumerate()
         .map(|(index, q)| {
+            let bench_sec = services::rating::benchmark_seconds(&q.question_type);
             let type_label = match q.question_type.as_str() {
-                "single_choice" => "单选题 · 基准3分",
-                "multiple_choice" => "多选题 · 基准4分",
-                "fill_in" => "填空题 · 基准5分",
-                _ => "解答/证明题 · 基准10分",
-            };
-            let bench_sec = match q.question_type.as_str() {
-                "single_choice" => 180,
-                "multiple_choice" => 240,
-                "fill_in" => 300,
-                _ => 600,
+                "single_choice" => format!("单选题 · 基准{bench_sec}秒"),
+                "multiple_choice" => format!("多选题 · 基准{bench_sec}秒"),
+                "fill_in" => format!("填空题 · 基准{bench_sec}秒"),
+                _ => format!("解答/证明题 · 基准{bench_sec}秒"),
             };
             let dur_sec = durations.and_then(|m| m.get(&q.id).copied());
-            let timing_info = if let Some(sec) = dur_sec {
-                let m = sec / 60;
-                let s = sec % 60;
-                let pace_eval = if sec <= bench_sec / 2 {
-                    "⚡ 极速秒杀"
-                } else if sec <= bench_sec {
-                    "✓ 节奏标准"
-                } else if sec <= bench_sec * 3 / 2 {
-                    "⏱ 稍有迟疑"
-                } else {
-                    "⚠️ 耗时偏长(可能计算绕路)"
-                };
-                format!(" | ⏱ 作答耗时：{m}分{s:02}秒 [{pace_eval}]")
-            } else {
-                "".to_string()
+            // 只报客观数字，不替 AI 下节奏结论（与单题提示词同一处保持口径）。
+            let timing_info = match dur_sec {
+                Some(sec) => format!(
+                    " | ⏱ 实际耗时 {}分{:02}秒（基准 {bench_sec} 秒）",
+                    sec / 60,
+                    sec % 60
+                ),
+                None => String::new(),
             };
 
             format!(
@@ -9563,53 +9626,57 @@ fn build_codex_batch_task_prompt(
 
 {numbered}
 
-【战术批改指令与评分量规】：
+★ 先完整读 E:\刷吧\.agent\09-批改量规.md，未读不得回传。六维独立性量规、HLTV Rating 锚点与整组
+区分度要求、步骤分口径、断点诊断块写作纪律、correct 固化卡口径、公式排版要求全在那份文件里，
+本提示词不再重复；两处冲突以量规文件为准。题面只给你客观数字，不给任何评价词——
+节奏好坏由你自己按 speed 维口径判定。
+
+【本次批改要做的事】：
 1. 逐题核对草稿：第 K 张图片对应第 K 题，少于题目数时只批改收到草稿的题，未收到草稿的题在 batchAttempts 中省略，严禁猜测。
-2. 熟练度与节奏诊断及致命断点定位 (earliestError)：综合题目「实际作答耗时」与草稿步骤判断熟练度，逐行核对推导定位最早出现的错误断点行及公式。精准归类并在 errorTags 标注：
-   - 🔴 瞄准失误 (计算笔误/符号写反) -> verdict: "partial", 保留有效步骤分;
-   - 🟡 概念盲区 (定理前提遗漏/混淆充分必要) -> verdict: "incorrect", 严查概念边界;
-   - 🔵 战术绕路 (方法机械蛮干/超时严重) -> speed <= 60, 指出计算黑洞与冗余步骤.
-   无法确定时 result 设为 "uncertain"。durationSeconds 必须原样填写上方提供的实际作答耗时（秒）。
-3. HLTV Rating 3.0 定位 (0.00-2.50，拉开区分度)：
-   - 0.50: 核心断裂; 0.80: 笨拙硬算且有笔误; 1.00: 常规达标; 1.15-1.25: 规范严密; 1.30-1.45: 巧解秒杀; 1.50-1.65: 压轴题突破; 2.00-2.45: Donk-tier 超神秒杀 (极罕见神级表现);
-   - 【整组区分度要求】：同组题目的 Rating 必须依据草稿实际优劣拉开梯度（严禁全部打在 1.10-1.20 区间）。若 verdict 为 incorrect，rating 严禁超过 0.65 (有大量正确步骤的笔误最高 0.80)。
-4. 六维能力打分准则 (0-100)：
-   - 每维评分必须在 evidence 中引用草稿具体推导证据，严禁无证据给分；
-   - 无法从草稿确认的维度，必须输出 score: null, confidence: 0, evidence: "uncertain"，严禁猜 75 分！
-   - strategyInsight 另给 techniqueLevel（1–5，表示本题技巧难度）和 independentDiscovery（confirmed|uncertain|prompted）。
-   - 【六维独立性量规——六维必须独立于对错结果给分，严禁把六维锚定在 verdict 上】：
-     · 严谨性/计算力只看执行：草稿每处计算笔误/符号写反，该维从 90 起每处 −10 起步，与思路对错无关（做对但涂改三处 → 计算力 ≤ 65）；
-     · 方法使用/审题建模只看路径：使用该考点标准入口动作才 ≥ 75；绕路硬算、蛮力展开 → ≤ 55，即使最终做对；
-     · 策略洞察只看结构识别与优化空间：常规套路 ≤ 70；巧解/对称性/极端变换类 ≥ 85；
-     · 速度由实际耗时决定（题面已附基准耗时），与对错无关；超基准 1.5 倍 → ≤ 55；
-     · 反「参与奖」：六维全部 ≥ 90 仅在「快且准且巧」同时成立时允许；常规做对的题至少一维 ≤ 75；
-     · 反「陪葬」：做错时思路正确的部分（瞄准失误），对应维按实际水平给分，methodUse/modeling 不因结果错误强制低于 40；
-     · 极差自检：输出前检查单题六维极差；极差 < 10 分仅当六维确实均衡时允许，否则视为锚定失效，必须重新对照证据打分。
-5. 考场极速秒杀思路 (betterSolution)：
-   - 严禁搬运繁琐教材长证明！必须提供考场极速解题技巧（Taylor展开、King变换、特征多项式、待定系数、几何投影等 30 秒秒解）；若原解法已最优填 null。
-6. 可执行修复动作 (advice)：每道题给出一条可落地执行的专项修复动作。
-7. 断点诊断块 (diagnosis)：每题必填（correct 的题整块填 null）。报告按「我的入口 → 断点 → 为什么是死路 → 识别规则 → 正确入口」的认知动线呈现，逐项填实，严禁留空或复述题干：
-   - myEntry：学员落笔时的第一个动作（原话式一句，含 $LaTeX$），描述他做了什么，不是他错在哪；
-   - whyDeadEnd：讲清这条路径为什么走不通——讲结构特征与原理，严禁复述计算步骤，严禁写成"应该这样做"；
-   - rule：先 negation 后 positive；negation 必须是「看到什么特征 → 禁止做什么」的硬约束句式（肯定式会被旧习惯覆盖，否定式才拦得住）；
-   - fork：step 填分叉发生在第几步（落笔即错填 1），myPath 与 standardPath 对照填写，consequence 写清走错之后会发生什么；
-   - acceptance：一条可判定的验收判据（如「根号池 13 题零覆盖」），禁止"多做练习""加强理解"这类无法判定的空话；
-   - errorCode：该断点若在 characteristic.md 中已有编号（如 E-027）则回填，尚未编码的填 null；同一入口导致的题填同一个 errorCode，便于统计复发；
-   - title / severity：断点名与 L1 致命 / L2 战术 / L3 精度分级；
-   - nextAction：明天就能做的一条动作，需能在 10 分钟内完成。
-8. 公式排版绝对要求：所有数学符号、变量、公式、计算式必须严格使用 $...$ 或 $$...$$ 包裹，严禁裸文本数学式。
-9. 学员微观画像与报告反馈：批改完成后，请依据草稿表现同步更新根目录 characteristic.md 中的微观断点追踪状态（追加新错误或升级已固化）；并在最终回复给学员的文字报告中，专门呈现【🌟 本轮战力突破 / 成功改正】与【⚠️ 本轮新增微观断点与补丁】。
+2. 定位【最早错误断点】(earliestError)：`errorTags` 只填 1 个主标签（三选一，取该题最早断点所属类），
+   其余次要病因填 `secondaryTags`。病因归一只看主标签，多标签会把概念盲区判成瞄准失误并影响明天推什么题。
+3. `stepScore`：partial / incorrect 必填有效步骤分（0–100 整数），correct / uncertain 填 null。
+   报告会显示它——学员必须看得见"自己错得多可惜"。
+4. 六维证据分 (0–100)：每维必须带 `evidence`，报告会把它原样上架给学员核对；
+   草稿无法确认的维度填 `score:null` + `confidence:0` + `evidence:"uncertain"`。
+   `strategyInsight` 另给 `techniqueLevel`（1–5）与 `independentDiscovery`
+   （confirmed|uncertain|prompted）。维度对象内不要写 advice。
+   `durationSeconds` 原样回填上方题面给出的实际耗时秒数。
+5. `betterSolution`：考场极速秒杀思路（选填速算角色），原解法已最优填 null；
+   `advice`：每题一条可落地的修复动作。
+6. `diagnosis`：按量规第五节逐项填实。`verdict = correct` 的题不要整块填 null，
+   改填三字段固化卡（myEntry + rule.positive + whyItWorked）——画像封盘靠的就是做对题的证据。
+   同一入口导致的题必须填同一个 errorCode，复发时间线靠它对齐。
+7. `draftPaths`：每题草稿图绝对路径数组，按你收到的顺序；没收到填 []，严禁编路径。
+8. 画像与反馈：按量规第一节的状态纪律更新根目录 characteristic.md
+   ——新增断点先落 [🟡 观察中]，**不许自行判定已固化**；并在回复学员的报告里
+   专门呈现【🌟 本轮战力突破 / 成功改正】与【⚠️ 本轮新增微观断点与补丁】。
 
 完成后请将结果写入这个绝对路径：
 {output}
 
-JSON 必须符合（UTF-8，公式用标准单个反斜杠 LaTeX）。每个 batchAttempt 还必须包含 rating、ratingTier、difficultyMultiplier 和六维 dimensions；无法由草稿确认的维度使用 score:null、confidence:0，并明确写 uncertain：
-{{"schemaVersion":1,"kind":"batch","taskId":"{task_id}","summary":"整组批改摘要（含 $LaTeX$ 公式）","errorTags":["错误类型"],"weaknessTags":["薄弱知识"],"confidence":0.9,"recommendedQuestionIds":[],"batchAttempts":[{{"questionId":155,"result":"correct|wrong|uncertain","selfRating":2,"durationSeconds":120,"summary":"简要诊断（含 $LaTeX$ 公式）","verdict":"correct|partial|incorrect|uncertain","earliestError":"最早断点行与数学式（含 $LaTeX$）或 null","errorTags":["计算笔误" | "概念边界" | "方法绕路"],"weaknessTags":["薄弱知识"],"advice":"下一步修复动作（含 $LaTeX$ 公式）","betterSolution":"考场极速秒杀思路（含 $LaTeX$ 公式）或 null","confidence":0.95,"rating":1.00,"ratingTier":"S|A|B|C|D","difficultyMultiplier":1.0,"dimensions":{{"rigor":{{"score":88,"confidence":0.9,"evidence":"依据草稿步骤（含 $LaTeX$）","advice":"改进动作（含 $LaTeX$）"}},"computation":{{"score":72,"confidence":0.9,"evidence":"依据草稿步骤（含 $LaTeX$）"}},"modeling":{{"score":65,"confidence":0.9,"evidence":"依据草稿步骤（含 $LaTeX$）"}},"methodUse":{{"score":80,"confidence":0.9,"evidence":"依据草稿步骤（含 $LaTeX$）"}},"speed":{{"score":90,"confidence":0.9,"evidence":"基于实际耗时"}},"strategyInsight":{{"score":58,"confidence":0.8,"evidence":"依据结构识别（含 $LaTeX$）","techniqueLevel":3,"independentDiscovery":"uncertain"}}}},"diagnosis":{{"errorCode":"E-027 或 null","title":"断点名","severity":"L1|L2|L3","myEntry":"学员落笔时的第一个动作（含 $LaTeX$）","whyDeadEnd":"这条路径为什么走不通（讲原理，不讲步骤）","rule":{{"negation":"看到什么特征时禁止做什么","positive":"该做什么"}},"fork":{{"step":1,"label":"换元选择","myPath":"学员实际走的路径（含 $LaTeX$）","standardPath":"正确路径（含 $LaTeX$）","consequence":"走错之后的后果"}},"acceptance":"一条可判定的验收判据","nextAction":"明天就能做的一条动作"}}}}]}}
+JSON 必须符合（UTF-8，公式用标准单个反斜杠 LaTeX）。每个 batchAttempt 还必须包含 rating 和六维 dimensions；`errorTags` 只放 1 个主标签；无法由草稿确认的维度使用 score:null、confidence:0，并明确写 uncertain；`stepScore` 与 `draftPaths` 按上面第 3、7 条填写：
+{{"schemaVersion":1,"kind":"batch","taskId":"{task_id}","summary":"整组批改摘要（含 $LaTeX$ 公式）","errorTags":["错误类型"],"weaknessTags":["薄弱知识"],"confidence":0.9,"recommendedQuestionIds":[],"batchAttempts":[{{"questionId":155,"result":"correct|wrong|uncertain","selfRating":2,"durationSeconds":120,"summary":"简要诊断（含 $LaTeX$ 公式）","verdict":"correct|partial|incorrect|uncertain","earliestError":"最早断点行与数学式（含 $LaTeX$）或 null","errorTags":["瞄准失误|概念盲区|战术绕路 三选一"],"secondaryTags":["次要病因，可空数组"],"weaknessTags":["薄弱知识"],"advice":"下一步修复动作（含 $LaTeX$ 公式）","betterSolution":"考场极速秒杀思路（含 $LaTeX$ 公式）或 null","stepScore":72,"confidence":0.95,"rating":1.00,"dimensions":{{"rigor":{{"score":88,"confidence":0.9,"evidence":"依据草稿步骤（含 $LaTeX$）"}},"computation":{{"score":72,"confidence":0.9,"evidence":"依据草稿步骤（含 $LaTeX$）"}},"modeling":{{"score":65,"confidence":0.9,"evidence":"依据草稿步骤（含 $LaTeX$）"}},"methodUse":{{"score":80,"confidence":0.9,"evidence":"依据草稿步骤（含 $LaTeX$）"}},"speed":{{"score":90,"confidence":0.9,"evidence":"基于实际耗时与基准的比值"}},"strategyInsight":{{"score":58,"confidence":0.8,"evidence":"依据结构识别（含 $LaTeX$）","techniqueLevel":3,"independentDiscovery":"uncertain"}}}},"draftPaths":["E:\\\\刷吧\\\\photo\\\\1.png"],"diagnosis":{{"errorCode":"E-027 或 null","title":"断点名","severity":"L1|L2|L3","myEntry":"学员落笔时的第一个动作（含 $LaTeX$）","whyDeadEnd":"这条路径为什么走不通（讲原理，不讲步骤）","rule":{{"negation":"看到什么特征时禁止做什么","positive":"该做什么"}},"fork":{{"step":1,"label":"换元选择","myPath":"学员实际走的路径（含 $LaTeX$）","standardPath":"正确路径（含 $LaTeX$）","consequence":"走错之后的后果"}},"acceptance":"一条可判定的验收判据","nextAction":"明天就能做的一条动作","whyItWorked":null}}}}]}}
+correct 题的 diagnosis 形如 {{"myEntry":"...","rule":{{"positive":"..."}},"whyItWorked":"..."}}，其余字段填 null。
 示例中的分数仅用于展示字段类型，不要照抄。不要修改题库源文件。"#,
         count = questions.len(),
         numbered = numbered.join("\n\n"),
         output = output_path
     )
+}
+
+/// 难度系数一律由题库 `questions.difficulty` 派生，不接受批改载荷自带的
+/// `difficultyMultiplier`：被评分者自选系数等于评分可以被自己放大。
+/// 口径与 `build_codex_batch_report` 的回退分支严格一致，保证报告与落库同源。
+fn question_difficulty_multiplier(conn: &Connection, question_id: i64) -> f64 {
+    let difficulty: i64 = conn
+        .query_row(
+            "SELECT COALESCE(difficulty, 3) FROM questions WHERE id=?1",
+            [question_id],
+            |row| row.get(0),
+        )
+        .unwrap_or(3);
+    0.9 + (difficulty.clamp(1, 5) - 1) as f64 * 0.075
 }
 
 fn latest_attempt_duration(conn: &Connection, question_id: i64) -> Result<Option<i32>, String> {
@@ -10486,10 +10553,15 @@ fn build_codex_batch_report(
             "weaknessTags": item.get("weaknessTags"),
             "advice": item.get("advice"),
             "betterSolution": item.get("betterSolution"),
+            "methodSoundness": services::learning::normalize_method_soundness(
+                item.get("methodSoundness").and_then(|v| v.as_str()),
+            ),
             "confidence": item.get("confidence"),
             "rating": final_rating,
-            "ratingTier": item.get("ratingTier"),
-            "difficultyMultiplier": item.get("difficultyMultiplier"),
+            "difficultyMultiplier": difficulty_multiplier,
+            "stepScore": item.get("stepScore"),
+            "secondaryTags": item.get("secondaryTags"),
+            "draftPaths": item.get("draftPaths"),
             "dimensions": item.get("dimensions"),
             "diagnosis": item.get("diagnosis"),
         }));
@@ -11943,6 +12015,112 @@ fn get_question_attempt_history(
     Ok(entries)
 }
 
+/// 同 errorCode 的历史命中（复发时间线）。数据全部来自 `codex_inbox.payload_json`，
+/// 只读查询，不加表不加列——复发最有杀伤力的呈现是两次并排：
+/// 「9/2 E-027，当时规则是 X → 今天还是 E-027」。
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ErrorCodeEncounter {
+    pub task_id: String,
+    pub created_at: String,
+    pub verdict: Option<String>,
+    pub step_score: Option<f64>,
+    pub duration_seconds: Option<i64>,
+    pub my_entry: Option<String>,
+    pub rule_negation: Option<String>,
+    pub acceptance: Option<String>,
+    pub next_action: Option<String>,
+}
+
+fn error_code_history(
+    conn: &Connection,
+    question_id: i64,
+    error_code: &str,
+    exclude_task_id: Option<&str>,
+) -> Result<Vec<ErrorCodeEncounter>, String> {
+    if error_code.trim().is_empty() {
+        return Ok(Vec::new());
+    }
+    let sql = "
+         SELECT src.task_id, src.created_at, src.verdict, src.step_score, src.duration_seconds,
+                src.my_entry, src.rule_negation, src.acceptance, src.next_action
+         FROM (
+             SELECT i.task_id AS task_id, i.created_at AS created_at,
+                    json_extract(b.value, '$.verdict') AS verdict,
+                    json_extract(b.value, '$.stepScore') AS step_score,
+                    json_extract(b.value, '$.durationSeconds') AS duration_seconds,
+                    json_extract(b.value, '$.diagnosis.myEntry') AS my_entry,
+                    json_extract(b.value, '$.diagnosis.rule.negation') AS rule_negation,
+                    json_extract(b.value, '$.diagnosis.acceptance') AS acceptance,
+                    json_extract(b.value, '$.diagnosis.nextAction') AS next_action,
+                    json_extract(b.value, '$.diagnosis.errorCode') AS error_code,
+                    CAST(json_extract(b.value, '$.questionId') AS INTEGER) AS question_id
+             FROM codex_inbox i, json_each(json_extract(i.payload_json, '$.batchAttempts')) b
+             WHERE i.kind = 'batch'
+
+             UNION ALL
+
+             SELECT i.task_id, i.created_at,
+                    json_extract(i.payload_json, '$.verdict'),
+                    json_extract(i.payload_json, '$.stepScore'),
+                    NULL,
+                    json_extract(i.payload_json, '$.diagnosis.myEntry'),
+                    json_extract(i.payload_json, '$.diagnosis.rule.negation'),
+                    json_extract(i.payload_json, '$.diagnosis.acceptance'),
+                    json_extract(i.payload_json, '$.diagnosis.nextAction'),
+                    json_extract(i.payload_json, '$.diagnosis.errorCode'),
+                    CAST(json_extract(i.payload_json, '$.questionId') AS INTEGER)
+             FROM codex_inbox i
+             WHERE i.kind = 'analysis'
+         ) src
+         WHERE src.question_id = ?1 AND src.error_code = ?2
+           AND (?3 IS NULL OR src.task_id <> ?3)
+         ORDER BY src.created_at DESC, src.task_id DESC
+         LIMIT 3";
+    let mut stmt = conn
+        .prepare(sql)
+        .map_err(|e| format!("复发时间线查询失败：{e}"))?;
+    let rows = stmt
+        .query_map(
+            params![question_id, error_code.trim(), exclude_task_id],
+            |row| {
+                Ok(ErrorCodeEncounter {
+                    task_id: row.get(0)?,
+                    created_at: row.get(1)?,
+                    verdict: row.get(2)?,
+                    step_score: row.get(3)?,
+                    duration_seconds: row.get(4)?,
+                    my_entry: row.get(5)?,
+                    rule_negation: row.get(6)?,
+                    acceptance: row.get(7)?,
+                    next_action: row.get(8)?,
+                })
+            },
+        )
+        .map_err(|e| e.to_string())?;
+    let mut encounters = Vec::new();
+    for row in rows {
+        encounters.push(row.map_err(|e| e.to_string())?);
+    }
+    Ok(encounters)
+}
+
+#[tauri::command]
+fn get_error_code_history(
+    question_id: i64,
+    error_code: String,
+    exclude_task_id: Option<String>,
+    state: State<AppState>,
+) -> Result<Vec<ErrorCodeEncounter>, String> {
+    let conn = state.db.lock().map_err(|e| e.to_string())?;
+    error_code_history(
+        &conn,
+        question_id,
+        &error_code,
+        exclude_task_id.as_deref(),
+    )
+}
+
 #[derive(Debug, Serialize, Deserialize, Clone, Default)]
 #[serde(rename_all = "camelCase")]
 pub struct DailyPlanItemData {
@@ -12547,6 +12725,7 @@ pub fn run() {
             get_today_attempted_questions,
             get_mistake_timeline,
             get_question_attempt_history,
+            get_error_code_history,
             get_questions_learning_meta,
             get_category_time_baselines,
             get_app_version,
@@ -15554,7 +15733,7 @@ mod tests {
     }
 
     #[test]
-    fn batch_prompt_includes_timing_information_and_diagnosis_instructions() {
+    fn batch_prompt_keeps_timing_objective_and_defers_rubric_to_agent_doc() {
         let question = Question {
             id: 101,
             stem: "测试题干1".to_string(),
@@ -15585,9 +15764,148 @@ mod tests {
             "C:/dummy/output.json",
         );
 
-        assert!(prompt.contains("1分30秒"));
-        assert!(prompt.contains("极速秒杀"));
-        assert!(prompt.contains("熟练度与节奏诊断"));
+        assert!(prompt.contains("1分30秒"), "实际耗时必须以秒/分客观给出");
+        assert!(prompt.contains("基准 180 秒"), "基准取自内核 benchmark_seconds(单选题)");
+        assert!(
+            !prompt.contains("⚡ 极速秒杀") && !prompt.contains("耗时偏长"),
+            "题面不得替 AI 下节奏结论"
+        );
+        assert!(
+            prompt.contains(".agent\\09-批改量规.md"),
+            "六维量规必须外提到分册，不再编进 Rust"
+        );
+        assert!(prompt.contains("\"stepScore\""), "有效步骤分必须进契约");
+        assert!(prompt.contains("\"secondaryTags\""), "次要病因必须与主标签分离");
+        assert!(prompt.contains("\"draftPaths\""), "草稿原件路径必须进契约");
+        assert!(prompt.contains("whyItWorked"), "correct 题固化卡必须进契约");
+        assert!(
+            !prompt.contains("ratingTier") && !prompt.contains("difficultyMultiplier"),
+            "档位与难度系数不再由批改侧自报"
+        );
+    }
+
+    #[test]
+    fn batch_payload_keeps_diagnosis_and_new_fields_through_inbox() {
+        // scan_inbox 存进 payload_json 的是重新序列化后的 CodexPayload。
+        // 任何没在结构体里声明的字段都会在入库时被丢掉，报告的六段动线就退化成降级派生——
+        // 这个测试守住 diagnosis / stepScore / secondaryTags / draftPaths 四项留存。
+        let conn = Connection::open_in_memory().unwrap();
+        init_schema(&conn).unwrap();
+        insert_test_question(&conn, 7, "高等数学 / 一元函数积分学");
+
+        let raw = r#"{
+            "schemaVersion":1,"kind":"batch","taskId":"SB-RETENTION-1","summary":"整组摘要",
+            "confidence":0.9,"recommendedQuestionIds":[],
+            "batchAttempts":[{
+                "questionId":7,"result":"wrong","selfRating":2,"durationSeconds":300,
+                "summary":"根式换元入口缺失","verdict":"partial",
+                "earliestError":"第 3 行漏验定义域",
+                "errorTags":["瞄准失误"],"secondaryTags":["概念边界"],
+                "weaknessTags":["三角换元"],"advice":"先配方再换元",
+                "stepScore":72,"confidence":0.9,"rating":1.2,
+                "draftPaths":["E:/刷吧/photo/1.png"],
+                "dimensions":{"rigor":{"score":88,"confidence":0.9,"evidence":"草稿第 2 行"}},
+                "diagnosis":{
+                    "errorCode":"E-027","title":"根式换元入口缺失","severity":"L1",
+                    "myEntry":"看到根号直接令 x=sin t",
+                    "whyDeadEnd":"根式未整体配成完全平方，换元后仍带根号",
+                    "rule":{"negation":"根号内为二次式时禁止直接三角换元","positive":"先配方再换元"},
+                    "fork":{"step":3,"label":"换元选择","myPath":"x=sin t","standardPath":"x+1=cos t","consequence":"越算越繁"},
+                    "acceptance":"根号池 13 题零覆盖",
+                    "nextAction":"今晚重做 3 道同类题",
+                    "whyItWorked":null
+                }
+            }]
+        }"#;
+        let payload: CodexPayload = serde_json::from_str(raw).unwrap();
+        insert_codex_payload(&conn, &payload).unwrap();
+
+        let stored: String = conn
+            .query_row(
+                "SELECT payload_json FROM codex_inbox WHERE task_id='SB-RETENTION-1'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        let stored: Value = serde_json::from_str(&stored).unwrap();
+        let attempt = &stored["batchAttempts"][0];
+        assert_eq!(attempt["diagnosis"]["myEntry"], "看到根号直接令 x=sin t");
+        assert_eq!(
+            attempt["diagnosis"]["rule"]["negation"],
+            "根号内为二次式时禁止直接三角换元"
+        );
+        assert_eq!(attempt["diagnosis"]["fork"]["standardPath"], "x+1=cos t");
+        assert_eq!(attempt["diagnosis"]["errorCode"], "E-027");
+        assert_eq!(attempt["stepScore"].as_f64(), Some(72.0));
+        assert_eq!(attempt["secondaryTags"][0], "概念边界");
+        assert_eq!(attempt["draftPaths"][0], "E:/刷吧/photo/1.png");
+
+        // 报告读取路径必须真的拿到动线数据，而不是靠降级派生
+        let report = build_codex_batch_report(
+            &conn,
+            "SB-RETENTION-1",
+            &stored,
+            "pending",
+            "2026-09-04T10:00:00+08:00",
+        );
+        let grade = &report["grades"][0];
+        assert!(
+            grade["diagnosis"]["whyDeadEnd"].as_str().unwrap().chars().count() > 10,
+            "报告必须拿到 AI 写的原理段，而不是降级派生"
+        );
+        assert_eq!(grade["stepScore"].as_f64(), Some(72.0));
+        assert_eq!(grade["methodSoundness"], Value::Null);
+    }
+
+    #[test]
+    fn error_code_timeline_pairs_previous_encounter_with_this_one() {
+        let conn = Connection::open_in_memory().unwrap();
+        init_schema(&conn).unwrap();
+        insert_test_question(&conn, 7, "高等数学 / 一元函数积分学");
+
+        for (task, created, rule) in [
+            ("SB-OLD", "2026-09-02T10:00:00+08:00", "禁止直接三角换元"),
+            ("SB-NEW", "2026-09-04T10:00:00+08:00", "禁止未见配方就换元"),
+        ] {
+            let payload = json!({
+                "schemaVersion": 1, "kind": "batch", "taskId": task,
+                "summary": "x", "confidence": 0.9,
+                "batchAttempts": [{
+                    "questionId": 7, "result": "wrong", "selfRating": 2,
+                    "durationSeconds": 300, "verdict": "incorrect", "stepScore": 40,
+                    "errorTags": ["概念盲区"],
+                    "diagnosis": {
+                        "errorCode": "E-027",
+                        "rule": { "negation": rule },
+                        "acceptance": "根号池 13 题零覆盖",
+                        "nextAction": "重做 3 道同类题"
+                    }
+                }]
+            });
+            conn.execute(
+                "INSERT INTO codex_inbox(task_id,kind,payload_json,status,created_at) VALUES(?1,'batch',?2,'confirmed',?3)",
+                params![task, payload.to_string(), created],
+            )
+            .unwrap();
+        }
+
+        let all = error_code_history(&conn, 7, "E-027", None).unwrap();
+        assert_eq!(all.len(), 2, "同一 errorCode 的两次命中都要拉出来");
+        assert_eq!(all[0].task_id, "SB-NEW", "按时间倒序");
+        assert_eq!(
+            all[0].rule_negation.as_deref(),
+            Some("禁止未见配方就换元"),
+            "当时的规则必须带出来，学员才能对照"
+        );
+        assert_eq!(all[0].step_score, Some(40.0));
+        assert_eq!(all[0].acceptance.as_deref(), Some("根号池 13 题零覆盖"));
+
+        let previous = error_code_history(&conn, 7, "E-027", Some("SB-NEW")).unwrap();
+        assert_eq!(previous.len(), 1);
+        assert_eq!(previous[0].task_id, "SB-OLD");
+
+        assert!(error_code_history(&conn, 7, "  ", None).unwrap().is_empty());
+        assert!(error_code_history(&conn, 999, "E-027", None).unwrap().is_empty());
     }
 
     fn pressure_saga_fixture(task_id: &str) -> (Connection, Connection, i64, CodexPayload, PressureBatchContext) {

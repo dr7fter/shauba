@@ -592,6 +592,19 @@ mod tests {
     use super::*;
 
     #[test]
+    fn benchmark_seconds_pins_the_math_one_timing_table() {
+        // 基准耗时被提示词、压力报告与前端 utils.ts::benchmarkSeconds 三处引用；
+        // 这条测试把内核侧钉死，任何一侧改数值都会在这里露出来。
+        assert_eq!(benchmark_seconds("single_choice"), 180);
+        assert_eq!(benchmark_seconds("multiple_choice"), 240);
+        assert_eq!(benchmark_seconds("fill_in"), 300);
+        assert_eq!(benchmark_seconds("subjective"), 600);
+        // 未知题型回退解答题基准，绝不能给 0（会让 pace 除零失真）
+        assert_eq!(benchmark_seconds(""), 600);
+        assert_eq!(benchmark_seconds("unknown_type"), 600);
+    }
+
+    #[test]
     fn curve_keeps_average_at_one_and_reserves_the_top() {
         assert_eq!(rating_curve(0.0, 1.0), 0.25);
         assert_eq!(rating_curve(60.0, 1.0), 1.0);

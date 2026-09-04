@@ -255,31 +255,37 @@ fn ensure_column(conn: &Connection, table: &str, column: &str, ddl: &str) -> rus
 /// The normalized class is intentionally small and deterministic. AI tags remain intact in the
 /// diagnosis table; this class is the stable key used by future recommendation rules.
 pub fn normalize_error_class(error_tags: &[String], verdict: Option<&str>) -> &'static str {
-    let joined = error_tags.join(" ").to_ascii_lowercase();
-    if joined.contains("瞄准")
-        || joined.contains("计算")
-        || joined.contains("笔误")
-        || joined.contains("抄错")
-        || joined.contains("sign")
-        || joined.contains("arithmetic")
+    // 只看主标签（数组第一项）。把全部标签 join 起来按「任一命中」判定，会让
+    // 「概念盲区 + 计算笔误」因 aiming 分支排在最前而被判成瞄准失误——病因聚类直接
+    // 决定明天推什么题，这种偏斜不得。次要病因走 secondaryTags，不参与归一。
+    let primary = error_tags
+        .first()
+        .map(|tag| tag.trim().to_ascii_lowercase())
+        .unwrap_or_default();
+    if primary.contains("瞄准")
+        || primary.contains("计算")
+        || primary.contains("笔误")
+        || primary.contains("抄错")
+        || primary.contains("sign")
+        || primary.contains("arithmetic")
     {
         "aiming"
-    } else if joined.contains("概念")
-        || joined.contains("定理")
-        || joined.contains("边界")
-        || joined.contains("concept")
+    } else if primary.contains("概念")
+        || primary.contains("定理")
+        || primary.contains("边界")
+        || primary.contains("concept")
     {
         "concept"
-    } else if joined.contains("战术")
-        || joined.contains("方法")
-        || joined.contains("绕路")
-        || joined.contains("超时")
-        || joined.contains("tactic")
+    } else if primary.contains("战术")
+        || primary.contains("方法")
+        || primary.contains("绕路")
+        || primary.contains("超时")
+        || primary.contains("tactic")
     {
         "tactics"
-    } else if joined.is_empty() && matches!(verdict, Some("correct")) {
+    } else if primary.is_empty() && matches!(verdict, Some("correct")) {
         "none"
-    } else if joined.is_empty() {
+    } else if primary.is_empty() {
         "uncertain"
     } else {
         "mixed"
@@ -1433,6 +1439,27 @@ mod tests {
     fn copy_slip_error_maps_to_aiming() {
         let tags = vec!["符号抄错".to_string()];
         assert_eq!(normalize_error_class(&tags, None), "aiming");
+    }
+
+    #[test]
+    fn only_the_primary_error_tag_drives_the_class() {
+        // 旧实现把全部标签 join 后按「任一命中」判定，aiming 分支排最前 →
+        // 「概念盲区 + 计算笔误」被误判成瞄准失误，病因聚类整体偏斜。
+        let concept_lead = vec!["概念盲区".to_string(), "计算笔误".to_string()];
+        assert_eq!(normalize_error_class(&concept_lead, None), "concept");
+
+        let aiming_lead = vec!["计算笔误".to_string(), "概念盲区".to_string()];
+        assert_eq!(normalize_error_class(&aiming_lead, None), "aiming");
+
+        let tactics_lead = vec!["战术绕路".to_string(), "计算笔误".to_string()];
+        assert_eq!(normalize_error_class(&tactics_lead, None), "tactics");
+
+        let unknown = vec!["粗心".to_string()];
+        assert_eq!(normalize_error_class(&unknown, None), "mixed");
+
+        let none: Vec<String> = vec![];
+        assert_eq!(normalize_error_class(&none, Some("correct")), "none");
+        assert_eq!(normalize_error_class(&none, Some("wrong")), "uncertain");
     }
 
     #[test]

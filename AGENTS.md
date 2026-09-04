@@ -41,6 +41,7 @@
 | **检阅题库挑题 / 排备考计划 / 评定外部方案** | `.agent/07-取样与备考.md` → `考研规划/取样策略-pro-v5.md` |
 | **向 App 回传 JSON**（推题/批改/作战计划） | `.agent/01-回传格式.md` |
 | **批改草稿** | `.agent/02-批改与诊断.md` + `01-回传格式.md` |
+| **打分口径 / 改评分量规** | `.agent/09-批改量规.md`（量规唯一副本，改它不用重编译） |
 | **调评分参数 / 评分相关开发** | `.agent/03-评分与ELO.md` |
 | **发版 / 打 tag / 传 Release** | `.agent/04-发版流程.md` |
 | **任何"AI 接入 / 自动化闭环"提案** | `.agent/06-AI闭环通道.md`（先确认不是重复建设） |
@@ -54,8 +55,8 @@
 npm install          # 装依赖
 npm run app          # 桌面端开发（热重载）
 npm run dev          # 仅浏览器预览（mock 数据）
-npm test             # 完整测试门禁（26 前端 + 88 Rust）
-cd src-tauri && cargo test --locked   # Rust 门禁（当前 88 个）
+npm test             # 完整测试门禁（前端 60 + Rust 121）
+cd src-tauri && cargo test --locked   # Rust 门禁（当前 121 个）
 ```
 
 **提交前门禁：`cargo test --locked` 全绿 + 构建成功。**

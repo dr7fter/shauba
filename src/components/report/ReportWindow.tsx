@@ -31,11 +31,11 @@ const TABS: Array<{ key: TabKey; label: string }> = [
   { key: 'dossier', label: '档案' },
 ]
 
-/** 折叠段的默认开合：断点与识别规则默认展开，原理段默认收起（需要时再看） */
+/** 折叠段的默认开合：断点、原理与识别规则默认展开 */
 const DEFAULT_SECTIONS: Record<string, boolean> = {
   entry: true,
   kill: true,
-  why: false,
+  why: true,
   sol: true,
   rule: true,
 }

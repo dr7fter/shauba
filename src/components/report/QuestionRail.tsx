@@ -56,14 +56,16 @@ export function QuestionRail({
                 }
               }}
             >
-              <span className="rp-idx">{row.index + 1}</span>
+              <span className="rp-idx" title={`第 ${row.index + 1} 题`}>
+                {row.index + 1}
+              </span>
               <span className={`rp-mark ${mark.cls}`} title={mark.label} aria-label={mark.label}>
                 <Icon name={mark.icon} />
               </span>
               <span className="rp-main">
                 <span className="rp-cat">{row.categoryShort}</span>
                 <span className="rp-dur">
-                  #{row.questionId} · {formatElapsed(row.durationSec * 1000)}
+                  题号 #{row.questionId} · {formatElapsed(row.durationSec * 1000)}
                 </span>
               </span>
             </div>

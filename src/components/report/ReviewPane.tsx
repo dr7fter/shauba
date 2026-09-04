@@ -301,7 +301,7 @@ export function ReviewPane({
             open={sections.sol !== false}
             onToggle={() => onToggleSection('sol')}
           >
-            {revealed ? (
+            {revealed || outcome === 'correct' ? (
               <>
                 {flow.fork ? (
                   <div className="rp-fork">
@@ -356,7 +356,7 @@ export function ReviewPane({
                 <p>先自己推一遍这一步该做什么，推不出来再看。</p>
                 <button type="button" className="secondary-button compact" onClick={onReveal}>
                   <Icon name="book" />
-                  展开{outcome === 'correct' ? '解法' : '正确入口'}
+                  展开正确入口
                 </button>
               </div>
             )}

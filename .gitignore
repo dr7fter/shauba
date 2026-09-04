@@ -44,3 +44,9 @@ __pycache__/
 
 # Agent 会话记忆（本机状态，不进仓库）
 .workbuddy/memory/
+
+# 三 Agent 协作区（纯本地，用户 2026-09-04 拍板不进 git）
+协作区/
+
+# 一次性脚本沙盒（AGENTS.md 红线 7；gh-tunnel/make-payload/run-ssr 等本就不入库）
+prototype/

@@ -1,9 +1,9 @@
 # 刷吧 · AI Agent 通用工作契约
 
-> 任何 AI Agent（Codex / Claude Code / Cursor / WorkBuddy 等）在本仓库工作时，
-> 以本文件为**唯一入口**。本文件只放**红线 + 铁律 + 路由表**，具体规格一律走分册。
+> 任何 AI Agent（zcode / gemini / hy4 / Codex / Claude Code 等）在本仓库工作时，
+> 以本文件为**唯一入口**。只放**红线 + 铁律 + 路由表**，具体规格走分册。
 >
-> 版本：v2.0 · 更新：2026-09-02
+> 版本：v2.1 · 更新：2026-09-04
 > **本文件必须保持 ≤6KB**——超过就会被上下文注入截断，红线反而丢失。
 
 ## 一、项目是什么
@@ -24,6 +24,8 @@
 5. `releases/` 已 gitignore（历史教训：260MB 便携版进 git 导致 push 被拒）
 6. 改段位表需**两处同步**：
    `src-tauri/src/services/rating.rs rank_band_index` + `src/utils.ts WANMEI_RANKS`
+7. **根目录禁止新增文件**（常驻文件白名单 = 现在根目录已有的）：
+   Agent 产出进 `协作区/产出/`，一次性脚本进 `prototype/`（本地沙盒，已忽略）
 
 ## 三、三条铁律
 
@@ -46,38 +48,23 @@
 | **发版 / 打 tag / 传 Release** | `.agent/04-发版流程.md` |
 | **任何"AI 接入 / 自动化闭环"提案** | `.agent/06-AI闭环通道.md`（先确认不是重复建设） |
 | **改学习引擎 / 选题逻辑 / 错误处理** | `.agent/08-产品约束摘录.md` |
+| **构建 / 测试 / 一次性脚本沙盒** | `.agent/10-环境与命令.md` |
 | **了解学员当前战力** | `characteristic-core.md`（≤5KB，冷启动摘要） |
 | **深度查学员证据链** | `characteristic.md`（69KB，按需查，不要全读） |
+| **任何任务开工前 / 收工后** | `协作区/公告板.md`（末 20 行）+ `协作区/看板.md` |
+| **协作纪律 / 复核规则 / 文件放哪** | `协作区/README.md`（纯本地，不进 git） |
 
 ## 五、环境与命令
 
-```bash
-npm install          # 装依赖
-npm run app          # 桌面端开发（热重载）
-npm run dev          # 仅浏览器预览（mock 数据）
-npm test             # 完整测试门禁（前端 60 + Rust 121）
-cd src-tauri && cargo test --locked   # Rust 门禁（当前 121 个）
-```
-
-**提交前门禁：`cargo test --locked` 全绿 + 构建成功。**
-
-⚠️ 本机 `npm run build` 会失败（环境问题，非项目问题）：vite 清空 `dist/` 会触发
-safe-delete 守卫。**不要为此改 vite 配置**，改用：
-
-```bash
-npx tsc -b                              # 类型检查
-npx vite build --emptyOutDir false      # 构建
-```
-
-⚠️ **改版本号后必须** `cd src-tauri && cargo update -p shuaba --offline`，
-否则 `cargo test --locked` 失败。
+命令与本机坑 → `.agent/10-环境与命令.md`。**提交前门禁：`cargo test --locked` 全绿 + 构建成功。**
+一次性脚本进 `prototype/` 沙盒，不放根目录。
 
 ## 六、代码架构速览
 
 ```
 src-tauri/src/lib.rs              # 后端核心（~1.3万行）：79 个 tauri::command、ELO 结算、学习中心双引擎、WebDAV 同步
 src-tauri/src/services/rating.rs  # 评分内核：HLTV 合成、特征曲线、段位表（纯函数+测试）
-src/views/                        # TodayView InsightsView ReviewView LibraryView SettingsView LearningCenterView
+src/views/                        # Today / Insights / Review / Library / Settings / LearningCenter
 src/components/                   # GradingReportModal FriendsLadderView FriendVsRadarModal 等
 src/api.ts / types.ts             # 前端 API 封装（与 lib.rs serde camelCase 对应）
 scripts/release.mjs               # 发版脚本
@@ -112,7 +99,4 @@ src-tauri/capabilities/default.json  # Tauri 权限（加插件必须在此注�
 
 ## 九、用户的沟通偏好
 
-- 中文，偏好结构化输出：**表格、分批、时间估算、明确优先级标记**
-- 会**主动纠正 AI 的认知偏差**，并要求把纠正内容沉淀为项目规则——
-  被纠正后请立刻写入对应分册或 `characteristic-core.md`，不要只在对话里回应
-- 要求数据证据支撑决策，不接受"看起来像"
+见 `协作区/README.md` §八（结构化输出 / 纠正须沉淀为规则 / 数据证据支撑决策）。

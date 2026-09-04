@@ -7,7 +7,6 @@ import {
   buildGradeFlow,
   buildReportViewModel,
   buildSessionDigest,
-  sortIndicesByValue,
   type BreakpointGroup,
 } from '../../domain/reportViewModel'
 import { QuestionRail, type RailRow } from './QuestionRail'
@@ -170,28 +169,22 @@ export function ReportWindow({
     setNotes((prev) => ({ ...initial, ...prev }))
   }, [questions])
 
-  /* 默认落在最该看的那题上，只在新报告时打一次，之后尊重用户的选择 */
+  /* 默认落在第一题上（按作答顺序），只在新报告时打一次，之后尊重用户的选择 */
   const initializedKeyRef = useRef<string | null>(null)
   useEffect(() => {
     const key = `${report.confirmedAt ?? report.createdAt ?? report.sourceTaskId}_${vm.grades.length}`
     if (initializedKeyRef.current === key) return
     initializedKeyRef.current = key
-    const firstAttention = vm.attentionEntries[0]?.index
-    if (vm.grades.length > 0) setSelectedIndex(firstAttention ?? vm.worstGradeEntry?.index ?? 0)
-  }, [report, vm.grades.length, vm.attentionEntries, vm.worstGradeEntry])
+    if (vm.grades.length > 0) setSelectedIndex(0)
+  }, [report, vm.grades.length])
 
-  /* 价值排序：侧栏与 j/k 都走这个顺序——最该看的题永远在最上面 */
-  const orderedIndices = useMemo(() => sortIndicesByValue(vm.grades), [vm.grades])
-
+  /* 题目列表按作答顺序排列，j/k 与上下键线性步进 */
   const moveSelection = useCallback(
     (delta: number) => {
-      if (orderedIndices.length === 0) return
-      setSelectedIndex((prev) => {
-        const pos = Math.max(0, orderedIndices.indexOf(prev))
-        return orderedIndices[(pos + delta + orderedIndices.length) % orderedIndices.length]
-      })
+      if (vm.grades.length === 0) return
+      setSelectedIndex((prev) => (prev + delta + vm.grades.length) % vm.grades.length)
     },
-    [orderedIndices],
+    [vm.grades.length],
   )
 
   const toggleSection = useCallback((key: string) => {
@@ -358,8 +351,7 @@ export function ReportWindow({
 
   const railRows: RailRow[] = useMemo(
     () =>
-      orderedIndices.map((index) => {
-        const grade = vm.grades[index]
+      vm.grades.map((grade, index) => {
         const q = questions[grade.questionId]
         const fromSession = session?.questions?.find((item) => item.questionId === grade.questionId)
         return {
@@ -373,7 +365,7 @@ export function ReportWindow({
               : fromSession?.duration ?? 0,
         }
       }),
-    [orderedIndices, vm.grades, questions, session],
+    [vm.grades, questions, session],
   )
 
   const digest = useMemo(

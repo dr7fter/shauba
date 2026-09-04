@@ -65,6 +65,19 @@
 .secondary-button.full { width: 100%; margin-top: 9px; }
 .primary-button.compact, .secondary-button.compact { min-height: 36px; }
 
+/* 按下位移：实体键帽感的下沉反馈，全 App 一致（此前只有报告顶栏有） */
+.primary-button:active:not(:disabled),
+.secondary-button:active:not(:disabled),
+.icon-button:active,
+.ui-modal-close:active,
+.segmented button:active { transform: translateY(1px); }
+
+/* 焦点可见：全站此前一个 :focus-visible 都没有，键盘 Tab 流等于盲操作 */
+:is(button, a, input, textarea, select, [role='button'], [role='tab']):focus-visible {
+  outline: 2px solid var(--success);
+  outline-offset: 2px;
+}
+
 /* ---------- ui-segmented / ui-tabs ---------- */
 .segmented { display: flex; padding: 3px; background: color-mix(in srgb,var(--canvas) 82%,var(--surface)); border-radius: var(--r-sm); position: relative; }
 .segmented button { min-width: 48px; height: 29px; border: 0; border-radius: var(--r-xs); background: transparent; color: var(--muted); cursor: pointer; font-size: var(--fs-sm); position: relative; transition: color .15s ease; }
@@ -153,7 +166,15 @@
 .insight-summary { display: grid; grid-template-columns: repeat(3,1fr); gap: 10px; margin-bottom: 16px; }
 .insight-summary > div { min-height: 92px; padding: 13px 15px; border: 1px solid var(--line); border-radius: var(--r-md); background: var(--surface); display: flex; flex-direction: column; box-shadow: var(--shadow-1); }
 .insight-summary span { color: var(--muted); font-size: var(--fs-sm); }
-.insight-summary strong { margin: 6px 0 3px; color: var(--green-dark); font: 700 30px/1 ui-monospace,monospace; font-size: var(--fs-display); }
+.insight-summary strong {
+  margin: 6px 0 3px;
+  color: var(--green-dark);
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+  font-weight: 700;
+  line-height: 1;
+  font-size: var(--fs-display);
+}
 .insight-summary small { color: var(--muted); font-size: var(--fs-xs); }
 
 /* ---------- ui-empty / ui-toast ---------- */

@@ -15,7 +15,8 @@ const MARK: Record<GradeOutcome, { icon: IconName; cls: string; label: string }>
   correct:   { icon: 'check', cls: 'm-ok',  label: '正确' },
   partial:   { icon: 'half',  cls: 'm-mid', label: '部分正确' },
   wrong:     { icon: 'x',     cls: 'm-bad', label: '错误' },
-  uncertain: { icon: 'dot',   cls: 'm-mid', label: '待确认' },
+  /* 待确认与部分正确必须一眼分得开：形状（破折号 vs 半圆）+ 底色（中性 vs 警告）双重分离 */
+  uncertain: { icon: 'dash',  cls: 'm-pending', label: '待确认' },
 }
 
 /**

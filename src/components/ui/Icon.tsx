@@ -17,6 +17,9 @@ export type IconName =
   | 'route' // 战术绕路
   | 'rotate-ccw' // 复做
   | 'dice' // 碰对（结果对但方法不可复现）
+  | 'copy' // 复制
+  | 'arrow-down' // 向下流向指示
+  | 'alert' // 警告/复发
 
 const GLYPHS: Record<IconName, ReactNode> = {
   chevron: <path d="m9 18 6-6-6-6" />,
@@ -62,6 +65,20 @@ const GLYPHS: Record<IconName, ReactNode> = {
       <circle cx="12" cy="12" r="1.1" fill="currentColor" stroke="none" />
       <circle cx="8.2" cy="15.8" r="1.1" fill="currentColor" stroke="none" />
       <circle cx="15.8" cy="15.8" r="1.1" fill="currentColor" stroke="none" />
+    </>
+  ),
+  copy: (
+    <>
+      <rect x="9" y="9" width="13" height="13" rx="2" ry="2" />
+      <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" />
+    </>
+  ),
+  'arrow-down': <path d="M12 5v14M19 12l-7 7-7-7" />,
+  alert: (
+    <>
+      <circle cx="12" cy="12" r="9" />
+      <line x1="12" y1="8" x2="12" y2="12" />
+      <line x1="12" y1="16" x2="12.01" y2="16" />
     </>
   ),
 }

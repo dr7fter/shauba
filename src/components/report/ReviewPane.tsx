@@ -232,7 +232,7 @@ export function ReviewPane({
       {relapse ? (
         <div className="rp-alert" role="alert">
           <span className="rp-alert-ic" aria-hidden="true">
-            !
+            <Icon name="alert" size="sm" />
           </span>
           <div className="rp-alert-b">
             <b>
@@ -320,7 +320,7 @@ export function ReviewPane({
                     </div>
 
                     <div className="rp-fork-mid" aria-hidden="true">
-                      ↓
+                      <Icon name="arrow-down" size="sm" />
                     </div>
 
                     {/* 下：正解。复盘后要照着重写一遍的就是这段，给它最大的空间和字号 */}
@@ -355,6 +355,7 @@ export function ReviewPane({
               <div className="rp-reveal">
                 <p>先自己推一遍这一步该做什么，推不出来再看。</p>
                 <button type="button" className="secondary-button compact" onClick={onReveal}>
+                  <Icon name="book" />
                   展开{outcome === 'correct' ? '解法' : '正确入口'}
                 </button>
               </div>

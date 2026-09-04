@@ -52,7 +52,8 @@
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  font-family: ui-monospace, SFMono-Regular, monospace;
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
   font-size: var(--fs-xs);
   color: var(--quiet);
 }
@@ -124,7 +125,8 @@
 }
 
 .rp-idx {
-  font-family: ui-monospace, SFMono-Regular, monospace;
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
   font-size: var(--fs-xs);
   font-weight: 650;
   color: var(--quiet);
@@ -138,6 +140,7 @@
   height: 19px;
   border-radius: var(--r-full);
   line-height: 1;
+  box-shadow: 0 0 0 1px inset rgba(0, 0, 0, 0.06);
 }
 
 .rp-mark.m-ok  { background: var(--success-soft); color: var(--success); }
@@ -161,7 +164,8 @@
 .rp-dur {
   display: block;
   margin-top: 1px;
-  font-family: ui-monospace, SFMono-Regular, monospace;
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
   font-size: 10px;
   color: var(--quiet);
 }
@@ -216,15 +220,17 @@
   color: var(--ink);
 }
 
-/* 题干：沿用 .explanation-block-card 的观感 */
+/* 题干：采用文人书卷排版，沉稳且易读 */
 .rp-stem {
-  padding: 13px 16px;
+  padding: 15px 18px;
   border: 1px solid var(--line);
   border-radius: var(--r-md);
   background: var(--surface);
   box-shadow: var(--shadow-1);
+  font-family: var(--font-stem);
   font-size: var(--fs-md);
-  line-height: 1.75;
+  line-height: 1.85;
+  letter-spacing: 0.01em;
   color: var(--ink);
 }
 
@@ -322,7 +328,8 @@
 .rp-sec-n {
   flex: none;
   width: 16px;
-  font-family: ui-monospace, SFMono-Regular, monospace;
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
   font-size: 10px;
   font-weight: 700;
   color: var(--quiet);
@@ -336,7 +343,8 @@
 }
 
 .rp-sec-tag {
-  font-family: ui-monospace, SFMono-Regular, monospace;
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
   font-size: 10px;
   color: var(--quiet);
 }
@@ -459,13 +467,16 @@
 .rp-fork-std {
   padding: 16px 20px;
   border: 1px solid var(--line-success);
+  border-left: 3px solid var(--success);
   border-radius: var(--r-md);
   background: var(--surface);
   box-shadow: var(--shadow-1);
   white-space: pre-wrap;
   overflow-x: auto;
+  font-family: var(--font-stem);
   font-size: var(--fs-lg);
-  line-height: 1.9;
+  line-height: 1.88;
+  letter-spacing: 0.01em;
   color: var(--ink);
 }
 
@@ -582,7 +593,8 @@
 }
 
 .rp-note-hd span {
-  font-family: ui-monospace, SFMono-Regular, monospace;
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
   font-size: 10px;
   color: var(--quiet);
 }
@@ -618,26 +630,27 @@
   color: var(--muted);
 }
 
-/* 自省输入：与 .drawer-search-bar input 同一套观感 */
+/* 自省输入：文人信笺质感微暗纹 */
 .rp-ta {
   width: 100%;
-  min-height: 84px;
+  min-height: 88px;
   resize: vertical;
-  padding: 10px 12px;
+  padding: 11px 13px;
   border: 1px solid var(--line-success);
   border-radius: var(--r-sm);
-  background: var(--success-soft);
+  background-color: var(--surface);
+  background-image: repeating-linear-gradient(transparent, transparent 27px, color-mix(in srgb, var(--line-success) 35%, transparent) 27px, color-mix(in srgb, var(--line-success) 35%, transparent) 28px);
+  background-attachment: local;
   color: var(--ink);
   font-family: inherit;
   font-size: var(--fs-base);
-  line-height: 1.7;
+  line-height: 1.75;
   outline: none;
-  transition: border-color 0.14s ease, background 0.14s ease;
+  transition: border-color 0.14s ease, box-shadow 0.14s ease;
 }
 
 .rp-ta:focus {
   border-color: var(--green);
-  background: var(--surface);
   box-shadow: var(--ring-success-3);
 }
 
@@ -781,7 +794,8 @@
   padding: 0 13px;
   border-top: 1px solid var(--line);
   background: color-mix(in srgb, var(--canvas) 85%, var(--surface));
-  font-family: ui-monospace, SFMono-Regular, monospace;
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
   font-size: 10px;
   color: var(--quiet);
   overflow: hidden;
@@ -802,10 +816,56 @@
   border-right: 0;
 }
 
+/* 实体物理键帽 */
+.rp-kbd {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 17px;
+  height: 17px;
+  padding: 0 4px;
+  margin: 0 2px;
+  font-family: var(--font-mono);
+  font-size: 10px;
+  font-weight: 600;
+  color: var(--ink);
+  background: var(--surface);
+  border: 1px solid var(--line-strong);
+  border-bottom: 2px solid var(--line-strong);
+  border-radius: var(--r-xs);
+  box-shadow: 0 1px 1px rgba(0, 0, 0, 0.04);
+  line-height: 1;
+  vertical-align: middle;
+  user-select: none;
+  font-variant-numeric: tabular-nums;
+}
+
+/* 顶栏按钮与通用交互微反馈 */
+.rp-toolbar .secondary-button,
+.rp-toolbar .ui-modal-close {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  transition: transform 0.1s ease, background 0.14s ease, border-color 0.14s ease;
+}
+
+.rp-toolbar .secondary-button:active,
+.rp-toolbar .ui-modal-close:active,
+.rp-reveal .secondary-button:active {
+  transform: translateY(1px);
+}
+
+/* 分段器 active 微凸浮雕 */
+.segmented button.active {
+  box-shadow: 0 1px 2px rgba(22, 36, 28, 0.08);
+}
+
 /* KaTeX 在报告内不撑开行高 */
 .rp-sec-bd .katex,
-.rp-stem .katex {
+.rp-stem .katex,
+.rp-fork-std .katex {
   font-size: 1.02em;
+  text-indent: 0;
 }
 
 /* ============================ 窄屏 ============================ */

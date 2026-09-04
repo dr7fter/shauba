@@ -382,6 +382,7 @@ export function ReportWindow({
             onClick={handleCopyContext}
             disabled={!activeGrade}
           >
+            <Icon name={copied ? 'check' : 'copy'} />
             {copied ? '已复制' : '复制追问上下文'}
           </button>
           <button
@@ -390,6 +391,7 @@ export function ReportWindow({
             onClick={onRefresh}
             disabled={loading}
           >
+            <Icon name="rotate-ccw" />
             {loading ? '读取中' : '刷新'}
           </button>
           <button
@@ -410,7 +412,15 @@ export function ReportWindow({
                 activeIndex={selectedIndex}
                 onSelect={setSelectedIndex}
                 footerLeft={`${vm.totalCount} 题`}
-                footerRight={noteSaved[activeGrade?.questionId ?? -1] ? '已保存' : 'j / k 切换'}
+                footerRight={
+                  noteSaved[activeGrade?.questionId ?? -1] ? (
+                    <span style={{ color: 'var(--success)', fontWeight: 600 }}>已保存</span>
+                  ) : (
+                    <span>
+                      <kbd className="rp-kbd">j</kbd> <kbd className="rp-kbd">k</kbd> 切题
+                    </span>
+                  )
+                }
               />
             ) : null}
 
@@ -465,7 +475,9 @@ export function ReportWindow({
             <span>用时 {formatElapsed(vm.totalDuration * 1000)}</span>
             {vm.ungradedIds.length > 0 ? <span>{vm.ungradedIds.length} 题无批改证据</span> : null}
             <span className="rp-sp" />
-            <span>j / k 切题 · 1-3 切视图 · Esc 关闭</span>
+            <span>
+              <kbd className="rp-kbd">j</kbd> / <kbd className="rp-kbd">k</kbd> 切题 · <kbd className="rp-kbd">1</kbd>-<kbd className="rp-kbd">3</kbd> 切视图 · <kbd className="rp-kbd">Esc</kbd> 关闭
+            </span>
         </div>
       </div>
     </div>

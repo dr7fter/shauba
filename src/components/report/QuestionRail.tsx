@@ -1,3 +1,4 @@
+import type { ReactNode } from 'react'
 import { formatElapsed, type GradeOutcome } from '../../utils'
 import { Icon, type IconName } from '../ui/Icon'
 
@@ -31,8 +32,8 @@ export function QuestionRail({
   rows: RailRow[]
   activeIndex: number
   onSelect: (index: number) => void
-  footerLeft?: string
-  footerRight?: string
+  footerLeft?: ReactNode
+  footerRight?: ReactNode
 }) {
   return (
     <aside className="rp-side">

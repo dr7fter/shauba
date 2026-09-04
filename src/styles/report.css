@@ -531,6 +531,55 @@
   line-height: 1.85;
 }
 
+/* ============================ 数一工具箱 ============================ */
+/* 考纲内工具清单：列表化呈现，等宽微章 + 高易读数学排版 */
+.rp-tools {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.rp-tool-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 8px 12px;
+  border: 1px solid var(--line);
+  border-radius: var(--r-sm);
+  background: var(--surface);
+  transition: border-color 0.14s ease, background-color 0.14s ease;
+}
+
+.rp-tool-row:hover {
+  border-color: var(--line-strong);
+  background: color-mix(in srgb, var(--surface) 80%, var(--canvas));
+}
+
+.rp-tool-idx {
+  flex: none;
+  min-width: 22px;
+  height: 22px;
+  display: inline-grid;
+  place-items: center;
+  border-radius: var(--r-xs);
+  border: 1px solid var(--line);
+  background: var(--sunken);
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+  font-size: var(--fs-xs);
+  font-weight: 650;
+  color: var(--muted);
+  line-height: 1;
+}
+
+.rp-tool-v {
+  flex: 1;
+  min-width: 0;
+  font-size: var(--fs-sm);
+  line-height: 1.78;
+  color: var(--ink);
+}
+
 /* 图标 chip（病因/碰对/绕路/复做）：素底胶囊 + 彩色图标，彩色只给图标不给底 */
 .rp-icon-chip {
   display: inline-flex;

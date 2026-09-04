@@ -474,6 +474,27 @@ export function ReviewPane({
           </ReportSection>
         ) : null}
 
+        {flow.syllabusTools?.length ? (
+          <ReportSection
+            n={seq++}
+            title="用到的数一工具"
+            tag="全部在考纲内"
+            open={sections.tools !== false}
+            onToggle={() => onToggleSection('tools')}
+          >
+            <div className="rp-tools">
+              {flow.syllabusTools.map((tool, idx) => (
+                <div className="rp-tool-row" key={idx}>
+                  <span className="rp-tool-idx">{idx + 1}</span>
+                  <div className="rp-tool-v">
+                    <MathText value={tool} />
+                  </div>
+                </div>
+              ))}
+            </div>
+          </ReportSection>
+        ) : null}
+
         {flow.rule?.negation || flow.rule?.positive ? (
           <ReportSection
             n={seq++}

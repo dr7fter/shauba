@@ -38,6 +38,7 @@ const DEFAULT_SECTIONS: Record<string, boolean> = {
   kill: true,
   why: true,
   sol: true,
+  tools: true,
   rule: true,
   worked: false,
   evidence: false,
@@ -303,6 +304,9 @@ export function ReportWindow({
             activeFlow.myEntry ? `我的落笔入口：${activeFlow.myEntry}` : null,
             activeFlow.killLine ? `断点：${activeFlow.killLine}` : null,
             activeFlow.whyDeadEnd ? `为什么走不通：${activeFlow.whyDeadEnd}` : null,
+            activeFlow.syllabusTools?.length
+              ? `用到的数一考纲工具：\n${activeFlow.syllabusTools.map((t) => `  - ${t}`).join('\n')}`
+              : null,
             activeFlow.rule?.negation ? `我已知道的禁止项：${activeFlow.rule.negation}` : null,
             activeFlow.rule?.positive ? `我已知道的该做项：${activeFlow.rule.positive}` : null,
             `4. 对照你的详解，指出我从哪一步开始必须换路、当时该怎么识别；我的入口本身可行就沿它补完。`,

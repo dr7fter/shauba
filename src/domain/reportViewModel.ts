@@ -356,6 +356,8 @@ export type GradeFlow = {
   nextAction: string | null
   /** correct 固化卡：这条入口为什么在这道题上成立（画像封盘的证据） */
   whyItWorked: string | null
+  /** 本题用到的数一考纲工具（公式、定理、性质列表） */
+  syllabusTools: string[]
 }
 
 const FATAL_TAGS = ['概念盲区', '概念边界', '充要混淆', '定理记错']
@@ -398,6 +400,11 @@ export function buildGradeFlow(grade: QuestionGrade): GradeFlow {
         }
       : null
 
+  const rawTools = diagnosis?.syllabusTools ?? grade.syllabusTools ?? []
+  const syllabusTools = Array.isArray(rawTools)
+    ? rawTools.filter((t): t is string => typeof t === 'string' && t.trim().length > 0)
+    : []
+
   return {
     errorCode: diagnosis?.errorCode ?? null,
     title: diagnosis?.title ?? grade.errorTags?.[0] ?? grade.weaknessTags?.[0] ?? null,
@@ -410,6 +417,7 @@ export function buildGradeFlow(grade: QuestionGrade): GradeFlow {
     acceptance: diagnosis?.acceptance ?? null,
     nextAction: diagnosis?.nextAction ?? grade.advice ?? null,
     whyItWorked: diagnosis?.whyItWorked ?? null,
+    syllabusTools,
   }
 }
 

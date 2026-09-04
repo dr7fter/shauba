@@ -244,6 +244,8 @@ export type GradingDiagnosis = {
   nextAction?: string | null
   /** correct 题固化卡：这条入口为什么在这道题上成立（讲结构，不讲步骤） */
   whyItWorked?: string | null
+  /** 本题用到的数一工具（全部在考纲内）：定理、公式、性质等列表 */
+  syllabusTools?: string[] | null
 }
 
 /** 同 errorCode 的一次历史命中（复发时间线，来自 codex_inbox 的批改载荷） */
@@ -730,6 +732,8 @@ export type QuestionGrade = {
   draftPaths?: string[] | null
   dimensions?: RatingDimensions | null
   diagnosis?: GradingDiagnosis | null
+  /** 本题用到的数一工具（全部在考纲内） */
+  syllabusTools?: string[] | null
 }
 
 export type GradingSummary = {

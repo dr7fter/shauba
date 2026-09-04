@@ -202,6 +202,10 @@ const completeDiagnosis = {
   },
   acceptance: '根号池 13 题零覆盖',
   nextAction: '今晚重做根号池前 5 题',
+  syllabusTools: [
+    '独立正态变量的线性组合仍服从正态分布',
+    '若 $Z\\sim N(0,1)$，则 $Z^2\\sim\\chi^2(1)$',
+  ],
 }
 
 test('buildGradeFlow passes a complete diagnosis through unchanged', () => {
@@ -221,6 +225,20 @@ test('buildGradeFlow passes a complete diagnosis through unchanged', () => {
   assert.equal(flow.acceptance, '根号池 13 题零覆盖')
   // diagnosis 有 nextAction 时不回落到 advice
   assert.equal(flow.nextAction, '今晚重做根号池前 5 题')
+  assert.deepEqual(flow.syllabusTools, [
+    '独立正态变量的线性组合仍服从正态分布',
+    '若 $Z\\sim N(0,1)$，则 $Z^2\\sim\\chi^2(1)$',
+  ])
+})
+
+test('buildGradeFlow extracts syllabusTools from diagnosis or grade fallback, omitting empties', () => {
+  const fromGrade = buildGradeFlow(grade(78, {
+    syllabusTools: ['工具 A', '   ', null, '工具 B'],
+  }))
+  assert.deepEqual(fromGrade.syllabusTools, ['工具 A', '工具 B'])
+
+  const empty = buildGradeFlow(grade(79, {}))
+  assert.deepEqual(empty.syllabusTools, [])
 })
 
 test('buildGradeFlow degrades to existing fields when diagnosis is absent', () => {

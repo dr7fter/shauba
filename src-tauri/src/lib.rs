@@ -326,6 +326,9 @@ struct BatchAttempt {
     /// 本题草稿原件的绝对路径，按批改侧收到的顺序。App 不经手图片，只存路径 + 展示。
     #[serde(default)]
     draft_paths: Vec<String>,
+    /// 本题用到的数一考纲工具（公式、定理、性质列表）。
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    syllabus_tools: Vec<String>,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
@@ -396,6 +399,9 @@ struct GradingDiagnosis {
     /// `verdict = correct` 的固化卡字段：这条入口为什么在这道题上成立。
     #[serde(default)]
     why_it_worked: Option<String>,
+    /// 本题用到的数一考纲工具（公式、定理、性质列表）。
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    syllabus_tools: Vec<String>,
 }
 
 #[derive(Debug)]
@@ -521,6 +527,8 @@ struct CodexPayload {
     secondary_tags: Vec<String>,
     #[serde(default)]
     draft_paths: Vec<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    syllabus_tools: Vec<String>,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone, Default)]
@@ -10564,6 +10572,14 @@ fn build_codex_batch_report(
             "draftPaths": item.get("draftPaths"),
             "dimensions": item.get("dimensions"),
             "diagnosis": item.get("diagnosis"),
+            "syllabusTools": item
+                .get("diagnosis")
+                .and_then(|d| d.get("syllabusTools"))
+                .filter(|v| v.as_array().map(|a| !a.is_empty()).unwrap_or(false))
+                .or_else(|| {
+                    item.get("syllabusTools")
+                        .filter(|v| v.as_array().map(|a| !a.is_empty()).unwrap_or(false))
+                }),
         }));
     }
 
@@ -15813,7 +15829,8 @@ mod tests {
                     "fork":{"step":3,"label":"换元选择","myPath":"x=sin t","standardPath":"x+1=cos t","consequence":"越算越繁"},
                     "acceptance":"根号池 13 题零覆盖",
                     "nextAction":"今晚重做 3 道同类题",
-                    "whyItWorked":null
+                    "whyItWorked":null,
+                    "syllabusTools":["定积分换元公式","根式有理化性质"]
                 }
             }]
         }"#;
@@ -15839,6 +15856,7 @@ mod tests {
         assert_eq!(attempt["stepScore"].as_f64(), Some(72.0));
         assert_eq!(attempt["secondaryTags"][0], "概念边界");
         assert_eq!(attempt["draftPaths"][0], "E:/刷吧/photo/1.png");
+        assert_eq!(attempt["diagnosis"]["syllabusTools"][0], "定积分换元公式");
 
         // 报告读取路径必须真的拿到动线数据，而不是靠降级派生
         let report = build_codex_batch_report(
@@ -15855,6 +15873,7 @@ mod tests {
         );
         assert_eq!(grade["stepScore"].as_f64(), Some(72.0));
         assert_eq!(grade["methodSoundness"], Value::Null);
+        assert_eq!(grade["syllabusTools"][0], "定积分换元公式");
     }
 
     #[test]

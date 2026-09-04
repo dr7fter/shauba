@@ -1,5 +1,6 @@
 import { CS_RATING_MAX, csRatingAccent, formatElapsed, gradeOutcomeKey } from '../../utils'
 import { timeBaselineFor, type ReportViewModel } from '../../domain/reportViewModel'
+import { Icon } from '../ui/Icon'
 import type { CategoryTimeBaseline, Question } from '../../types'
 
 const BAR_COLOR = { correct: 'var(--success)', partial: 'var(--warn)', wrong: 'var(--danger)', uncertain: 'var(--muted)' }
@@ -60,7 +61,10 @@ export function SessionPane({
 
       <div className="rp-h">逐题 Rating</div>
       {grades.length === 0 ? (
-        <div className="empty-state">本场没有已批改的题目。</div>
+        <div className="empty-state">
+          <Icon name="book" size="lg" />
+          <span>本场没有已批改的题目。</span>
+        </div>
       ) : (
         grades.map((grade, index) => {
           const score = ratingScores[index]
@@ -98,7 +102,11 @@ export function SessionPane({
               >
                 {deltaText}
               </span>
-              {accent === 'donk' ? <span title="高光突破">👑</span> : null}
+              {accent === 'donk' ? (
+                <span className="rp-icon-chip ic-gold" title="高光突破">
+                  <Icon name="crown" size="sm" />
+                </span>
+              ) : null}
             </div>
           )
         })

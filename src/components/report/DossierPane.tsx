@@ -1,5 +1,6 @@
 import { MathText } from '../MathText'
-import type { BreakpointGroup } from '../../domain/reportViewModel'
+import { Icon } from '../ui/Icon'
+import { deriveFixState, type BreakpointGroup } from '../../domain/reportViewModel'
 
 const SEVERITY_ORDER: Record<string, number> = { L1: 0, L2: 1, L3: 2 }
 
@@ -43,7 +44,10 @@ export function DossierPane({ groups }: { groups: BreakpointGroup[] }) {
 
       <div className="rp-h">断点聚合</div>
       {sorted.length === 0 ? (
-        <div className="empty-state">本场没有产生断点，全部通过。</div>
+        <div className="empty-state">
+          <Icon name="check" size="lg" />
+          <span>本场没有产生断点，全部通过。</span>
+        </div>
       ) : (
         sorted.map((group) => {
           const codeTone =
@@ -52,20 +56,21 @@ export function DossierPane({ groups }: { groups: BreakpointGroup[] }) {
               : group.severity === 'L2'
                 ? 'rp-warn'
                 : ''
+          const fix = deriveFixState(group)
           return (
             <div className="ui-card rp-bp-card" key={group.key}>
               <div className="rp-bp-top">
                 <span className={`rp-bp-code ${codeTone}`}>{group.errorCode ?? '未编码'}</span>
                 <span className="rp-bp-t">{group.title ?? '待命名断点'}</span>
-                <span
-                  className={
-                    group.state === 'relapse'
-                      ? 'reason-chip yesterday_wrong'
-                      : 'reason-chip retest'
-                  }
-                >
-                  {group.state === 'relapse' ? '复发' : '新增'}
-                </span>
+                {fix ? (
+                  <span
+                    className={
+                      fix.key === 'yellow' ? 'reason-chip retest' : 'reason-chip yesterday_wrong'
+                    }
+                  >
+                    {fix.label}
+                  </span>
+                ) : null}
                 {group.severity ? (
                   <span className="question-id-badge">{group.severity}</span>
                 ) : null}
@@ -91,7 +96,10 @@ export function DossierPane({ groups }: { groups: BreakpointGroup[] }) {
 
       <div className="rp-h">验收判据</div>
       {sorted.length === 0 ? (
-        <div className="empty-state">暂无验收判据。</div>
+        <div className="empty-state">
+          <Icon name="book" size="lg" />
+          <span>暂无验收判据。</span>
+        </div>
       ) : (
         <table className="rp-tbl">
           <thead>
@@ -102,29 +110,34 @@ export function DossierPane({ groups }: { groups: BreakpointGroup[] }) {
             </tr>
           </thead>
           <tbody>
-            {sorted.map((group) => (
-              <tr key={`gate-${group.key}`}>
-                <td className="rp-mono">{group.errorCode ?? '未编码'}</td>
-                <td>
-                  {group.acceptance ?? (
-                    <span className="rp-quiet">
-                      合上报告独立重做：不翻解法、不用提示，结果正确才算闭合。
-                    </span>
-                  )}
-                </td>
-                <td>
-                  <span
-                    className={
-                      group.state === 'relapse'
-                        ? 'reason-chip yesterday_wrong'
-                        : 'reason-chip retest'
-                    }
-                  >
-                    {group.state === 'relapse' ? '待验证' : '观察中'}
-                  </span>
-                </td>
-              </tr>
-            ))}
+            {sorted.map((group) => {
+              const fix = deriveFixState(group)
+              return (
+                <tr key={`gate-${group.key}`}>
+                  <td className="rp-mono">{group.errorCode ?? '未编码'}</td>
+                  <td>
+                    {group.acceptance ?? (
+                      <span className="rp-quiet">
+                        合上报告独立重做：不翻解法、不用提示，结果正确才算闭合。
+                      </span>
+                    )}
+                  </td>
+                  <td>
+                    {fix ? (
+                      <span
+                        className={
+                          fix.key === 'yellow'
+                            ? 'reason-chip retest'
+                            : 'reason-chip yesterday_wrong'
+                        }
+                      >
+                        {fix.label}
+                      </span>
+                    ) : null}
+                  </td>
+                </tr>
+              )
+            })}
           </tbody>
         </table>
       )}

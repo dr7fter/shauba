@@ -354,6 +354,8 @@ export type GradeFlow = {
   } | null
   acceptance: string | null
   nextAction: string | null
+  /** correct 固化卡：这条入口为什么在这道题上成立（画像封盘的证据） */
+  whyItWorked: string | null
 }
 
 const FATAL_TAGS = ['概念盲区', '概念边界', '充要混淆', '定理记错']
@@ -407,6 +409,7 @@ export function buildGradeFlow(grade: QuestionGrade): GradeFlow {
     fork,
     acceptance: diagnosis?.acceptance ?? null,
     nextAction: diagnosis?.nextAction ?? grade.advice ?? null,
+    whyItWorked: diagnosis?.whyItWorked ?? null,
   }
 }
 
@@ -559,6 +562,87 @@ export function dimensionInsight(rows: GradeDimensionRow[]): string | null {
   return templates[pair] ?? `${top.label} ${Math.round(top.value)} 远高于 ${bottom.label} ${Math.round(bottom.value)}`
 }
 
+// ============ 批次 B · 证据层与固化判定（2026-09-04）============
+
+export type DimensionSpotlight = {
+  key: ReportDimKey
+  label: string
+  value: number
+  base: number | null
+  delta: number | null
+  evidence: string | null
+  confidence: number | null
+}
+
+/**
+ * 评分证据的唯一上架口径：只给极差最大的那一维与最小的那一维，各带一句 evidence。
+ * 六条进度条 + 六段证据等于没有重点；学员要核对的是"AI 有没有为这一维编分"。
+ */
+export function dimensionSpotlight(
+  grade: QuestionGrade,
+  baseline: Record<ReportDimKey, number | null>,
+): { high: DimensionSpotlight; low: DimensionSpotlight; spread: number; insight: string | null } | null {
+  const rows = gradeDimensionRows(grade, baseline)
+  const scored = rows.filter(
+    (row): row is GradeDimensionRow & { value: number } => typeof row.value === 'number',
+  )
+  if (scored.length < 2) return null
+  const sorted = [...scored].sort((a, b) => b.value - a.value)
+  const high = sorted[0]
+  const low = sorted[sorted.length - 1]
+  const spread = high.value - low.value
+  if (spread < 20) return null
+  const pick = (row: GradeDimensionRow & { value: number }): DimensionSpotlight => ({
+    key: row.key,
+    label: row.label,
+    value: row.value,
+    base: row.base,
+    delta: row.delta,
+    evidence: grade.dimensions?.[row.key]?.evidence?.trim() || null,
+    confidence: grade.dimensions?.[row.key]?.confidence ?? null,
+  })
+  return { high: pick(high), low: pick(low), spread, insight: dimensionInsight(rows) }
+}
+
+export type FixState = { key: 'red' | 'yellow' | 'green'; label: string }
+
+/**
+ * 断点固化状态——复盘页与档案页共用这一份口径（此前档案页是二态，
+ * 会把首次暴露的断点显示成「观察中」，等于凭一次证据就往接近固化漂）。
+ *
+ * 刻意不提供「已固化」：错题断点的固化需要跨场次证据，本地拿不到。
+ */
+export function deriveFixState(group: BreakpointGroup | null): FixState | null {
+  if (!group) return null
+  if (group.state === 'relapse') return { key: 'red', label: '待验证' }
+  if (group.historyTotal >= 2) return { key: 'yellow', label: '观察中' }
+  return { key: 'red', label: '首次暴露' }
+}
+
+/**
+ * correct 题的固化判定：由 App 用真实作答序列算，批改侧无权自报（提示词只让它写事实）。
+ * 本次做对 + 之前连续做对 1 次 → 观察中；连续 2 次以上 → 已固化。
+ * 少于两次前序证据不给任何状态——一次做对不等于稳定掌握。
+ */
+export function deriveConsolidation(
+  outcome: string,
+  history: AttemptHistoryEntry[],
+  flow: GradeFlow,
+): FixState | null {
+  if (outcome !== 'correct' || !flow.whyItWorked) return null
+  // history 按时间倒序，第一条就是本次作答
+  let streak = 0
+  for (const row of history.slice(1)) {
+    const key = row.verdict ?? row.outcome
+    if (key === 'correct') streak += 1
+    else if (key === 'uncertain') continue
+    else break
+  }
+  if (streak >= 2) return { key: 'green', label: `已固化 · 连续 ${streak + 1} 次做对` }
+  if (streak === 1) return { key: 'yellow', label: '观察中 · 连续 2 次做对' }
+  return null
+}
+
 // ============ WP6 总诊断与价值排序（2026-09-04）============
 
 /** 病因类的中文标签与图标基调（扩展色，与严重度/对错正交） */
@@ -646,7 +730,7 @@ export function buildSessionDigest(
       .filter((flow) => flow.rule?.negation)
       .sort((a, b) => severityRank(a.severity) - severityRank(b.severity))
     const rule = ruled[0]?.rule?.negation
-    if (rule) oneThingLine = `📌 本次只带走一件：${rule}`
+    if (rule) oneThingLine = `本次只带走一件：${rule}`
   }
 
   return { distribution, overtimeCount, clusterLine, oneThingLine }

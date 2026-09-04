@@ -3,15 +3,26 @@ import { MathText } from '../MathText'
 import { ReportSection } from './ReportSection'
 import { SessionDigestView } from './SessionDigest'
 import { Icon } from '../ui/Icon'
+import { QuestionImages } from '../QuestionImages'
 import { formatElapsed, type GradeOutcome } from '../../utils'
 import {
+  deriveConsolidation,
+  deriveFixState,
+  dimensionSpotlight,
   ERROR_CLASS_CHIP_META,
   NEXT_ACTION_LABELS,
   type BreakpointGroup,
   type GradeFlow,
+  type ReportDimKey,
   type SessionDigest,
 } from '../../domain/reportViewModel'
-import type { AttemptHistoryEntry, Question, QuestionGrade, QuestionLearningMeta } from '../../types'
+import type {
+  AttemptHistoryEntry,
+  ErrorCodeEncounter,
+  Question,
+  QuestionGrade,
+  QuestionLearningMeta,
+} from '../../types'
 
 const OUTCOME_LABEL: Record<GradeOutcome, string> = {
   correct: '正确',
@@ -41,20 +52,7 @@ const SEVERITY_LABEL: Record<'L1' | 'L2' | 'L3', string> = {
   L3: 'L3 精度',
 }
 
-export type FixState = { key: 'red' | 'yellow'; label: string }
-
-/**
- * 断点固化状态——只从已有作答证据推，推不出来就返回 null 不显示。
- *
- * 这里刻意不提供「已固化」：那需要画像里跨场次的历史，本地拿不到。
- * 凭一次正确就打上「已固化」等于凭几道题声称全章掌握，是红线里明令禁止的。
- */
-export function deriveFixState(group: BreakpointGroup | null): FixState | null {
-  if (!group) return null
-  if (group.state === 'relapse') return { key: 'red', label: '待验证' }
-  if (group.historyTotal >= 2) return { key: 'yellow', label: '观察中' }
-  return { key: 'red', label: '首次暴露' }
-}
+export type { FixState } from '../../domain/reportViewModel'
 
 /** 复发信号：同编码再次命中。若本次用时明显短于首次，说明错路已被自动化。 */
 function relapseSignal(
@@ -92,6 +90,14 @@ function reviewDateLabel(value: string | null): string | null {
   return `复做 ${date.getMonth() + 1} 月 ${date.getDate()} 日`
 }
 
+/** 复发时间线的日期标签；解析不出来就返回 null，由调用方跳过这一行 */
+function encounterDateLabel(value: string | null | undefined): string | null {
+  if (!value) return null
+  const date = new Date(value)
+  if (Number.isNaN(date.getTime())) return null
+  return `${date.getMonth() + 1} 月 ${date.getDate()} 日`
+}
+
 export function ReviewPane({
   question,
   grade,
@@ -100,6 +106,8 @@ export function ReviewPane({
   durationSec,
   benchmarkSec,
   history,
+  encounters,
+  dimBaseline,
   group,
   meta,
   digest,
@@ -120,9 +128,11 @@ export function ReviewPane({
   durationSec: number
   benchmarkSec: number
   history: AttemptHistoryEntry[]
+  encounters: ErrorCodeEncounter[]
+  dimBaseline: Record<ReportDimKey, number | null>
   group: BreakpointGroup | null
   meta: QuestionLearningMeta | null
-  digest: SessionDigest
+  digest?: SessionDigest | null
   note: string
   sections: Record<string, boolean>
   onToggleSection: (key: string) => void
@@ -138,6 +148,16 @@ export function ReviewPane({
     () => relapseSignal(group, history, durationSec),
     [group, history, durationSec],
   )
+  /* 固化态一律由 App 用真实作答序列算——批改侧只写事实，不自报状态 */
+  const consolidation = useMemo(
+    () => deriveConsolidation(outcome, history, flow),
+    [outcome, history, flow],
+  )
+  const spotlight = useMemo(() => dimensionSpotlight(grade, dimBaseline), [grade, dimBaseline])
+  const strategy = grade.dimensions?.strategyInsight
+  const confidencePct =
+    typeof grade.confidence === 'number' ? Math.round(grade.confidence * 100) : null
+  const lowConfidence = confidencePct != null && confidencePct < 70
 
   /* 学习引擎元信息派生的三个 chip：病因类 / 复做排期 / 药方类型 */
   const errorClassChip = meta?.errorClass ? ERROR_CLASS_CHIP_META[meta.errorClass] : null
@@ -189,6 +209,11 @@ export function ReviewPane({
               {errorClassChip.label}
             </span>
           ) : null}
+          {grade.secondaryTags?.map((tag) => (
+            <span key={tag} className="reason-chip explore" title="次要病因（不参与归一）">
+              {tag}
+            </span>
+          ))}
           {flow.errorCode ? (
             <span className="question-id-badge">{flow.errorCode}</span>
           ) : null}
@@ -226,6 +251,33 @@ export function ReviewPane({
             <MathText value={question.stem} />
           </div>
         ) : null}
+        {/* 含图题干此前在报告里读不通——图进了批改侧就没进 App，现在把原件摆回来 */}
+        {question?.imagePaths?.length ? <QuestionImages paths={question.imagePaths} /> : null}
+        {grade.draftPaths?.length ? (
+          <div className="rp-draft">
+            <span className="rp-draft-hd">
+              <Icon name="image" size="sm" />
+              我的草稿原件 · 本次批改依据
+            </span>
+            <QuestionImages paths={grade.draftPaths} />
+          </div>
+        ) : null}
+        {grade.userAnswer?.trim() || grade.correctAnswer?.trim() ? (
+          <div className="rp-answer-row">
+            <span className="rp-answer-cell">
+              <span className="rp-answer-k">我答</span>
+              <span className={grade.correct ? 'rp-answer-v rp-yes' : 'rp-answer-v rp-no'}>
+                {grade.userAnswer?.trim() || <span className="rp-quiet">未记录</span>}
+              </span>
+            </span>
+            <span className="rp-answer-cell">
+              <span className="rp-answer-k">标答</span>
+              <span className="rp-answer-v">
+                {grade.correctAnswer?.trim() || <span className="rp-quiet">未记录</span>}
+              </span>
+            </span>
+          </div>
+        ) : null}
       </div>
 
       {/* 复发 + 加速：最危险的信号，必须在读任何分析之前先看到 */}
@@ -251,6 +303,65 @@ export function ReviewPane({
               {relapse.faster
                 ? '不是想不起来，是已经把错路执行得更熟练——这伪装成「我会做」，是当前最危险的断点。'
                 : '同一入口再次触发，说明识别规则还没能在动笔前形成拦截。'}
+            </span>
+          </div>
+        </div>
+      ) : null}
+
+      {/* 复发最有杀伤力的呈现是两次并排：「上次规则是 X → 今天还是这个断点」 */}
+      {encounters.length > 0 ? (
+        <div className="rp-tl" aria-label="同一断点的历史命中">
+          <div className="rp-tl-hd">
+            <Icon name="rotate-ccw" size="sm" />
+            同一断点的历史命中{flow.errorCode ? ` · ${flow.errorCode}` : ''}
+          </div>
+          {encounters.slice(0, 2).map((row) => {
+            const date = encounterDateLabel(row.createdAt)
+            return (
+              <div className="rp-tl-row" key={row.taskId}>
+                <span className="rp-tl-date">{date ?? '上次'}</span>
+                <span className="rp-tl-verdict">
+                  {row.verdict === 'correct'
+                    ? '做对'
+                    : row.verdict === 'partial'
+                      ? '半对'
+                      : row.verdict === 'uncertain'
+                        ? '待确认'
+                        : row.verdict
+                          ? '做错'
+                          : '—'}
+                  {typeof row.stepScore === 'number'
+                    ? ` · 步骤分 ${Math.round(row.stepScore)}`
+                    : ''}
+                </span>
+                <span className="rp-tl-rule">
+                  {row.ruleNegation ? (
+                    <MathText value={row.ruleNegation} />
+                  ) : row.acceptance ? (
+                    <>验收：
+                      <MathText value={row.acceptance} />
+                    </>
+                  ) : row.myEntry ? (
+                    <MathText value={row.myEntry} />
+                  ) : (
+                    <span className="rp-quiet">那次没有留下规则文本</span>
+                  )}
+                </span>
+              </div>
+            )
+          })}
+          <div className="rp-tl-row rp-tl-now">
+            <span className="rp-tl-date">本次</span>
+            <span className="rp-tl-verdict">
+              {OUTCOME_LABEL[outcome]}
+              {typeof grade.stepScore === 'number' ? ` · 步骤分 ${Math.round(grade.stepScore)}` : ''}
+            </span>
+            <span className="rp-tl-rule">
+              {flow.rule?.negation ? (
+                <MathText value={flow.rule.negation} />
+              ) : (
+                <span className="rp-quiet">本次未给出否定式规则</span>
+              )}
             </span>
           </div>
         </div>
@@ -386,6 +497,128 @@ export function ReviewPane({
                   <span className="rp-rule-v">
                     <MathText value={flow.rule.positive} />
                   </span>
+                </div>
+              ) : null}
+            </div>
+          </ReportSection>
+        ) : null}
+        {outcome === 'correct' && flow.whyItWorked ? (
+          <ReportSection
+            n={seq++}
+            title="这次为什么做对"
+            tag="画像封盘的证据"
+            open={sections.worked === true}
+            onToggle={() => onToggleSection('worked')}
+          >
+            <div className="rp-ev">
+              <div className="rp-ev-row">
+                <MathText value={flow.whyItWorked} />
+              </div>
+              {consolidation ? (
+                <div className="rp-ev-note">
+                  <span
+                    className={
+                      consolidation.key === 'green'
+                        ? 'reason-chip fit'
+                        : 'reason-chip retest'
+                    }
+                  >
+                    {consolidation.label}
+                  </span>
+                  <span className="rp-quiet">
+                    固化态由 App 按真实作答序列判定，批改侧不自报
+                  </span>
+                </div>
+              ) : (
+                <div className="rp-ev-note">
+                  <span className="rp-quiet">首次做对，按画像契约不计入固化证据</span>
+                </div>
+              )}
+            </div>
+          </ReportSection>
+        ) : null}
+
+        {spotlight || typeof grade.stepScore === 'number' || confidencePct != null ? (
+          <ReportSection
+            n={seq++}
+            title="这次评分的证据"
+            tag="可核对"
+            open={sections.evidence === true}
+            onToggle={() => onToggleSection('evidence')}
+          >
+            <div className="rp-ev">
+              <div className="rp-ev-row rp-ev-meta">
+                {typeof grade.selfRating === 'number' ? (
+                  <span className="rp-ev-k">
+                    自评 <b>{grade.selfRating}/4</b>
+                  </span>
+                ) : null}
+                <span className="rp-ev-k">
+                  实判 <b>{OUTCOME_LABEL[outcome]}</b>
+                </span>
+                {typeof grade.stepScore === 'number' ? (
+                  <span className="rp-ev-k">
+                    有效步骤分 <b>{Math.round(grade.stepScore)}</b>/100
+                  </span>
+                ) : null}
+                {confidencePct != null ? (
+                  <span className={`rp-ev-k${lowConfidence ? ' rp-no' : ''}`}>
+                    AI 置信 <b>{confidencePct}%</b>
+                    {lowConfidence ? ' · 这条判定本身不确定' : ''}
+                  </span>
+                ) : null}
+              </div>
+              {spotlight ? (
+                <>
+                  {[spotlight.high, spotlight.low].map((row) => (
+                    <div className="rp-ev-row" key={row.key}>
+                      <span className="rp-ev-dim">
+                        {row.label} <b>{Math.round(row.value)}</b>
+                        {row.delta != null ? (
+                          <span className="rp-quiet">
+                            {' '}
+                            {row.delta >= 0 ? '+' : ''}
+                            {row.delta} vs 本组
+                          </span>
+                        ) : null}
+                        {row.confidence != null ? (
+                          <span className="rp-quiet"> · 置信 {Math.round(row.confidence * 100)}%</span>
+                        ) : null}
+                      </span>
+                      {row.evidence ? (
+                        <span className="rp-ev-quote">
+                          <MathText value={row.evidence} />
+                        </span>
+                      ) : (
+                        <span className="rp-quiet">这一维没有留下证据句</span>
+                      )}
+                    </div>
+                  ))}
+                  {spotlight.insight ? (
+                    <div className="rp-ev-note">{spotlight.insight}</div>
+                  ) : null}
+                </>
+              ) : null}
+              {typeof strategy?.techniqueLevel === 'number' || strategy?.independentDiscovery ? (
+                <div className="rp-ev-row rp-ev-meta">
+                  {typeof strategy?.techniqueLevel === 'number' ? (
+                    <span className="reason-chip explore" title="本题技巧等级 1–5">
+                      技巧 L{strategy.techniqueLevel}
+                    </span>
+                  ) : null}
+                  {strategy?.independentDiscovery === 'confirmed' ? (
+                    <span className="reason-chip fit" title="草稿显示独立做出">
+                      独立做出
+                    </span>
+                  ) : strategy?.independentDiscovery === 'prompted' ? (
+                    <span className="reason-chip retest" title="提示后才做对——练习价值低于独立做出">
+                      提示后才做对
+                    </span>
+                  ) : strategy?.independentDiscovery === 'uncertain' ? (
+                    <span className="reason-chip explore" title="草稿无法判定是否独立做出">
+                      独立性未知
+                    </span>
+                  ) : null}
                 </div>
               ) : null}
             </div>

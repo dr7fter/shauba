@@ -1,7 +1,8 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { addDailyPlanItem, getCategoryTimeBaselines, getQuestionAttemptHistory, getQuestionsLearningMeta, saveNote } from '../../api'
+import { addDailyPlanItem, getCategoryTimeBaselines, getErrorCodeHistory, getQuestionAttemptHistory, getQuestionsLearningMeta, saveNote } from '../../api'
 import { benchmarkSeconds, formatElapsed, gradeOutcomeKey } from '../../utils'
 import {
+  baselineDimensionValues,
   buildBreakpointGroups,
   buildGradeFlow,
   buildReportViewModel,
@@ -16,6 +17,7 @@ import { DossierPane } from './DossierPane'
 import { Icon } from '../ui/Icon'
 import type {
   AttemptHistoryEntry,
+  ErrorCodeEncounter,
   GradingReport,
   GradingReportOrigin,
   PressureSession,
@@ -38,6 +40,8 @@ const DEFAULT_SECTIONS: Record<string, boolean> = {
   why: true,
   sol: true,
   rule: true,
+  worked: false,
+  evidence: false,
 }
 
 function tomorrowDateString(): string {
@@ -72,6 +76,23 @@ export function ReportWindow({
   const [sections, setSections] = useState<Record<string, boolean>>(DEFAULT_SECTIONS)
   const [revealed, setRevealed] = useState<Record<number, boolean>>({})
   const [copied, setCopied] = useState(false)
+  /* 提示：报告里所有写库动作的成败都必须被看见，静默失败等于数据事故 */
+  const [toast, setToast] = useState<{ text: string; tone: 'ok' | 'err' } | null>(null)
+  const toastTimer = useRef<number | null>(null)
+  const contentRef = useRef<HTMLElement | null>(null)
+
+  const showToast = useCallback((text: string, tone: 'ok' | 'err' = 'ok') => {
+    setToast({ text, tone })
+    if (toastTimer.current) window.clearTimeout(toastTimer.current)
+    toastTimer.current = window.setTimeout(() => setToast(null), 2600)
+  }, [])
+
+  useEffect(
+    () => () => {
+      if (toastTimer.current) window.clearTimeout(toastTimer.current)
+    },
+    [],
+  )
 
   const onCloseRef = useRef(onClose)
   onCloseRef.current = onClose
@@ -81,6 +102,9 @@ export function ReportWindow({
     [report, questions, session, reportOrigin],
   )
 
+  /* 本组六维基线：单题极差最大的那一维要跟它对照才有意义 */
+  const dimBaseline = useMemo(() => baselineDimensionValues(vm.grades), [vm.grades])
+
   const groups: BreakpointGroup[] = useMemo(
     () => buildBreakpointGroups(vm.grades, history),
     [vm.grades, history],
@@ -89,18 +113,25 @@ export function ReportWindow({
   const gradeQuestionIds = useMemo(() => vm.grades.map((g) => g.questionId), [vm.grades])
 
   /* 历史作答：复发判定与用时压缩都依赖它 */
+  const [historyDegraded, setHistoryDegraded] = useState(false)
   useEffect(() => {
     let alive = true
     if (gradeQuestionIds.length === 0) {
       setHistory([])
+      setHistoryDegraded(false)
       return
     }
     void getQuestionAttemptHistory(gradeQuestionIds)
       .then((rows) => {
-        if (alive) setHistory(Array.isArray(rows) ? rows : [])
+        if (!alive) return
+        setHistory(Array.isArray(rows) ? rows : [])
+        setHistoryDegraded(false)
       })
       .catch(() => {
-        if (alive) setHistory([])
+        if (!alive) return
+        setHistory([])
+        // 「复发 0」与「查不到历史」必须长得不一样，否则状态栏在说谎
+        setHistoryDegraded(true)
       })
     return () => {
       alive = false
@@ -183,6 +214,32 @@ export function ReportWindow({
     return history.filter((row) => row.questionId === activeGrade.questionId)
   }, [history, activeGrade])
 
+  /* 同 errorCode 的历史命中：复发时间线要拿"上次那条规则"来并排 */
+  const activeErrorCode = activeFlow?.errorCode ?? null
+  const [encounters, setEncounters] = useState<ErrorCodeEncounter[]>([])
+  useEffect(() => {
+    if (!activeGrade || !activeErrorCode) {
+      setEncounters([])
+      return
+    }
+    let alive = true
+    void getErrorCodeHistory(activeGrade.questionId, activeErrorCode, report.sourceTaskId ?? null)
+      .then((rows) => {
+        if (alive) setEncounters(Array.isArray(rows) ? rows : [])
+      })
+      .catch(() => {
+        if (alive) setEncounters([])
+      })
+    return () => {
+      alive = false
+    }
+  }, [activeGrade, activeErrorCode, report.sourceTaskId])
+
+  /* 切题后正文回到顶部，断点段必须第一眼可见 */
+  useEffect(() => {
+    contentRef.current?.scrollTo({ top: 0 })
+  }, [selectedIndex, tab])
+
   const activeDurationSec = useMemo(() => {
     if (!activeGrade) return 0
     if (typeof activeGrade.duration === 'number' && activeGrade.duration > 0) {
@@ -202,9 +259,12 @@ export function ReportWindow({
             1600,
           )
         })
-        .catch(() => {})
+        .catch((error: unknown) => {
+          /* 亲笔自省是画像契约里的最高维度证据，存不上必须让学员当场知道 */
+          showToast(`自省没能保存：${String(error)}`, 'err')
+        })
     },
-    [],
+    [showToast],
   )
 
   const handleAddToPlan = useCallback(() => {
@@ -223,9 +283,12 @@ export function ReportWindow({
       sortOrder: 0,
     }
     void addDailyPlanItem(item)
-      .then(() => setPlanAdded((prev) => ({ ...prev, [activeGrade.questionId]: true })))
-      .catch(() => {})
-  }, [activeGrade, activeFlow, activeQuestion])
+      .then(() => {
+        setPlanAdded((prev) => ({ ...prev, [activeGrade.questionId]: true }))
+        showToast(`已加入 ${planDate} 的计划`, 'ok')
+      })
+      .catch((error: unknown) => showToast(`加入明日计划失败：${String(error)}`, 'err'))
+  }, [activeGrade, activeFlow, activeQuestion, showToast])
 
   /* 追问上下文：题面与详解请求在前，我的断点过程隔在分割线后——
      让新 AI 先独立给出考纲内标准详解，不被先前批改思路带偏，再对照指出换路点 */
@@ -258,9 +321,10 @@ export function ReportWindow({
       .then(() => {
         setCopied(true)
         window.setTimeout(() => setCopied(false), 1600)
+        showToast('已复制：贴给 AI 就能拿到考纲内标准详解', 'ok')
       })
-      .catch(() => {})
-  }, [activeGrade, activeQuestion, activeFlow])
+      .catch((error: unknown) => showToast(`复制失败：${String(error)}`, 'err'))
+  }, [activeGrade, activeQuestion, activeFlow, showToast])
 
   /* 键盘：报告是高频界面，手不离键盘 */
   useEffect(() => {
@@ -352,9 +416,8 @@ export function ReportWindow({
       role="dialog"
       aria-modal="true"
       aria-label="批改报告"
-      onClick={onClose}
     >
-      <div className="ui-modal rp-win" onClick={(event) => event.stopPropagation()}>
+      <div className="ui-modal rp-win">
         <div className="rp-toolbar">
           <span className="rp-title">批改报告</span>
           <span className="rp-sub">
@@ -383,7 +446,7 @@ export function ReportWindow({
             disabled={!activeGrade}
           >
             <Icon name={copied ? 'check' : 'copy'} />
-            {copied ? '已复制' : '复制追问上下文'}
+            复制追问上下文
           </button>
           <button
             type="button"
@@ -424,7 +487,7 @@ export function ReportWindow({
               />
             ) : null}
 
-            <main className="rp-content">
+            <main className="rp-content" ref={contentRef}>
               {tab === 'review' ? (
                 activeGrade && activeFlow ? (
                   <ReviewPane
@@ -435,6 +498,8 @@ export function ReportWindow({
                     durationSec={activeDurationSec}
                     benchmarkSec={benchmarkSeconds(activeQuestion?.questionType)}
                     history={activeHistory}
+                    encounters={encounters}
+                    dimBaseline={dimBaseline}
                     group={activeGroup}
                     meta={learningMetas[activeGrade.questionId] ?? null}
                     digest={digest}
@@ -454,7 +519,10 @@ export function ReportWindow({
                   />
                 ) : (
                   <div className="rp-view">
-                    <div className="empty-state">本场还没有可复盘的题目。</div>
+                    <div className="empty-state">
+                      <Icon name="book" size="lg" />
+                      <span>本场还没有可复盘的题目。</span>
+                    </div>
                   </div>
                 )
               ) : null}
@@ -469,16 +537,37 @@ export function ReportWindow({
           <div className="rp-statusbar">
             <span>正确率 {vm.accuracy != null ? `${vm.accuracy}%` : '—'}</span>
             <span>断点 {groups.length}</span>
-            <span style={{ color: relapseCount > 0 ? 'var(--danger)' : undefined }}>
-              复发 {relapseCount}
-            </span>
+            {historyDegraded ? (
+              <span style={{ color: 'var(--warn-strong)' }} title="历史作答查询失败，复发数无法判定">
+                历史不可用 · 复发数不显示
+              </span>
+            ) : (
+              <span style={{ color: relapseCount > 0 ? 'var(--danger)' : undefined }}>
+                复发 {relapseCount}
+              </span>
+            )}
             <span>用时 {formatElapsed(vm.totalDuration * 1000)}</span>
             {vm.ungradedIds.length > 0 ? <span>{vm.ungradedIds.length} 题无批改证据</span> : null}
+            {vm.reportStatus === 'evidence-insufficient' ? (
+              <span style={{ color: 'var(--warn-strong)' }} title="部分题目六维分缺失，会回退到特征曲线评分">
+                六维证据不全
+              </span>
+            ) : null}
             <span className="rp-sp" />
             <span>
               <kbd className="rp-kbd">j</kbd> / <kbd className="rp-kbd">k</kbd> 切题 · <kbd className="rp-kbd">1</kbd>-<kbd className="rp-kbd">3</kbd> 切视图 · <kbd className="rp-kbd">Esc</kbd> 关闭
             </span>
         </div>
+
+        {toast ? (
+          <div className={`ui-toast${toast.tone === 'err' ? ' toast-error' : ''}`} role="status">
+            <Icon name={toast.tone === 'err' ? 'alert' : 'check'} size="sm" />
+            {toast.text}
+            <button type="button" onClick={() => setToast(null)} aria-label="关闭提示">
+              <Icon name="x" size="sm" />
+            </button>
+          </div>
+        ) : null}
       </div>
     </div>
   )

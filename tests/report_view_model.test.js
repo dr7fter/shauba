@@ -8,8 +8,12 @@ import {
   buildSessionDigest,
   sortIndicesByValue,
   timeBaselineFor,
+  baselineDimensionValues,
+  deriveFixState,
+  deriveConsolidation,
+  dimensionSpotlight,
 } from '../src/domain/reportViewModel.ts'
-import { predictedExamScore } from '../src/utils.ts'
+import { benchmarkSeconds, predictedExamScore } from '../src/utils.ts'
 
 const pressureOrigin = { kind: 'pressure-session', sessionId: 'pressure-1' }
 const batchOrigin = { kind: 'codex-batch', taskId: 'SB-20260902-1' }
@@ -331,7 +335,9 @@ test('buildSessionDigest clusters same errorCode and picks the negation rule as 
 
   assert.equal(digest.distribution, '3 题：对 1 / 错 2')
   assert.ok(digest.clusterLine.includes('2 题死在同一个动作'))
-  assert.equal(digest.oneThingLine, '📌 本次只带走一件：根号复合禁止三角换元')
+  assert.equal(digest.oneThingLine, '本次只带走一件：根号复合禁止三角换元')
+  // 领域层不掺表情符号：图标由呈现层用矢量 Icon 画
+  assert.ok(!digest.oneThingLine.includes('📌'))
 })
 
 test('buildSessionDigest leads with error-class mode when it covers multiple wrongs', () => {
@@ -403,4 +409,137 @@ test('timeBaselineFor prefers personal median at 3+ samples, falls back to type 
     }),
     { seconds: 180, personal: false },
   )
+})
+
+// ============ 批次 B · 证据层与固化判定 ============
+
+test('buildGradeFlow surfaces the correct-answer consolidation card', () => {
+  const flow = buildGradeFlow(grade(9, {
+    correct: true,
+    result: 'correct',
+    verdict: 'correct',
+    diagnosis: {
+      myEntry: '看到 $\\sqrt{x^2+2x}$ 先配方',
+      rule: { positive: '根号内是二次式 → 先配方再设元' },
+      whyItWorked: '配成完全平方后根式整体降为一次，换元不再产生新根号',
+    },
+  }))
+  assert.equal(flow.myEntry, '看到 $\\sqrt{x^2+2x}$ 先配方')
+  assert.equal(flow.whyItWorked, '配成完全平方后根式整体降为一次，换元不再产生新根号')
+})
+
+function dims(values) {
+  const keys = ['rigor', 'computation', 'modeling', 'methodUse', 'speed', 'strategyInsight']
+  return Object.fromEntries(
+    keys.map((key) => [
+      key,
+      { score: values[key] ?? null, confidence: 0.9, evidence: `${key} 的草稿证据` },
+    ]),
+  )
+}
+
+const EMPTY_BASELINE = {
+  rigor: null,
+  computation: null,
+  modeling: null,
+  methodUse: null,
+  speed: null,
+  strategyInsight: null,
+}
+
+test('dimensionSpotlight publishes only the two most extreme dims with their evidence', () => {
+  const spot = dimensionSpotlight(
+    grade(1, { dimensions: dims({ rigor: 92, computation: 55, methodUse: 80, speed: 88 }) }),
+    EMPTY_BASELINE,
+  )
+  assert.equal(spot.high.key, 'rigor')
+  assert.equal(spot.high.value, 92)
+  assert.equal(spot.high.evidence, 'rigor 的草稿证据')
+  assert.equal(spot.low.key, 'computation')
+  assert.equal(spot.low.evidence, 'computation 的草稿证据')
+  assert.equal(spot.spread, 37)
+
+  // 极差不足 20 分不上架，避免把噪声当结论
+  assert.equal(
+    dimensionSpotlight(grade(2, { dimensions: dims({ rigor: 80, computation: 72 }) }), EMPTY_BASELINE),
+    null,
+  )
+  // 可打分维度不足两个同样不上架
+  assert.equal(
+    dimensionSpotlight(grade(3, { dimensions: dims({ rigor: 80 }) }), EMPTY_BASELINE),
+    null,
+  )
+})
+
+test('dimensionSpotlight deltas are measured against the group baseline', () => {
+  const gradeA = grade(1, { dimensions: dims({ rigor: 90, computation: 50 }) })
+  const baseline = baselineDimensionValues([gradeA])
+  const spot = dimensionSpotlight(gradeA, baseline)
+  assert.equal(baseline.rigor, 90)
+  assert.equal(spot.high.delta, 0)
+  assert.equal(spot.low.value, 50)
+})
+
+test('deriveFixState keeps three states so a first exposure never reads as 观察中', () => {
+  const group = (overrides) => ({
+    key: 'E-027',
+    errorCode: 'E-027',
+    title: '根式换元入口缺失',
+    severity: 'L1',
+    indices: [0],
+    questionIds: [1],
+    state: 'new',
+    historyWrong: 0,
+    historyTotal: 0,
+    ...overrides,
+  })
+  assert.equal(deriveFixState(null), null)
+  assert.equal(deriveFixState(group({})).label, '首次暴露')
+  assert.equal(deriveFixState(group({ historyTotal: 2 })).label, '观察中')
+  assert.equal(deriveFixState(group({ state: 'relapse' })).label, '待验证')
+})
+
+test('deriveConsolidation refuses to claim mastery without repeated independent evidence', () => {
+  const flow = { whyItWorked: '配方后根式降次' }
+  const attempt = (verdict) => ({ verdict, outcome: verdict, attemptedAt: 'x', durationSeconds: 60 })
+
+  // 本次做对 + 之前连续两次做对 → 已固化
+  assert.equal(
+    deriveConsolidation('correct', [attempt('correct'), attempt('correct'), attempt('correct')], flow)
+      .label,
+    '已固化 · 连续 3 次做对',
+  )
+  // 只有一次前序证据 → 观察中
+  assert.equal(
+    deriveConsolidation('correct', [attempt('correct'), attempt('correct')], flow).label,
+    '观察中 · 连续 2 次做对',
+  )
+  // 首次做对：一次做对不等于稳定掌握，不给状态
+  assert.equal(deriveConsolidation('correct', [attempt('correct')], flow), null)
+  // 中间错一次就断链：只数到连续的那一段（1 次前序），封顶在观察中
+  assert.equal(
+    deriveConsolidation(
+      'correct',
+      [attempt('correct'), attempt('correct'), attempt('wrong'), attempt('correct')],
+      flow,
+    ).label,
+    '观察中 · 连续 2 次做对',
+  )
+  // 没有固化卡证据不给状态；错题也不走这条判定
+  assert.equal(deriveConsolidation('correct', [attempt('correct'), attempt('correct')], {}), null)
+  assert.equal(
+    deriveConsolidation('wrong', [attempt('wrong'), attempt('correct')], flow),
+    null,
+  )
+})
+
+test('benchmarkSeconds keeps the same math-one timing table as the Rust kernel', () => {
+  // 与 src-tauri/src/services/rating.rs::benchmark_seconds_pins_the_math_one_timing_table 成对：
+  // 基准耗时被提示词、压力报告、前端三处引用，任一侧改数值这里就红。
+  assert.equal(benchmarkSeconds('single_choice'), 180)
+  assert.equal(benchmarkSeconds('multiple_choice'), 240)
+  assert.equal(benchmarkSeconds('fill_in'), 300)
+  assert.equal(benchmarkSeconds('subjective'), 600)
+  assert.equal(benchmarkSeconds(null), 600)
+  assert.equal(benchmarkSeconds(undefined), 600)
 })

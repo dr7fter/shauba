@@ -242,6 +242,21 @@ export type GradingDiagnosis = {
   acceptance?: string | null
   /** 明日动作（一条可执行） */
   nextAction?: string | null
+  /** correct 题固化卡：这条入口为什么在这道题上成立（讲结构，不讲步骤） */
+  whyItWorked?: string | null
+}
+
+/** 同 errorCode 的一次历史命中（复发时间线，来自 codex_inbox 的批改载荷） */
+export type ErrorCodeEncounter = {
+  taskId: string
+  createdAt: string
+  verdict?: string | null
+  stepScore?: number | null
+  durationSeconds?: number | null
+  myEntry?: string | null
+  ruleNegation?: string | null
+  acceptance?: string | null
+  nextAction?: string | null
 }
 
 export type EloHistoryPoint = {
@@ -707,6 +722,12 @@ export type QuestionGrade = {
   rating?: number | null
   ratingTier?: string | null
   difficultyMultiplier?: number | null
+  /** 有效步骤分（0–100）：partial / incorrect 才有，让学员看得见"错得多可惜" */
+  stepScore?: number | null
+  /** 次要病因：不参与病因归一，仅供展示 */
+  secondaryTags?: string[] | null
+  /** 本题草稿原件绝对路径（批改侧回填，App 只存路径与展示） */
+  draftPaths?: string[] | null
   dimensions?: RatingDimensions | null
   diagnosis?: GradingDiagnosis | null
 }

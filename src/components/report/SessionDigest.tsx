@@ -6,8 +6,8 @@ import type { SessionDigest } from '../../domain/reportViewModel'
  * 聚类与一件事凑不出可靠内容时整卡不渲染（不硬凑）——
  * 分布信息状态栏已有兜底，这里只呈现增量洞察。
  */
-export function SessionDigestView({ digest }: { digest: SessionDigest }) {
-  if (!digest.clusterLine && !digest.oneThingLine) return null
+export function SessionDigestView({ digest }: { digest?: SessionDigest | null }) {
+  if (!digest || (!digest.clusterLine && !digest.oneThingLine)) return null
   return (
     <div className="rp-digest" role="note" aria-label="本场总诊断">
       <div className="rp-digest-row">

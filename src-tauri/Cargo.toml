@@ -1,6 +1,6 @@
 [package]
 name = "shuaba"
-version = "1.9.3"
+version = "1.9.4"
 description = "刷吧 - 数一纸笔训练与智能推荐"
 authors = ["Codex"]
 license = ""

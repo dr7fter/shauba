@@ -253,27 +253,26 @@ export function ReviewPane({
         ) : null}
         {/* 含图题干此前在报告里读不通——图进了批改侧就没进 App，现在把原件摆回来 */}
         {question?.imagePaths?.length ? <QuestionImages paths={question.imagePaths} /> : null}
-        {grade.draftPaths?.length ? (
-          <div className="rp-draft">
-            <span className="rp-draft-hd">
-              <Icon name="image" size="sm" />
-              我的草稿原件 · 本次批改依据
-            </span>
-            <QuestionImages paths={grade.draftPaths} />
-          </div>
-        ) : null}
         {grade.userAnswer?.trim() || grade.correctAnswer?.trim() ? (
           <div className="rp-answer-row">
             <span className="rp-answer-cell">
               <span className="rp-answer-k">我答</span>
               <span className={grade.correct ? 'rp-answer-v rp-yes' : 'rp-answer-v rp-no'}>
-                {grade.userAnswer?.trim() || <span className="rp-quiet">未记录</span>}
+                {grade.userAnswer?.trim() ? (
+                  <MathText value={grade.userAnswer.trim()} />
+                ) : (
+                  <span className="rp-quiet">未记录</span>
+                )}
               </span>
             </span>
             <span className="rp-answer-cell">
               <span className="rp-answer-k">标答</span>
               <span className="rp-answer-v">
-                {grade.correctAnswer?.trim() || <span className="rp-quiet">未记录</span>}
+                {grade.correctAnswer?.trim() ? (
+                  <MathText value={grade.correctAnswer.trim()} />
+                ) : (
+                  <span className="rp-quiet">未记录</span>
+                )}
               </span>
             </span>
           </div>

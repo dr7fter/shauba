@@ -21,8 +21,8 @@
 /* ============================ 窗口与顶栏 ============================ */
 
 .rp-win {
-  width: min(1400px, 94vw);
-  height: min(820px, calc(100vh - 48px));
+  width: min(1560px, 96vw);
+  height: min(890px, calc(100vh - 36px));
   display: flex;
   flex-direction: column;
   overflow: hidden;
@@ -190,32 +190,34 @@
 }
 
 .rp-view {
-  padding: 20px 26px 44px;
-  max-width: 44rem;
+  padding: 24px 36px 52px;
+  max-width: 72rem;
+  width: 100%;
+  box-sizing: border-box;
 }
 
 /* 无侧栏的两个视图（本场 / 档案）以表与条为主，可以更宽 */
 .rp-wide .rp-view {
-  max-width: 66rem;
+  max-width: 80rem;
 }
 
 /* 块级公式的段距在整份报告里统一，不只在正解卡里给 */
 .rp-view .math-display {
-  margin: 12px 0;
+  margin: 14px 0;
 }
 
 /* ============================ 题头 ============================ */
 
 .rp-head {
-  margin-bottom: 16px;
+  margin-bottom: 18px;
 }
 
 .rp-meta {
   display: flex;
   align-items: center;
   flex-wrap: wrap;
-  gap: 7px;
-  margin-bottom: 9px;
+  gap: 8px;
+  margin-bottom: 10px;
   font-size: var(--fs-xs);
   color: var(--quiet);
 }
@@ -226,15 +228,16 @@
 }
 
 .rp-h1 {
-  margin: 0 0 9px;
-  font-size: var(--fs-lg);
+  margin: 0 0 12px;
+  font-size: 20px;
   font-weight: 700;
+  letter-spacing: -0.01em;
   color: var(--ink);
 }
 
 /* 题干：采用文人书卷排版，沉稳且易读 */
 .rp-stem {
-  padding: 15px 18px;
+  padding: 18px 22px;
   border: 1px solid var(--line);
   border-radius: var(--r-md);
   background: var(--surface);
@@ -243,8 +246,8 @@
   /* 没装文楷时回退到宋体，浏览器合成的 700 会糊成一团 */
   font-synthesis-weight: none;
   font-weight: 500;
-  font-size: var(--fs-md);
-  line-height: 1.85;
+  font-size: 16.5px;
+  line-height: 1.9;
   letter-spacing: 0.01em;
   color: var(--ink);
   text-wrap: pretty;
@@ -256,9 +259,9 @@
 .rp-alert {
   display: flex;
   align-items: flex-start;
-  gap: 10px;
-  margin-bottom: 14px;
-  padding: 12px 14px;
+  gap: 12px;
+  margin-bottom: 16px;
+  padding: 13px 16px;
   border: 1px solid var(--line-danger);
   border-radius: var(--r-md);
   background: var(--danger-soft);
@@ -269,8 +272,8 @@
   display: grid;
   place-items: center;
   flex: none;
-  width: 19px;
-  height: 19px;
+  width: 20px;
+  height: 20px;
   border-radius: var(--r-full);
   background: var(--danger);
   color: var(--on-color);
@@ -282,8 +285,8 @@
 .rp-alert-b {
   flex: 1;
   min-width: 0;
-  font-size: var(--fs-sm);
-  line-height: 1.65;
+  font-size: 14px;
+  line-height: 1.7;
   color: var(--ink);
 }
 
@@ -300,7 +303,7 @@
 /* ============================ 折叠段 ============================ */
 
 .rp-secs {
-  padding: 4px 16px 6px;
+  padding: 6px 20px 8px;
   border: 1px solid var(--line);
   border-radius: var(--r-md);
   background: var(--surface);
@@ -318,8 +321,8 @@
 .rp-sec-hd {
   display: flex;
   align-items: center;
-  gap: 10px;
-  padding: 11px 2px;
+  gap: 12px;
+  padding: 12px 2px;
   cursor: pointer;
   user-select: none;
   border-radius: var(--r-xs);
@@ -344,17 +347,17 @@
 
 .rp-sec-n {
   flex: none;
-  width: 16px;
+  width: 18px;
   font-family: var(--font-mono);
   font-variant-numeric: tabular-nums;
-  font-size: 10px;
+  font-size: 11.5px;
   font-weight: 700;
   color: var(--quiet);
 }
 
 .rp-sec-t {
   flex: 1;
-  font-size: var(--fs-base);
+  font-size: 15.5px;
   font-weight: 700;
   letter-spacing: 0.01em;
   color: var(--ink);
@@ -363,15 +366,15 @@
 .rp-sec-tag {
   font-family: var(--font-mono);
   font-variant-numeric: tabular-nums;
-  font-size: var(--fs-xs);
+  font-size: 12px;
   color: var(--quiet);
 }
 
 .rp-sec-bd {
   display: none;
-  padding: 0 2px 15px 37px;
-  font-size: var(--fs-md);
-  line-height: 1.78;
+  padding: 0 2px 18px 42px;
+  font-size: 15.5px;
+  line-height: 1.88;
   color: var(--ink);
   text-wrap: pretty;
   font-kerning: normal;
@@ -409,10 +412,10 @@
 .rp-rule-k {
   flex: none;
   min-width: 38px;
-  padding: 2px 7px;
+  padding: 3px 8px;
   border-radius: var(--r-xs);
   text-align: center;
-  font-size: 10.5px;
+  font-size: 11.5px;
   font-weight: 700;
 }
 
@@ -422,8 +425,8 @@
 .rp-rule-v {
   flex: 1;
   min-width: 0;
-  font-size: var(--fs-sm);
-  line-height: 1.75;
+  font-size: 15px;
+  line-height: 1.8;
 }
 
 /* ============================ 解法遮罩 ============================ */
@@ -463,12 +466,12 @@
 
 /* 上：我的错路。压低对比度 + 沉底背景，视觉上让位给正解 */
 .rp-fork-mine {
-  padding: 10px 13px;
+  padding: 12px 16px;
   border: 1px solid var(--line);
   border-radius: var(--r-sm);
   background: var(--sunken);
-  font-size: var(--fs-sm);
-  line-height: 1.7;
+  font-size: var(--fs-md);
+  line-height: 1.75;
   color: var(--muted);
 }
 
@@ -483,9 +486,9 @@
 
 /* 下：正解。
    pre-wrap 保留原作者的换行（题库 48.5% 的正解含换行，多是行间公式），
-   读下来就是手写答案的顺序；字号取 --fs-lg，是全屏最大的正文。 */
+   读下来就是手写答案的顺序；字号取 --fs-xl，是全屏最大的正文。 */
 .rp-fork-std {
-  padding: 16px 20px;
+  padding: 18px 24px;
   border: 1px solid var(--line-success);
   border-left: 3px solid var(--success);
   border-radius: var(--r-md);
@@ -496,8 +499,8 @@
   font-family: var(--font-stem);
   font-synthesis-weight: none;
   font-weight: 500;
-  font-size: var(--fs-lg);
-  line-height: 1.88;
+  font-size: var(--fs-xl);
+  line-height: 1.92;
   letter-spacing: 0.01em;
   color: var(--ink);
 }
@@ -508,12 +511,12 @@
 }
 
 .rp-fork-cons {
-  margin-top: 10px;
-  padding: 9px 12px;
+  margin-top: 12px;
+  padding: 10px 14px;
   border-left: 2px solid var(--line-danger);
   border-radius: 0 var(--r-xs) var(--r-xs) 0;
   background: var(--danger-soft);
-  font-size: var(--fs-sm);
+  font-size: 14px;
   line-height: 1.7;
   color: var(--danger-strong);
 }
@@ -521,14 +524,14 @@
 /* 选填速算：附在正解之后的另一条更快的路，比正解收一档 */
 .rp-fork-extra {
   margin-top: 12px;
-  padding: 12px 16px;
+  padding: 14px 18px;
   border: 1px solid var(--line);
   border-radius: var(--r-sm);
   background: var(--sunken);
   white-space: pre-wrap;
   overflow-x: auto;
-  font-size: var(--fs-md);
-  line-height: 1.85;
+  font-size: 16px;
+  line-height: 1.88;
 }
 
 /* ============================ 数一工具箱 ============================ */
@@ -542,8 +545,8 @@
 .rp-tool-row {
   display: flex;
   align-items: flex-start;
-  gap: 10px;
-  padding: 8px 12px;
+  gap: 12px;
+  padding: 10px 14px;
   border: 1px solid var(--line);
   border-radius: var(--r-sm);
   background: var(--surface);
@@ -557,8 +560,8 @@
 
 .rp-tool-idx {
   flex: none;
-  min-width: 22px;
-  height: 22px;
+  min-width: 24px;
+  height: 24px;
   display: inline-grid;
   place-items: center;
   border-radius: var(--r-xs);
@@ -566,7 +569,7 @@
   background: var(--sunken);
   font-family: var(--font-mono);
   font-variant-numeric: tabular-nums;
-  font-size: var(--fs-xs);
+  font-size: 12px;
   font-weight: 650;
   color: var(--muted);
   line-height: 1;
@@ -575,8 +578,8 @@
 .rp-tool-v {
   flex: 1;
   min-width: 0;
-  font-size: var(--fs-sm);
-  line-height: 1.78;
+  font-size: 15px;
+  line-height: 1.8;
   color: var(--ink);
 }
 
@@ -601,8 +604,8 @@
 
 /* 顶部总诊断：三行卡片，「带走」行用墨色压住——整份报告只强调一件事 */
 .rp-digest {
-  margin-bottom: 14px;
-  padding: 12px 15px;
+  margin-bottom: 16px;
+  padding: 14px 18px;
   border: 1px solid var(--line);
   border-radius: var(--r-md);
   background: var(--surface);
@@ -612,21 +615,21 @@
 .rp-digest-row {
   display: flex;
   align-items: baseline;
-  gap: 10px;
-  font-size: var(--fs-sm);
-  line-height: 1.75;
+  gap: 12px;
+  font-size: 14px;
+  line-height: 1.8;
   color: var(--muted);
 }
 
 .rp-digest-row + .rp-digest-row {
-  margin-top: 2px;
+  margin-top: 3px;
 }
 
 .rp-digest-k {
   flex: none;
-  min-width: 30px;
+  min-width: 32px;
   font-family: var(--font-mono);
-  font-size: var(--fs-xs);
+  font-size: 12px;
   color: var(--quiet);
 }
 
@@ -1013,28 +1016,30 @@
 .rp-answer-row {
   display: flex;
   flex-wrap: wrap;
-  gap: 10px;
-  margin-top: 10px;
+  gap: 12px;
+  margin-top: 14px;
 }
 
 .rp-answer-cell {
-  display: flex;
-  align-items: baseline;
-  gap: 8px;
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
   min-width: 0;
-  padding: 7px 11px;
+  padding: 8px 15px;
   border: 1px solid var(--line);
   border-radius: var(--r-sm);
   background: var(--surface);
-  font-size: var(--fs-md);
+  box-shadow: var(--shadow-1);
+  font-size: 15px;
 }
 
 .rp-answer-k {
   font-family: var(--font-mono);
-  font-size: var(--fs-xs);
+  font-size: 12px;
   font-weight: 700;
   letter-spacing: 0.04em;
   color: var(--quiet);
+  flex-shrink: 0;
 }
 
 .rp-answer-v {
@@ -1042,6 +1047,10 @@
   font-variant-numeric: tabular-nums;
   color: var(--ink);
   word-break: break-word;
+  display: inline-flex;
+  align-items: center;
+  font-size: 15.5px;
+  font-weight: 600;
 }
 
 /* rp-yes / rp-no 此前只在 .rp-rule-k 下着色，对照行与置信标注复用同一语义 */
@@ -1053,7 +1062,7 @@
 /* 复发时间线：两次并排，比"第 N 次"更有杀伤力 */
 .rp-tl {
   margin: 0 0 16px;
-  padding: 11px 13px 12px;
+  padding: 12px 16px 14px;
   border: 1px solid var(--line);
   border-left: 3px solid var(--line-warn);
   border-radius: var(--r-md);
@@ -1075,12 +1084,12 @@
 
 .rp-tl-row {
   display: grid;
-  grid-template-columns: 62px 128px minmax(0, 1fr);
-  gap: 10px;
-  padding: 5px 0;
+  grid-template-columns: 68px 132px minmax(0, 1fr);
+  gap: 12px;
+  padding: 7px 0;
   border-top: 1px solid var(--line);
-  font-size: var(--fs-sm);
-  line-height: 1.6;
+  font-size: 13.5px;
+  line-height: 1.65;
   color: var(--ink);
 }
 

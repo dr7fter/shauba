@@ -323,7 +323,8 @@ struct BatchAttempt {
     /// 次要病因，仅供报告展示；病因归一只看 error_tags 的第一个标签。
     #[serde(default)]
     secondary_tags: Vec<String>,
-    /// 本题草稿原件的绝对路径，按批改侧收到的顺序。App 不经手图片，只存路径 + 展示。
+    /// 历史遗留字段：2026-09-05 草稿图不再展示，已从批改契约移除。
+    /// 保留仅为兼容旧 payload 入库透传，禁止写回提示词与量规。
     #[serde(default)]
     draft_paths: Vec<String>,
     /// 本题用到的数一考纲工具（公式、定理、性质列表）。
@@ -9556,8 +9557,9 @@ fn create_codex_task(question_id: i64, state: State<AppState>) -> Result<CodexTa
 4. `betterSolution`：考场极速秒杀思路，原解法已最优填 null。`advice`：一条明天可落地的动作。
 5. `diagnosis`：按量规第五节逐项填实。`verdict = correct` 时不要整块填 null，
    改填三字段固化卡（myEntry + rule.positive + whyItWorked）。
-6. `draftPaths`：本题草稿图绝对路径数组，按你收到的顺序；没收到填 []，严禁编路径。
-7. 画像与反馈：按量规第一节的状态纪律更新根目录 characteristic.md
+   `errorCode` 优先复用根目录 characteristic-core.md 第一节断点表里的现有 E 码，确无匹配才新编；
+   `syllabusTools` 列本题实际用到的数一考纲内公式/定理（≤5 条，可含 $LaTeX$），wrong/partial 必填、correct 可空。
+6. 画像与反馈：按量规第一节的状态纪律更新根目录 characteristic.md
    ——新增断点先落 [🟡 观察中]，**不许自行判定已固化**；并在回复学员的报告里
    专门呈现【🌟 本轮战力突破 / 成功改正】与【⚠️ 本轮新增微观断点与补丁】。
 
@@ -9565,7 +9567,7 @@ fn create_codex_task(question_id: i64, state: State<AppState>) -> Result<CodexTa
 {output}
 
 JSON 必须符合（UTF-8，公式用标准单个反斜杠 LaTeX）。缺 `dimensions` 会退回特征曲线评分，务必带全六维：
-{{"schemaVersion":1,"kind":"analysis","taskId":"{task_id}","questionId":{question_id},"summary":"战术诊断摘要（含 $LaTeX$ 公式）","verdict":"correct|partial|incorrect|uncertain","earliestError":"最早断点行与数学式（含 $LaTeX$）或 null","errorTags":["瞄准失误|概念盲区|战术绕路 三选一"],"secondaryTags":["次要病因，可空数组"],"weaknessTags":["薄弱知识点"],"advice":"下一步修复动作（含 $LaTeX$ 公式）","betterSolution":"考场极速秒杀思路（含 $LaTeX$ 公式）或 null","stepScore":72,"confidence":0.95,"rating":1.00,"dimensions":{{"rigor":{{"score":88,"confidence":0.9,"evidence":"依据草稿步骤（含 $LaTeX$）"}},"computation":{{"score":72,"confidence":0.9,"evidence":"依据草稿步骤（含 $LaTeX$）"}},"modeling":{{"score":65,"confidence":0.9,"evidence":"依据草稿步骤（含 $LaTeX$）"}},"methodUse":{{"score":80,"confidence":0.9,"evidence":"依据草稿步骤（含 $LaTeX$）"}},"speed":{{"score":90,"confidence":0.9,"evidence":"基于实际耗时与基准的比值"}},"strategyInsight":{{"score":58,"confidence":0.8,"evidence":"依据结构识别（含 $LaTeX$）","techniqueLevel":3,"independentDiscovery":"uncertain"}}}},"draftPaths":["E:\\\\刷吧\\\\photo\\\\1.png"],"diagnosis":{{"errorCode":"E-027 或 null","title":"根式换元入口缺失","severity":"L1|L2|L3","myEntry":"学员落笔时的第一个动作（含 $LaTeX$）","whyDeadEnd":"这条路径为什么走不通（讲原理，不讲步骤，含 $LaTeX$）","rule":{{"negation":"看到什么特征时禁止做什么","positive":"该做什么"}},"fork":{{"step":1,"label":"换元选择","myPath":"学员实际走的路径（含 $LaTeX$）","standardPath":"正确路径（含 $LaTeX$）","consequence":"走错之后的后果"}},"acceptance":"一条可判定的验收判据","nextAction":"明天就能做的一条动作","whyItWorked":null}},"recommendedQuestionIds":[],"recommendationReason":null}}
+{{"schemaVersion":1,"kind":"analysis","taskId":"{task_id}","questionId":{question_id},"summary":"战术诊断摘要（含 $LaTeX$ 公式）","verdict":"correct|partial|incorrect|uncertain","earliestError":"最早断点行与数学式（含 $LaTeX$）或 null","errorTags":["瞄准失误|概念盲区|战术绕路 三选一"],"secondaryTags":["次要病因，可空数组"],"weaknessTags":["薄弱知识点"],"advice":"下一步修复动作（含 $LaTeX$ 公式）","betterSolution":"考场极速秒杀思路（含 $LaTeX$ 公式）或 null","stepScore":72,"confidence":0.95,"rating":1.00,"dimensions":{{"rigor":{{"score":88,"confidence":0.9,"evidence":"依据草稿步骤（含 $LaTeX$）"}},"computation":{{"score":72,"confidence":0.9,"evidence":"依据草稿步骤（含 $LaTeX$）"}},"modeling":{{"score":65,"confidence":0.9,"evidence":"依据草稿步骤（含 $LaTeX$）"}},"methodUse":{{"score":80,"confidence":0.9,"evidence":"依据草稿步骤（含 $LaTeX$）"}},"speed":{{"score":90,"confidence":0.9,"evidence":"基于实际耗时与基准的比值"}},"strategyInsight":{{"score":58,"confidence":0.8,"evidence":"依据结构识别（含 $LaTeX$）","techniqueLevel":3,"independentDiscovery":"uncertain"}}}},"diagnosis":{{"errorCode":"E-027 或 null","title":"根式换元入口缺失","severity":"L1|L2|L3","myEntry":"学员落笔时的第一个动作（含 $LaTeX$）","whyDeadEnd":"这条路径为什么走不通（讲原理，不讲步骤，含 $LaTeX$）","rule":{{"negation":"看到什么特征时禁止做什么","positive":"该做什么"}},"fork":{{"step":1,"label":"换元选择","myPath":"学员实际走的路径（含 $LaTeX$）","standardPath":"正确路径（含 $LaTeX$）","consequence":"走错之后的后果"}},"acceptance":"一条可判定的验收判据","nextAction":"明天就能做的一条动作","whyItWorked":null,"syllabusTools":["定积分换元公式"]}},"recommendedQuestionIds":[],"recommendationReason":null}}
 correct 题的 diagnosis 形如 {{"myEntry":"...","rule":{{"positive":"..."}},"whyItWorked":"..."}}，其余字段填 null。
 不要输出 batchAttempts，单题只输出上面的 analysis 对象。不要修改题库源文件。"#,
         stem = q.stem,
@@ -9630,7 +9632,7 @@ fn build_codex_batch_task_prompt(
     format!(
         r#"你正在为数学刷题 App「刷吧」担任 CS 战术主考官，深度批改考研数一草稿。
 任务编号：{task_id}
-本任务包含 {count} 道题，按下面编号依次列出；你随后收到的每张草稿图片按发送顺序对应一道题：
+本任务包含 {count} 道题，按下面编号依次列出。草稿照片可能一照含多题，图文对应由你在批改前声明：
 
 {numbered}
 
@@ -9640,7 +9642,8 @@ fn build_codex_batch_task_prompt(
 节奏好坏由你自己按 speed 维口径判定。
 
 【本次批改要做的事】：
-1. 逐题核对草稿：第 K 张图片对应第 K 题，少于题目数时只批改收到草稿的题，未收到草稿的题在 batchAttempts 中省略，严禁猜测。
+1. 逐题核对草稿：先在 `summary` 开头声明每张照片实际覆盖的题号（允许一照多题），再逐题批改；
+   找不到可辨认草稿的题在 batchAttempts 中省略，严禁猜测草稿内容。
 2. 定位【最早错误断点】(earliestError)：`errorTags` 只填 1 个主标签（三选一，取该题最早断点所属类），
    其余次要病因填 `secondaryTags`。病因归一只看主标签，多标签会把概念盲区判成瞄准失误并影响明天推什么题。
 3. `stepScore`：partial / incorrect 必填有效步骤分（0–100 整数），correct / uncertain 填 null。
@@ -9654,17 +9657,18 @@ fn build_codex_batch_task_prompt(
    `advice`：每题一条可落地的修复动作。
 6. `diagnosis`：按量规第五节逐项填实。`verdict = correct` 的题不要整块填 null，
    改填三字段固化卡（myEntry + rule.positive + whyItWorked）——画像封盘靠的就是做对题的证据。
-   同一入口导致的题必须填同一个 errorCode，复发时间线靠它对齐。
-7. `draftPaths`：每题草稿图绝对路径数组，按你收到的顺序；没收到填 []，严禁编路径。
-8. 画像与反馈：按量规第一节的状态纪律更新根目录 characteristic.md
+   同一入口导致的题必须填同一个 errorCode，复发时间线靠它对齐；
+   `errorCode` 优先复用根目录 characteristic-core.md 第一节断点表里的现有 E 码，确无匹配才新编。
+   `syllabusTools` 列每题实际用到的数一考纲内公式/定理（≤5 条，可含 $LaTeX$），wrong/partial 必填、correct 可空。
+7. 画像与反馈：按量规第一节的状态纪律更新根目录 characteristic.md
    ——新增断点先落 [🟡 观察中]，**不许自行判定已固化**；并在回复学员的报告里
    专门呈现【🌟 本轮战力突破 / 成功改正】与【⚠️ 本轮新增微观断点与补丁】。
 
 完成后请将结果写入这个绝对路径：
 {output}
 
-JSON 必须符合（UTF-8，公式用标准单个反斜杠 LaTeX）。每个 batchAttempt 还必须包含 rating 和六维 dimensions；`errorTags` 只放 1 个主标签；无法由草稿确认的维度使用 score:null、confidence:0，并明确写 uncertain；`stepScore` 与 `draftPaths` 按上面第 3、7 条填写：
-{{"schemaVersion":1,"kind":"batch","taskId":"{task_id}","summary":"整组批改摘要（含 $LaTeX$ 公式）","errorTags":["错误类型"],"weaknessTags":["薄弱知识"],"confidence":0.9,"recommendedQuestionIds":[],"batchAttempts":[{{"questionId":155,"result":"correct|wrong|uncertain","selfRating":2,"durationSeconds":120,"summary":"简要诊断（含 $LaTeX$ 公式）","verdict":"correct|partial|incorrect|uncertain","earliestError":"最早断点行与数学式（含 $LaTeX$）或 null","errorTags":["瞄准失误|概念盲区|战术绕路 三选一"],"secondaryTags":["次要病因，可空数组"],"weaknessTags":["薄弱知识"],"advice":"下一步修复动作（含 $LaTeX$ 公式）","betterSolution":"考场极速秒杀思路（含 $LaTeX$ 公式）或 null","stepScore":72,"confidence":0.95,"rating":1.00,"dimensions":{{"rigor":{{"score":88,"confidence":0.9,"evidence":"依据草稿步骤（含 $LaTeX$）"}},"computation":{{"score":72,"confidence":0.9,"evidence":"依据草稿步骤（含 $LaTeX$）"}},"modeling":{{"score":65,"confidence":0.9,"evidence":"依据草稿步骤（含 $LaTeX$）"}},"methodUse":{{"score":80,"confidence":0.9,"evidence":"依据草稿步骤（含 $LaTeX$）"}},"speed":{{"score":90,"confidence":0.9,"evidence":"基于实际耗时与基准的比值"}},"strategyInsight":{{"score":58,"confidence":0.8,"evidence":"依据结构识别（含 $LaTeX$）","techniqueLevel":3,"independentDiscovery":"uncertain"}}}},"draftPaths":["E:\\\\刷吧\\\\photo\\\\1.png"],"diagnosis":{{"errorCode":"E-027 或 null","title":"断点名","severity":"L1|L2|L3","myEntry":"学员落笔时的第一个动作（含 $LaTeX$）","whyDeadEnd":"这条路径为什么走不通（讲原理，不讲步骤）","rule":{{"negation":"看到什么特征时禁止做什么","positive":"该做什么"}},"fork":{{"step":1,"label":"换元选择","myPath":"学员实际走的路径（含 $LaTeX$）","standardPath":"正确路径（含 $LaTeX$）","consequence":"走错之后的后果"}},"acceptance":"一条可判定的验收判据","nextAction":"明天就能做的一条动作","whyItWorked":null}}}}]}}
+JSON 必须符合（UTF-8，公式用标准单个反斜杠 LaTeX）。每个 batchAttempt 还必须包含 rating 和六维 dimensions；`errorTags` 只放 1 个主标签；无法由草稿确认的维度使用 score:null、confidence:0，并明确写 uncertain；`stepScore` 按上面第 3 条填写：
+{{"schemaVersion":1,"kind":"batch","taskId":"{task_id}","summary":"整组批改摘要（含 $LaTeX$ 公式）","errorTags":["错误类型"],"weaknessTags":["薄弱知识"],"confidence":0.9,"recommendedQuestionIds":[],"batchAttempts":[{{"questionId":155,"result":"correct|wrong|uncertain","selfRating":2,"durationSeconds":120,"summary":"简要诊断（含 $LaTeX$ 公式）","verdict":"correct|partial|incorrect|uncertain","earliestError":"最早断点行与数学式（含 $LaTeX$）或 null","errorTags":["瞄准失误|概念盲区|战术绕路 三选一"],"secondaryTags":["次要病因，可空数组"],"weaknessTags":["薄弱知识"],"advice":"下一步修复动作（含 $LaTeX$ 公式）","betterSolution":"考场极速秒杀思路（含 $LaTeX$ 公式）或 null","stepScore":72,"confidence":0.95,"rating":1.00,"dimensions":{{"rigor":{{"score":88,"confidence":0.9,"evidence":"依据草稿步骤（含 $LaTeX$）"}},"computation":{{"score":72,"confidence":0.9,"evidence":"依据草稿步骤（含 $LaTeX$）"}},"modeling":{{"score":65,"confidence":0.9,"evidence":"依据草稿步骤（含 $LaTeX$）"}},"methodUse":{{"score":80,"confidence":0.9,"evidence":"依据草稿步骤（含 $LaTeX$）"}},"speed":{{"score":90,"confidence":0.9,"evidence":"基于实际耗时与基准的比值"}},"strategyInsight":{{"score":58,"confidence":0.8,"evidence":"依据结构识别（含 $LaTeX$）","techniqueLevel":3,"independentDiscovery":"uncertain"}}}},"diagnosis":{{"errorCode":"E-027 或 null","title":"断点名","severity":"L1|L2|L3","myEntry":"学员落笔时的第一个动作（含 $LaTeX$）","whyDeadEnd":"这条路径为什么走不通（讲原理，不讲步骤）","rule":{{"negation":"看到什么特征时禁止做什么","positive":"该做什么"}},"fork":{{"step":1,"label":"换元选择","myPath":"学员实际走的路径（含 $LaTeX$）","standardPath":"正确路径（含 $LaTeX$）","consequence":"走错之后的后果"}},"acceptance":"一条可判定的验收判据","nextAction":"明天就能做的一条动作","whyItWorked":null,"syllabusTools":["定积分换元公式"]}}}}]}}
 correct 题的 diagnosis 形如 {{"myEntry":"...","rule":{{"positive":"..."}},"whyItWorked":"..."}}，其余字段填 null。
 示例中的分数仅用于展示字段类型，不要照抄。不要修改题库源文件。"#,
         count = questions.len(),
@@ -15792,7 +15796,13 @@ mod tests {
         );
         assert!(prompt.contains("\"stepScore\""), "有效步骤分必须进契约");
         assert!(prompt.contains("\"secondaryTags\""), "次要病因必须与主标签分离");
-        assert!(prompt.contains("\"draftPaths\""), "草稿原件路径必须进契约");
+        // 2026-09-05 批改报告砍掉草稿图展示后，draftPaths 已从契约移除；反向断言防回潮。
+        assert!(!prompt.contains("draftPaths"), "草稿路径已退出契约，不得再写回批改提示词");
+        assert!(prompt.contains("syllabusTools"), "「用到的数一工具」必须进契约，否则报告区块空转");
+        assert!(
+            prompt.contains("characteristic-core.md"),
+            "E 码必须要求复用 core 现有断点词表，否则档案页满屏未编码"
+        );
         assert!(prompt.contains("whyItWorked"), "correct 题固化卡必须进契约");
         assert!(
             !prompt.contains("ratingTier") && !prompt.contains("difficultyMultiplier"),
@@ -15804,7 +15814,8 @@ mod tests {
     fn batch_payload_keeps_diagnosis_and_new_fields_through_inbox() {
         // scan_inbox 存进 payload_json 的是重新序列化后的 CodexPayload。
         // 任何没在结构体里声明的字段都会在入库时被丢掉，报告的六段动线就退化成降级派生——
-        // 这个测试守住 diagnosis / stepScore / secondaryTags / draftPaths 四项留存。
+        // 这个测试守住 diagnosis / stepScore / secondaryTags / syllabusTools 四项留存；
+        // draftPaths 已退出契约（2026-09-05），此处仅验证结构体对旧 payload 的兼容透传。
         let conn = Connection::open_in_memory().unwrap();
         init_schema(&conn).unwrap();
         insert_test_question(&conn, 7, "高等数学 / 一元函数积分学");

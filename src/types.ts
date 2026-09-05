@@ -728,7 +728,7 @@ export type QuestionGrade = {
   stepScore?: number | null
   /** 次要病因：不参与病因归一，仅供展示 */
   secondaryTags?: string[] | null
-  /** 本题草稿原件绝对路径（批改侧回填，App 只存路径与展示） */
+  /** 历史遗留字段（2026-09-05 草稿图不再展示，已退出契约）；仅兼容旧 payload，前端不渲染 */
   draftPaths?: string[] | null
   dimensions?: RatingDimensions | null
   diagnosis?: GradingDiagnosis | null

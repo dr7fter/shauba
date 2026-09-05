@@ -72,8 +72,7 @@ src-tauri/capabilities/default.json  # Tauri 权限（加插件必须在此注�
 ```
 
 数据库 `%APPDATA%\com.shuaba.math\shuaba.db`，收件箱 `.../codex-inbox/`。
-**草稿图片默认位置 `E:\刷吧\photo`**，按题目顺序读取；图片不足时只批改能对应的题，
-不得猜测缺失草稿。
+**草稿图片默认位置 `E:\刷吧\photo`**：一照可含多题，批改前声明每张覆盖题号；对不上的题不得猜测。
 
 ## 七、工作方式约定
 

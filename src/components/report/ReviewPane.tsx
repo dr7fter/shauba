@@ -171,6 +171,16 @@ export function ReviewPane({
   const paceRatio = benchmarkSec > 0 ? durationSec / benchmarkSec : 0
   const paceClass =
     paceRatio > 1 ? 'overtime' : paceRatio > 0.85 ? 'slow' : paceRatio > 0.6 ? 'normal' : 'fast'
+  /* 止损线（固定事实：选择 5′ / 大题 8′）——越线不是"慢"，是止损失效，画像要记的账 */
+  const isChoice =
+    question?.questionType === 'single_choice' || question?.questionType === 'multiple_choice'
+  const stopLineSec = isChoice ? 300 : 480
+  const stopBroken = durationSec > stopLineSec
+  /* result 与 verdict 双口径共存时的解释（partial 计错题：教学口径 vs 计分口径） */
+  const verdictVsResult =
+    outcome === 'partial' && grade.result === 'wrong'
+      ? '本场按错题计数（正确率与 ELO 不加分）——"部分正确"指步骤分口径，不是判对'
+      : undefined
 
   const standardPath =
     question?.explanation || flow.fork?.standardPath || grade.betterSolution || null
@@ -190,7 +200,9 @@ export function ReviewPane({
         <div className="rp-meta">
           <span className="question-id-badge">#{grade.questionId}</span>
           <span>{question?.categoryPath || '未分类'}</span>
-          <span className={OUTCOME_CHIP[outcome]}>{OUTCOME_LABEL[outcome]}</span>
+          <span className={OUTCOME_CHIP[outcome]} title={verdictVsResult}>
+            {OUTCOME_LABEL[outcome]}
+          </span>
           {outcome === 'correct' && grade.methodSoundness === 'lucky' ? (
             <span className="reason-chip explore rp-icon-chip ic-gold" title="结果对，但方法不可复现（特殊值 / 代选项 / 跳步）">
               <Icon name="dice" />
@@ -230,8 +242,12 @@ export function ReviewPane({
           {outcome === 'correct' && group === null && history.length > 0 ? (
             <span className="reason-chip fit">历史 {history.length} 次作答</span>
           ) : null}
-          <span className={`pace-pill ${paceClass}`}>
+          <span
+            className={`pace-pill ${stopBroken ? 'overtime stoploss' : paceClass}`}
+            title={stopBroken ? `超出止损线 ${isChoice ? '5' : '8'} 分钟——按纪律应先止损标记，这道题的"磨出来"不算掌握` : undefined}
+          >
             {formatElapsed(durationSec * 1000)} / 预算 {formatElapsed(benchmarkSec * 1000)}
+            {stopBroken ? ' · 止损失效' : ''}
           </span>
           {outcome !== 'correct' && reviewLabel ? (
             <span className="reason-chip explore rp-icon-chip ic-green" title="学习引擎排定的复做日期">

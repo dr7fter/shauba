@@ -161,6 +161,8 @@
 .pace-pill.normal { background: var(--success-soft); color: var(--ink-on-soft); border: 1px solid var(--line-success); }
 .pace-pill.slow { background: var(--warn-soft); color: var(--warn-strong); border: 1px solid var(--warn-soft); }
 .pace-pill.overtime { background: var(--danger-soft); color: var(--danger); border: 1px solid var(--line-danger); }
+/* 止损线越线：比"超时"更高一级——实心危险色，画像里的"止损失效"就是这个 */
+.pace-pill.stoploss { background: var(--danger); color: var(--on-color); border: 1px solid var(--danger-strong); }
 
 /* ---------- ui-stat-tile ---------- */
 .insight-summary { display: grid; grid-template-columns: repeat(3,1fr); gap: 10px; margin-bottom: 16px; }

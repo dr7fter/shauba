@@ -25,6 +25,13 @@ export function SessionPane({
   /* 含水量：lucky/detour 独立计数，不动正确率与 ELO 口径（2026-09-04 拍板） */
   const luckyCount = grades.filter((grade) => grade.methodSoundness === 'lucky').length
   const detourCount = grades.filter((grade) => grade.methodSoundness === 'detour').length
+  /* 止损线（固定事实：选择 5′ / 大题 8′）——超时不稀奇，越线才要数出来 */
+  const stopLossViolations = grades.filter((grade) => {
+    const q = questions[grade.questionId]
+    const isChoice =
+      q?.questionType === 'single_choice' || q?.questionType === 'multiple_choice'
+    return (grade.duration ?? 0) > (isChoice ? 300 : 480)
+  }).length
 
   return (
     <div className="rp-view">
@@ -48,7 +55,12 @@ export function SessionPane({
         <div>
           <span>总用时</span>
           <strong>{formatElapsed(vm.totalDuration * 1000)}</strong>
-          <small>均 {formatElapsed(avgDuration * 1000)} / 题</small>
+          <small>
+            均 {formatElapsed(avgDuration * 1000)} / 题
+            {stopLossViolations > 0 ? (
+              <b className="rp-danger"> · 止损失效 {stopLossViolations} 题</b>
+            ) : null}
+          </small>
         </div>
       </div>
 

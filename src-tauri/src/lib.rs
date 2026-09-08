@@ -9554,11 +9554,20 @@ fn create_codex_task(question_id: i64, state: State<AppState>) -> Result<CodexTa
    `strategyInsight` 另给 `techniqueLevel`（1–5）与 `independentDiscovery`
    （confirmed|uncertain|prompted）。维度对象内不要写 advice。
 3. `stepScore`：partial / incorrect 必填有效步骤分（0–100 整数），correct / uncertain 填 null。
-4. `betterSolution`：考场极速秒杀思路，原解法已最优填 null。`advice`：一条明天可落地的动作。
+4. `betterSolution`（捷径注，**默认 null**）：仅当同时满足四条才写——
+   ① 捷径本身比标准动作**更便宜**：一眼的结构观察（对称 / 恒等式 / 补集 / 符号判断）直接省掉一整段计算；
+      若要靠 syllabus 外的高级结论或更复杂的变形才能"快"，不要写——那是学员的负资产；
+   ② 数一考纲内考场可正当使用；③ 相对标准动作至少省一个完整步骤；④ 学员这次没用上。
+   `advice`：只给 wrong / partial 写，一条明天可落地的动作，只写动作 + 可核查时间预算。
+   **correct 题两律填 null；两字段禁写速度隐喻（秒杀 / 秒出 / 肌肉反射 / 一击必杀）。**
 5. `diagnosis`：按量规第五节逐项填实。`verdict = correct` 时不要整块填 null，
    改填三字段固化卡（myEntry + rule.positive + whyItWorked）。
    `errorCode` 优先复用根目录 characteristic-core.md 第一节断点表里的现有 E 码，确无匹配才新编；
    `syllabusTools` 列本题实际用到的数一考纲内公式/定理（≤5 条，可含 $LaTeX$），wrong/partial 必填、correct 可空。
+   **原理闭环**：`whyDeadEnd` 与 `fork.standardPath` 合起来必须构成「引用条件 → 点名原理 → 推出结论」，
+   验收判据：学员只读这一段、不翻解析就能复现正确动作；只给结果式、跳过"为什么"即格式违规。
+   **去重**：同一式子或事实全 JSON 不得出现在 3 个以上字段；myEntry 写第一落笔，
+   fork.myPath 写错路后续演进，不得互为复读。
 6. 画像与反馈：按量规第一节的状态纪律更新根目录 characteristic.md
    ——新增断点先落 [🟡 观察中]，**不许自行判定已固化**；并在回复学员的报告里
    专门呈现【🌟 本轮战力突破 / 成功改正】与【⚠️ 本轮新增微观断点与补丁】。
@@ -9567,7 +9576,7 @@ fn create_codex_task(question_id: i64, state: State<AppState>) -> Result<CodexTa
 {output}
 
 JSON 必须符合（UTF-8，公式用标准单个反斜杠 LaTeX）。缺 `dimensions` 会退回特征曲线评分，务必带全六维：
-{{"schemaVersion":1,"kind":"analysis","taskId":"{task_id}","questionId":{question_id},"summary":"战术诊断摘要（含 $LaTeX$ 公式）","verdict":"correct|partial|incorrect|uncertain","earliestError":"最早断点行与数学式（含 $LaTeX$）或 null","errorTags":["瞄准失误|概念盲区|战术绕路 三选一"],"secondaryTags":["次要病因，可空数组"],"weaknessTags":["薄弱知识点"],"advice":"下一步修复动作（含 $LaTeX$ 公式）","betterSolution":"考场极速秒杀思路（含 $LaTeX$ 公式）或 null","stepScore":72,"confidence":0.95,"rating":1.00,"dimensions":{{"rigor":{{"score":88,"confidence":0.9,"evidence":"依据草稿步骤（含 $LaTeX$）"}},"computation":{{"score":72,"confidence":0.9,"evidence":"依据草稿步骤（含 $LaTeX$）"}},"modeling":{{"score":65,"confidence":0.9,"evidence":"依据草稿步骤（含 $LaTeX$）"}},"methodUse":{{"score":80,"confidence":0.9,"evidence":"依据草稿步骤（含 $LaTeX$）"}},"speed":{{"score":90,"confidence":0.9,"evidence":"基于实际耗时与基准的比值"}},"strategyInsight":{{"score":58,"confidence":0.8,"evidence":"依据结构识别（含 $LaTeX$）","techniqueLevel":3,"independentDiscovery":"uncertain"}}}},"diagnosis":{{"errorCode":"E-027 或 null","title":"根式换元入口缺失","severity":"L1|L2|L3","myEntry":"学员落笔时的第一个动作（含 $LaTeX$）","whyDeadEnd":"这条路径为什么走不通（讲原理，不讲步骤，含 $LaTeX$）","rule":{{"negation":"看到什么特征时禁止做什么","positive":"该做什么"}},"fork":{{"step":1,"label":"换元选择","myPath":"学员实际走的路径（含 $LaTeX$）","standardPath":"正确路径（含 $LaTeX$）","consequence":"走错之后的后果"}},"acceptance":"一条可判定的验收判据","nextAction":"明天就能做的一条动作","whyItWorked":null,"syllabusTools":["定积分换元公式"]}},"recommendedQuestionIds":[],"recommendationReason":null}}
+{{"schemaVersion":1,"kind":"analysis","taskId":"{task_id}","questionId":{question_id},"summary":"战术诊断摘要（含 $LaTeX$ 公式）","verdict":"correct|partial|incorrect|uncertain","earliestError":"最早断点行与数学式（含 $LaTeX$）或 null","errorTags":["瞄准失误|概念盲区|战术绕路 三选一"],"secondaryTags":["次要病因，可空数组"],"weaknessTags":["薄弱知识点"],"advice":"下一步修复动作（含 $LaTeX$ 公式）或 null","betterSolution":"捷径注（四条件齐才写，否则 null）","stepScore":72,"confidence":0.95,"rating":1.00,"dimensions":{{"rigor":{{"score":88,"confidence":0.9,"evidence":"依据草稿步骤（含 $LaTeX$）"}},"computation":{{"score":72,"confidence":0.9,"evidence":"依据草稿步骤（含 $LaTeX$）"}},"modeling":{{"score":65,"confidence":0.9,"evidence":"依据草稿步骤（含 $LaTeX$）"}},"methodUse":{{"score":80,"confidence":0.9,"evidence":"依据草稿步骤（含 $LaTeX$）"}},"speed":{{"score":90,"confidence":0.9,"evidence":"基于实际耗时与基准的比值"}},"strategyInsight":{{"score":58,"confidence":0.8,"evidence":"依据结构识别（含 $LaTeX$）","techniqueLevel":3,"independentDiscovery":"uncertain"}}}},"diagnosis":{{"errorCode":"E-027 或 null","title":"根式换元入口缺失","severity":"L1|L2|L3","myEntry":"学员落笔时的第一个动作（含 $LaTeX$）","whyDeadEnd":"这条路径为什么走不通（讲原理，不讲步骤，含 $LaTeX$）","rule":{{"negation":"看到什么特征时禁止做什么","positive":"该做什么"}},"fork":{{"step":1,"label":"换元选择","myPath":"学员实际走的路径（含 $LaTeX$）","standardPath":"正确路径（含 $LaTeX$）","consequence":"走错之后的后果"}},"acceptance":"一条可判定的验收判据","nextAction":"明天就能做的一条动作","whyItWorked":null,"syllabusTools":["定积分换元公式"]}},"recommendedQuestionIds":[],"recommendationReason":null}}
 correct 题的 diagnosis 形如 {{"myEntry":"...","rule":{{"positive":"..."}},"whyItWorked":"..."}}，其余字段填 null。
 不要输出 batchAttempts，单题只输出上面的 analysis 对象。不要修改题库源文件。"#,
         stem = q.stem,
@@ -9653,13 +9662,19 @@ fn build_codex_batch_task_prompt(
    `strategyInsight` 另给 `techniqueLevel`（1–5）与 `independentDiscovery`
    （confirmed|uncertain|prompted）。维度对象内不要写 advice。
    `durationSeconds` 原样回填上方题面给出的实际耗时秒数。
-5. `betterSolution`：考场极速秒杀思路（选填速算角色），原解法已最优填 null；
-   `advice`：每题一条可落地的修复动作。
+5. `betterSolution`（捷径注，**默认 null**）：仅当同时满足四条才写——
+   ① 捷径本身比标准动作**更便宜**（一眼的结构观察直接省一段计算；靠 syllabus 外高级结论或更复杂变形
+      才能"快"的不写——那是学员的负资产）；② 数一考纲内考场可用；③ 至少省一个完整步骤；④ 学员这次没用上。
+   `advice`：只给 wrong / partial 写，动作 + 可核查时间预算。**correct 题两律填 null；
+   两字段禁写速度隐喻（秒杀 / 秒出 / 肌肉反射）。**
 6. `diagnosis`：按量规第五节逐项填实。`verdict = correct` 的题不要整块填 null，
    改填三字段固化卡（myEntry + rule.positive + whyItWorked）——画像封盘靠的就是做对题的证据。
    同一入口导致的题必须填同一个 errorCode，复发时间线靠它对齐；
    `errorCode` 优先复用根目录 characteristic-core.md 第一节断点表里的现有 E 码，确无匹配才新编。
    `syllabusTools` 列每题实际用到的数一考纲内公式/定理（≤5 条，可含 $LaTeX$），wrong/partial 必填、correct 可空。
+   **原理闭环**：`whyDeadEnd` 与 `fork.standardPath` 合起来必须构成「引用条件 → 点名原理 → 推出结论」，
+   学员只读这一段不翻解析就能复现动作；只给结果式跳过"为什么"即格式违规。
+   **去重**：同一式子或事实全题 JSON 不得出现在 3 个以上字段，myEntry 与 fork.myPath 不得互为复读。
 7. 画像与反馈：按量规第一节的状态纪律更新根目录 characteristic.md
    ——新增断点先落 [🟡 观察中]，**不许自行判定已固化**；并在回复学员的报告里
    专门呈现【🌟 本轮战力突破 / 成功改正】与【⚠️ 本轮新增微观断点与补丁】。
@@ -9668,7 +9683,7 @@ fn build_codex_batch_task_prompt(
 {output}
 
 JSON 必须符合（UTF-8，公式用标准单个反斜杠 LaTeX）。每个 batchAttempt 还必须包含 rating 和六维 dimensions；`errorTags` 只放 1 个主标签；无法由草稿确认的维度使用 score:null、confidence:0，并明确写 uncertain；`stepScore` 按上面第 3 条填写：
-{{"schemaVersion":1,"kind":"batch","taskId":"{task_id}","summary":"整组批改摘要（含 $LaTeX$ 公式）","errorTags":["错误类型"],"weaknessTags":["薄弱知识"],"confidence":0.9,"recommendedQuestionIds":[],"batchAttempts":[{{"questionId":155,"result":"correct|wrong|uncertain","selfRating":2,"durationSeconds":120,"summary":"简要诊断（含 $LaTeX$ 公式）","verdict":"correct|partial|incorrect|uncertain","earliestError":"最早断点行与数学式（含 $LaTeX$）或 null","errorTags":["瞄准失误|概念盲区|战术绕路 三选一"],"secondaryTags":["次要病因，可空数组"],"weaknessTags":["薄弱知识"],"advice":"下一步修复动作（含 $LaTeX$ 公式）","betterSolution":"考场极速秒杀思路（含 $LaTeX$ 公式）或 null","stepScore":72,"confidence":0.95,"rating":1.00,"dimensions":{{"rigor":{{"score":88,"confidence":0.9,"evidence":"依据草稿步骤（含 $LaTeX$）"}},"computation":{{"score":72,"confidence":0.9,"evidence":"依据草稿步骤（含 $LaTeX$）"}},"modeling":{{"score":65,"confidence":0.9,"evidence":"依据草稿步骤（含 $LaTeX$）"}},"methodUse":{{"score":80,"confidence":0.9,"evidence":"依据草稿步骤（含 $LaTeX$）"}},"speed":{{"score":90,"confidence":0.9,"evidence":"基于实际耗时与基准的比值"}},"strategyInsight":{{"score":58,"confidence":0.8,"evidence":"依据结构识别（含 $LaTeX$）","techniqueLevel":3,"independentDiscovery":"uncertain"}}}},"diagnosis":{{"errorCode":"E-027 或 null","title":"断点名","severity":"L1|L2|L3","myEntry":"学员落笔时的第一个动作（含 $LaTeX$）","whyDeadEnd":"这条路径为什么走不通（讲原理，不讲步骤）","rule":{{"negation":"看到什么特征时禁止做什么","positive":"该做什么"}},"fork":{{"step":1,"label":"换元选择","myPath":"学员实际走的路径（含 $LaTeX$）","standardPath":"正确路径（含 $LaTeX$）","consequence":"走错之后的后果"}},"acceptance":"一条可判定的验收判据","nextAction":"明天就能做的一条动作","whyItWorked":null,"syllabusTools":["定积分换元公式"]}}}}]}}
+{{"schemaVersion":1,"kind":"batch","taskId":"{task_id}","summary":"整组批改摘要（含 $LaTeX$ 公式）","errorTags":["错误类型"],"weaknessTags":["薄弱知识"],"confidence":0.9,"recommendedQuestionIds":[],"batchAttempts":[{{"questionId":155,"result":"correct|wrong|uncertain","selfRating":2,"durationSeconds":120,"summary":"简要诊断（含 $LaTeX$ 公式）","verdict":"correct|partial|incorrect|uncertain","earliestError":"最早断点行与数学式（含 $LaTeX$）或 null","errorTags":["瞄准失误|概念盲区|战术绕路 三选一"],"secondaryTags":["次要病因，可空数组"],"weaknessTags":["薄弱知识"],"advice":"下一步修复动作（含 $LaTeX$ 公式）或 null","betterSolution":"捷径注（四条件齐才写，否则 null）","stepScore":72,"confidence":0.95,"rating":1.00,"dimensions":{{"rigor":{{"score":88,"confidence":0.9,"evidence":"依据草稿步骤（含 $LaTeX$）"}},"computation":{{"score":72,"confidence":0.9,"evidence":"依据草稿步骤（含 $LaTeX$）"}},"modeling":{{"score":65,"confidence":0.9,"evidence":"依据草稿步骤（含 $LaTeX$）"}},"methodUse":{{"score":80,"confidence":0.9,"evidence":"依据草稿步骤（含 $LaTeX$）"}},"speed":{{"score":90,"confidence":0.9,"evidence":"基于实际耗时与基准的比值"}},"strategyInsight":{{"score":58,"confidence":0.8,"evidence":"依据结构识别（含 $LaTeX$）","techniqueLevel":3,"independentDiscovery":"uncertain"}}}},"diagnosis":{{"errorCode":"E-027 或 null","title":"断点名","severity":"L1|L2|L3","myEntry":"学员落笔时的第一个动作（含 $LaTeX$）","whyDeadEnd":"这条路径为什么走不通（讲原理，不讲步骤）","rule":{{"negation":"看到什么特征时禁止做什么","positive":"该做什么"}},"fork":{{"step":1,"label":"换元选择","myPath":"学员实际走的路径（含 $LaTeX$）","standardPath":"正确路径（含 $LaTeX$）","consequence":"走错之后的后果"}},"acceptance":"一条可判定的验收判据","nextAction":"明天就能做的一条动作","whyItWorked":null,"syllabusTools":["定积分换元公式"]}}}}]}}
 correct 题的 diagnosis 形如 {{"myEntry":"...","rule":{{"positive":"..."}},"whyItWorked":"..."}}，其余字段填 null。
 示例中的分数仅用于展示字段类型，不要照抄。不要修改题库源文件。"#,
         count = questions.len(),

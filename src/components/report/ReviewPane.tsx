@@ -164,8 +164,23 @@ export function ReviewPane({
   const reviewLabel = reviewDateLabel(meta?.nextReviewAt ?? null)
   const actionLabel = meta?.nextAction ? NEXT_ACTION_LABELS[meta.nextAction] ?? null : null
 
-  const categoryShort =
-    question?.categoryPath?.split('/').pop()?.trim() || grade.errorTags?.[0] || '本题'
+  /* 大标题优先用断点名（错题诊断自带），没有再取分类末两级拼接——
+     单末级叶子（"连续""初等函数"）对学员没有信息量 */
+  const categorySegs = (question?.categoryPath ?? '')
+    .split('/')
+    .map((seg) => seg.trim())
+    .filter(Boolean)
+  const categoryLabel =
+    categorySegs.length >= 2
+      ? categorySegs.slice(-2).join(' · ')
+      : categorySegs[0] || grade.errorTags?.[0] || '本题'
+  const headline = flow.title ?? categoryLabel
+
+  /* 契约规定 myEntry=第一落笔、myPath=错路演进，但批改侧常写成同一句——重复即折叠 */
+  const forkMyPath =
+    flow.fork?.myPath && flow.fork.myPath.trim() !== flow.myEntry?.trim()
+      ? flow.fork.myPath
+      : null
 
   /* 节奏胶囊沿用 ui.css 的 .pace-pill：≤60% 预算为快，超预算为超时 */
   const paceRatio = benchmarkSec > 0 ? durationSec / benchmarkSec : 0
@@ -184,7 +199,8 @@ export function ReviewPane({
 
   const standardPath =
     question?.explanation || flow.fork?.standardPath || grade.betterSolution || null
-  const shortcut = grade.betterSolution || grade.advice || null
+  /* 捷径注只认 betterSolution——advice 是行动指令不是走法，混进来会把"明日动作"复读一遍 */
+  const shortcut = grade.betterSolution ?? null
 
   /* 有 fork 时也不能只看 fork.standardPath：它常常为空，而 question.explanation
      是有内容的（题库 6125 题 100% 有正解文本）。丢掉回退就会误显示「未提供标准路径」。 */
@@ -261,7 +277,7 @@ export function ReviewPane({
             </span>
           ) : null}
         </div>
-        <h1 className="rp-h1">{categoryShort}</h1>
+        <h1 className="rp-h1">{headline}</h1>
         {question?.stem ? (
           <div className="rp-stem">
             <MathText value={question.stem} />
@@ -436,11 +452,13 @@ export function ReviewPane({
                       <span className="rp-fork-sn">
                         我的考场演进 · 第 {flow.fork.step} 步 {flow.fork.label}
                       </span>
-                      {flow.fork.myPath ? (
-                        <MathText value={flow.fork.myPath} />
+                      {forkMyPath ? (
+                        <MathText value={forkMyPath} />
                       ) : (
                         <span className="rp-quiet">
-                          考场演算在此受阻中断，未能完成最终化简（详见上方断点）。
+                          {flow.fork?.myPath
+                            ? '错路起点即上方落笔入口，不再复读。'
+                            : '考场演算在此受阻中断，未能完成最终化简（详见上方断点）。'}
                         </span>
                       )}
                     </div>
@@ -472,7 +490,7 @@ export function ReviewPane({
 
                 {shortcut && shortcut !== standardPath ? (
                   <div className="rp-fork-extra">
-                    <span className="rp-fork-sn">选填速算</span>
+                    <span className="rp-fork-sn">捷径注 · 比正解更省的一眼招</span>
                     <MathText value={shortcut} />
                   </div>
                 ) : null}

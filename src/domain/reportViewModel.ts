@@ -372,7 +372,13 @@ function inferSeverity(grade: QuestionGrade): BreakpointSeverity | null {
 
 export function buildGradeFlow(grade: QuestionGrade): GradeFlow {
   const diagnosis = grade.diagnosis ?? null
-  const killLine = grade.earliestError || grade.feedback || null
+  /* 对题没有断点：killLine 不得回退到 feedback/summary，否则红框里装的是表扬文案。
+     旧数据里 correct 题也常带 feedback 长文，这里按结果硬闸。 */
+  const isCorrect =
+    grade.verdict === 'correct' ||
+    grade.result === 'correct' ||
+    (grade.verdict == null && grade.result == null && grade.correct)
+  const killLine = grade.earliestError || (isCorrect ? null : grade.feedback || null)
   const rawRule = diagnosis?.rule
   const rule: { negation: string; positive: string } | null =
     rawRule && (rawRule.negation || rawRule.positive)
@@ -380,7 +386,7 @@ export function buildGradeFlow(grade: QuestionGrade): GradeFlow {
       : null
 
   // 老报告没有 fork 时，用已有的 earliestError / betterSolution 重排成左右对照，
-  // 只是换个呈现方式，不新增任何内容。
+  // 只是换个呈现方式，不新增任何内容。对题不伪造分叉——没有错路就没有对照。
   const rawFork = diagnosis?.fork
   const fork = rawFork
     ? {
@@ -390,7 +396,7 @@ export function buildGradeFlow(grade: QuestionGrade): GradeFlow {
         standardPath: rawFork.standardPath ?? grade.betterSolution ?? null,
         consequence: rawFork.consequence ?? null,
       }
-    : killLine || grade.betterSolution
+    : !isCorrect && (killLine || grade.betterSolution)
       ? {
           step: 1,
           label: '路径选择',
@@ -415,7 +421,8 @@ export function buildGradeFlow(grade: QuestionGrade): GradeFlow {
     rule,
     fork,
     acceptance: diagnosis?.acceptance ?? null,
-    nextAction: diagnosis?.nextAction ?? grade.advice ?? null,
+    /* 对题不给"明日动作"：旧契约里 correct 的 advice 是"继续保持…"式空话，占位不产出 */
+    nextAction: diagnosis?.nextAction ?? (isCorrect ? null : grade.advice ?? null),
     whyItWorked: diagnosis?.whyItWorked ?? null,
     syllabusTools,
   }

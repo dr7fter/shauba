@@ -362,7 +362,14 @@ export function ReportWindow({
           index,
           questionId: grade.questionId,
           outcome: gradeOutcomeKey(grade),
-          categoryShort: q?.categoryPath?.split('/').pop()?.trim() ?? '未分类',
+          /* 末两级拼接：单叶子"连续""初等函数"没信息量，"协方差 · 连续"才有 */
+          categoryShort: (() => {
+            const segs = (q?.categoryPath ?? '')
+              .split('/')
+              .map((seg) => seg.trim())
+              .filter(Boolean)
+            return segs.length >= 2 ? segs.slice(-2).join(' · ') : segs[0] || '未分类'
+          })(),
           durationSec:
             typeof grade.duration === 'number' && grade.duration > 0
               ? grade.duration

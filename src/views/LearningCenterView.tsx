@@ -3,6 +3,8 @@ import {
   ArrowRight,
   BookOpenCheck,
   Check,
+  ChevronDown,
+  ChevronUp,
   ClipboardCopy,
   Clock3,
   Edit3,
@@ -908,6 +910,9 @@ export function LearningCenterView({
   const [failedInboxItems, setFailedInboxItems] = useState<FailedInboxItem[]>([])
   const [selectedWorkbenchBatch, setSelectedWorkbenchBatch] = useState<InboxItem | null>(null)
   const [selectedResultBatch, setSelectedResultBatch] = useState<InboxItem | null>(null)
+  const [showAllAiRecommendations, setShowAllAiRecommendations] = useState(false)
+  const [showAllCompletedRecommendations, setShowAllCompletedRecommendations] = useState(false)
+  const [expandedBatchIds, setExpandedBatchIds] = useState<Record<string, boolean>>({})
 
   const aiTemplates = [
     '漏洞修复：优先处理最近高信心错误，安排一题诊断和一题验证。',
@@ -933,20 +938,16 @@ export function LearningCenterView({
           getLearningCenterSnapshot(),
         ])
         setAiRecommendations(
-          inbox
-            .filter((item) => {
-              if (item.kind !== 'recommendation' || (item.recommendedQuestionIds?.length ?? 0) === 0) return false
-              if (item.status === 'dismissed') return false
-              return !item.recommendationBatchStatus || item.recommendationBatchStatus === 'pending'
-            })
-            .slice(0, 4)
+          inbox.filter((item) => {
+            if (item.kind !== 'recommendation' || (item.recommendedQuestionIds?.length ?? 0) === 0) return false
+            if (item.status === 'dismissed') return false
+            return !item.recommendationBatchStatus || item.recommendationBatchStatus === 'pending'
+          })
         )
         setAiCompletedRecommendations(
-          inbox
-            .filter(
-              (item) => item.kind === 'recommendation' && item.recommendationBatchStatus === 'completed'
-            )
-            .slice(0, 4)
+          inbox.filter(
+            (item) => item.kind === 'recommendation' && item.recommendationBatchStatus === 'completed'
+          )
         )
         setFailedInboxItems(failed)
         setAvailableCategories(cats.filter((c) => c.questionCount > 0 || c.depth === 0))
@@ -1183,37 +1184,127 @@ export function LearningCenterView({
                   <span className="learning-eyebrow">AI 规划题组</span>
                   <h2 id="learning-ai-return-title">待采用的自适应题组 ({aiRecommendations.length})</h2>
                 </div>
-                <span className="learning-muted">已按题号、候选范围与考法角色严格校验</span>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                  <span className="learning-muted">已按题号、候选范围与考法角色严格校验</span>
+                  {aiRecommendations.length > 4 && (
+                    <button
+                      type="button"
+                      className="learning-secondary-button compact"
+                      onClick={() => setShowAllAiRecommendations((prev) => !prev)}
+                    >
+                      {showAllAiRecommendations ? (
+                        <>
+                          <ChevronUp size={13} /> 收起
+                        </>
+                      ) : (
+                        <>
+                          <ChevronDown size={13} /> 展开全部 ({aiRecommendations.length})
+                        </>
+                      )}
+                    </button>
+                  )}
+                </div>
               </div>
               <div className="learning-ai-return-list">
-                {aiRecommendations.map((item) => (
-                  <article className="learning-ai-return-item" key={item.taskId}>
-                    <div>
-                      <strong>{item.goal ?? item.summary}</strong>
-                      <p>{item.recommendationReason ?? 'AI 未提供推荐理由。'}</p>
-                      <small>
-                        {(item.recommendationOrder?.length ?? item.recommendedQuestionIds?.length) ?? 0} 题 · 约 {item.estimatedMinutes ?? '—'} 分钟 · {item.noveltyPlan?.join('、') || '考法覆盖待查看'}
-                      </small>
-                    </div>
-                    <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                      <button
-                        type="button"
-                        className="learning-secondary-button compact"
-                        onClick={() => setSelectedWorkbenchBatch(item)}
-                      >
-                        <Edit3 size={13} /> 预览 / 编辑
-                      </button>
-                      <button
-                        type="button"
-                        className="learning-primary-button compact"
-                        onClick={() => setSelectedWorkbenchBatch(item)}
-                      >
-                        <Zap size={14} /> 查看并开练
-                      </button>
-                    </div>
-                  </article>
-                ))}
+                {(showAllAiRecommendations ? aiRecommendations : aiRecommendations.slice(0, 4)).map((item) => {
+                  const qids = item.recommendationOrder?.length ? item.recommendationOrder : (item.recommendedQuestionIds ?? [])
+                  const isExpanded = Boolean(expandedBatchIds[item.taskId])
+                  return (
+                    <article className="learning-ai-return-item" key={item.taskId}>
+                      <div>
+                        <strong>{item.goal ?? item.summary}</strong>
+                        <p>{item.recommendationReason ?? 'AI 未提供推荐理由。'}</p>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
+                          <small>
+                            {qids.length} 题 · 约 {item.estimatedMinutes ?? '—'} 分钟 · {item.noveltyPlan?.join('、') || '考法覆盖待查看'}
+                          </small>
+                          {qids.length > 0 && (
+                            <button
+                              type="button"
+                              className="learning-link-button"
+                              style={{ fontSize: 'var(--fs-xs)', color: 'var(--muted)', cursor: 'pointer' }}
+                              onClick={() =>
+                                setExpandedBatchIds((prev) => ({
+                                  ...prev,
+                                  [item.taskId]: !prev[item.taskId],
+                                }))
+                              }
+                            >
+                              {isExpanded ? (
+                                <>
+                                  <ChevronUp size={12} /> 收起题号
+                                </>
+                              ) : (
+                                <>
+                                  <ChevronDown size={12} /> 查看题号 ({qids.length} 题)
+                                </>
+                              )}
+                            </button>
+                          )}
+                        </div>
+                        {isExpanded && qids.length > 0 && (
+                          <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px', marginTop: '6px' }}>
+                            {qids.map((qid, idx) => {
+                              const role = item.questionRoles?.[String(qid)]
+                              return (
+                                <span
+                                  key={qid}
+                                  className="learning-track-pill"
+                                  style={{
+                                    fontSize: '11px',
+                                    padding: '2px 7px',
+                                    background: 'var(--sunken)',
+                                    color: 'var(--ink)',
+                                    border: '1px solid var(--line)',
+                                  }}
+                                >
+                                  #{idx + 1} · 题号 #{qid}{role ? ` (${role})` : ''}
+                                </span>
+                              )
+                            })}
+                          </div>
+                        )}
+                      </div>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                        <button
+                          type="button"
+                          className="learning-secondary-button compact"
+                          onClick={() => setSelectedWorkbenchBatch(item)}
+                        >
+                          <Edit3 size={13} /> 预览 / 编辑
+                        </button>
+                        <button
+                          type="button"
+                          className="learning-primary-button compact"
+                          onClick={() => setSelectedWorkbenchBatch(item)}
+                        >
+                          <Zap size={14} /> 查看并开练
+                        </button>
+                      </div>
+                    </article>
+                  )
+                })}
               </div>
+              {aiRecommendations.length > 4 && (
+                <div style={{ display: 'flex', justifyContent: 'center', marginTop: '12px' }}>
+                  <button
+                    type="button"
+                    className="learning-secondary-button"
+                    style={{ width: '100%', maxWidth: '360px', justifyContent: 'center', padding: '8px 16px' }}
+                    onClick={() => setShowAllAiRecommendations((prev) => !prev)}
+                  >
+                    {showAllAiRecommendations ? (
+                      <>
+                        <ChevronUp size={14} /> 收起多余题组 (显示前 4 个)
+                      </>
+                    ) : (
+                      <>
+                        <ChevronDown size={14} /> 展开全部题组 (查看其余 {aiRecommendations.length - 4} 个待采用)
+                      </>
+                    )}
+                  </button>
+                </div>
+              )}
             </section>
           )}
 
@@ -1223,12 +1314,31 @@ export function LearningCenterView({
               <div className="learning-section-heading">
                 <div>
                   <span className="learning-eyebrow">训练结果</span>
-                  <h2 id="learning-ai-complete-title">最近完成的 AI 题组</h2>
+                  <h2 id="learning-ai-complete-title">最近完成的 AI 题组 ({aiCompletedRecommendations.length})</h2>
                 </div>
-                <span className="learning-muted">已写入结构化事实库，供下一轮规划参考</span>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                  <span className="learning-muted">已写入结构化事实库，供下一轮规划参考</span>
+                  {aiCompletedRecommendations.length > 4 && (
+                    <button
+                      type="button"
+                      className="learning-secondary-button compact"
+                      onClick={() => setShowAllCompletedRecommendations((prev) => !prev)}
+                    >
+                      {showAllCompletedRecommendations ? (
+                        <>
+                          <ChevronUp size={13} /> 收起
+                        </>
+                      ) : (
+                        <>
+                          <ChevronDown size={13} /> 展开全部 ({aiCompletedRecommendations.length})
+                        </>
+                      )}
+                    </button>
+                  )}
+                </div>
               </div>
               <div className="learning-ai-return-list">
-                {aiCompletedRecommendations.map((item) => (
+                {(showAllCompletedRecommendations ? aiCompletedRecommendations : aiCompletedRecommendations.slice(0, 4)).map((item) => (
                   <article className="learning-ai-return-item" key={item.taskId}>
                     <div>
                       <strong>{item.goal ?? item.summary}</strong>
@@ -1259,6 +1369,26 @@ export function LearningCenterView({
                   </article>
                 ))}
               </div>
+              {aiCompletedRecommendations.length > 4 && (
+                <div style={{ display: 'flex', justifyContent: 'center', marginTop: '12px' }}>
+                  <button
+                    type="button"
+                    className="learning-secondary-button"
+                    style={{ width: '100%', maxWidth: '360px', justifyContent: 'center', padding: '8px 16px' }}
+                    onClick={() => setShowAllCompletedRecommendations((prev) => !prev)}
+                  >
+                    {showAllCompletedRecommendations ? (
+                      <>
+                        <ChevronUp size={14} /> 收起 (显示前 4 个)
+                      </>
+                    ) : (
+                      <>
+                        <ChevronDown size={14} /> 展开全部完成记录 (查看其余 {aiCompletedRecommendations.length - 4} 个)
+                      </>
+                    )}
+                  </button>
+                </div>
+              )}
             </section>
           )}
 

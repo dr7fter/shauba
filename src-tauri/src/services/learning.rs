@@ -668,6 +668,11 @@ fn project_pending_evidence(
 /// Retries only raw, core-eligible evidence. This is safe to call during startup:
 /// each successful retry atomically flips its marker and rebuilds the category once.
 /// A corrupted legacy row must not create queue-head blocking for later evidence.
+///
+/// 重放按 category_key 分组：同批同考点 N 条证据只做一次全量投影重建。此前逐条
+/// rebuild（每条拉全类目有效证据重算），批改批内成本是 O(批大小×类目证据量)，
+/// 12 题同考点 = 同一投影重建 12 次。分组后语义不变：某组重建失败，组内全部标记
+/// 回滚为待投影并逐条记审计，下一轮整组幂等重试。
 pub fn retry_pending_projections(conn: &Connection) -> rusqlite::Result<usize> {
     let mut statement = conn.prepare(
         "SELECT evidence_key,category_key FROM learning_evidence
@@ -681,37 +686,85 @@ pub fn retry_pending_projections(conn: &Connection) -> rusqlite::Result<usize> {
         .collect::<Result<Vec<_>, _>>()?;
     drop(statement);
 
-    let mut projected = 0;
+    // 保持首次出现顺序分组（不引入 HashMap，重放顺序对语义无影响但保持确定性便于测试）
+    let mut groups: Vec<(String, Vec<String>)> = Vec::new();
     for (evidence_key, category_key) in pending {
-        match project_pending_evidence(conn, &evidence_key, &category_key) {
-            Ok(()) => {
-                projected += 1;
+        match groups.iter_mut().find(|(c, _)| *c == category_key) {
+            Some((_, keys)) => keys.push(evidence_key),
+            None => groups.push((category_key, vec![evidence_key])),
+        }
+    }
+
+    let mut projected = 0;
+    for (category_key, keys) in groups {
+        match project_pending_group(conn, &category_key, &keys) {
+            Ok(count) => {
+                projected += count;
                 let now = Local::now().to_rfc3339();
-                conn.execute(
-                    "UPDATE learning_projection_failures
-                     SET resolved=1,resolved_at=?1,last_failed_at=?1
-                     WHERE evidence_key=?2 AND resolved=0",
-                    params![now, evidence_key],
-                )?;
+                for evidence_key in &keys {
+                    conn.execute(
+                        "UPDATE learning_projection_failures
+                         SET resolved=1,resolved_at=?1,last_failed_at=?1
+                         WHERE evidence_key=?2 AND resolved=0",
+                        params![now, evidence_key],
+                    )?;
+                }
             }
             Err(error) => {
                 let now = Local::now().to_rfc3339();
-                conn.execute(
-                    "INSERT INTO learning_projection_failures(
-                       evidence_key,category_key,attempts,last_error,first_failed_at,last_failed_at,resolved,resolved_at
-                     ) VALUES(?1,?2,1,?3,?4,?4,0,NULL)
-                     ON CONFLICT(evidence_key) DO UPDATE SET
-                       category_key=excluded.category_key,
-                       attempts=learning_projection_failures.attempts+1,
-                       last_error=excluded.last_error,
-                       last_failed_at=excluded.last_failed_at,
-                       resolved=0,resolved_at=NULL",
-                    params![evidence_key, category_key, error.to_string(), now],
-                )?;
+                for evidence_key in &keys {
+                    conn.execute(
+                        "INSERT INTO learning_projection_failures(
+                           evidence_key,category_key,attempts,last_error,first_failed_at,last_failed_at,resolved,resolved_at
+                         ) VALUES(?1,?2,1,?3,?4,?4,0,NULL)
+                         ON CONFLICT(evidence_key) DO UPDATE SET
+                           category_key=excluded.category_key,
+                           attempts=learning_projection_failures.attempts+1,
+                           last_error=excluded.last_error,
+                           last_failed_at=excluded.last_failed_at,
+                           resolved=0,resolved_at=NULL",
+                        params![evidence_key, category_key, error.to_string(), now],
+                    )?;
+                }
             }
         }
     }
     Ok(projected)
+}
+
+fn project_pending_group(
+    conn: &Connection,
+    category_key: &str,
+    keys: &[String],
+) -> rusqlite::Result<usize> {
+    conn.execute_batch("SAVEPOINT learning_projection_group")?;
+    let result = (|| -> rusqlite::Result<usize> {
+        let mut changed = 0;
+        for evidence_key in keys {
+            changed += conn.execute(
+                "UPDATE learning_evidence SET projection_applied=1
+                 WHERE evidence_key=?1 AND projection_applied=0",
+                [evidence_key.as_str()],
+            )?;
+        }
+        if changed == 0 {
+            return Ok(0);
+        }
+        rebuild_skill_projection(conn, category_key)?;
+        Ok(changed)
+    })();
+    match result {
+        Ok(count) => {
+            conn.execute_batch("RELEASE learning_projection_group")?;
+            Ok(count)
+        }
+        Err(error) => {
+            let _ = conn.execute_batch(
+                "ROLLBACK TO learning_projection_group; RELEASE learning_projection_group",
+            );
+            Err(error)
+        }
+    }
 }
 #[derive(Debug)]
 struct EffectiveEvidence {
@@ -1423,6 +1476,110 @@ mod tests {
             is_delayed_review: false,
             created_at: "2026-08-20T10:00:00+08:00".into(),
         }
+    }
+
+    #[test]
+    fn retry_pending_projections_groups_rebuilds_by_category() {
+        let conn = conn();
+        let inputs = vec![
+            diagnosis("SB-G1", 51, Some(51), "correct"),
+            diagnosis("SB-G2", 52, Some(52), "incorrect"),
+            diagnosis("SB-G3", 53, Some(53), "correct"),
+            {
+                let mut d = diagnosis("SB-G4", 54, Some(54), "correct");
+                d.category_key = "线性代数/矩阵".into();
+                d
+            },
+        ];
+        for input in inputs.iter() {
+            record_codex_adjudication_raw(
+                &conn,
+                CodexAdjudicationInput {
+                    diagnosis: input.clone(),
+                    self_rating: 3,
+                    mode: "practice".into(),
+                    occurred_at: "2026-08-20T10:00:00+08:00".into(),
+                },
+            )
+            .unwrap();
+        }
+        let pending_before: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM learning_evidence WHERE projection_applied=0",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(pending_before, 4);
+
+        assert_eq!(retry_pending_projections(&conn).unwrap(), 4);
+
+        // 分组重放后：两个类目各一份投影，证据计数 3 + 1
+        let (mastery_a, count_a): (f64, i64) = conn
+            .query_row(
+                "SELECT mastery,evidence_count FROM skill_states WHERE category_key='高等数学/定积分'",
+                [],
+                |r| Ok((r.get(0)?, r.get(1)?)),
+            )
+            .unwrap();
+        assert!(mastery_a > 0.0);
+        assert_eq!(count_a, 3);
+        let count_b: i64 = conn
+            .query_row(
+                "SELECT evidence_count FROM skill_states WHERE category_key='线性代数/矩阵'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(count_b, 1);
+        let pending_after: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM learning_evidence WHERE projection_applied=0",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(pending_after, 0);
+    }
+
+    #[test]
+    fn group_projection_failure_rolls_back_whole_group_and_audits_every_key() {
+        let conn = conn();
+        for (task, qid) in [("SB-F1", 61_i64), ("SB-F2", 62)] {
+            record_codex_adjudication_raw(
+                &conn,
+                CodexAdjudicationInput {
+                    diagnosis: diagnosis(task, qid, Some(qid), "correct"),
+                    self_rating: 3,
+                    mode: "practice".into(),
+                    occurred_at: "2026-08-20T10:00:00+08:00".into(),
+                },
+            )
+            .unwrap();
+        }
+        conn.execute_batch(
+            "CREATE TRIGGER fail_skill_state BEFORE INSERT ON skill_states
+             BEGIN SELECT RAISE(ABORT,'forced projection fault'); END;",
+        )
+        .unwrap();
+        assert_eq!(retry_pending_projections(&conn).unwrap(), 0);
+        // 整组标记回滚为待投影，不留下"半组已投影"的中间态
+        let pending: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM learning_evidence WHERE projection_applied=0",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(pending, 2);
+        let failures: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM learning_projection_failures WHERE resolved=0",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(failures, 2);
     }
 
     #[test]

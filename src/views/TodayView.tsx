@@ -58,7 +58,6 @@ import {
 } from '../domain/evidence'
 import {
   csRankForElo,
-  csRatingAccent,
   formatElapsed,
   formatTimer,
   getPaceEvaluation,
@@ -66,7 +65,8 @@ import {
   normalizeAnswer,
 } from '../utils'
 import { questionRoleMeta } from '../utils/questionRole'
-import { CountUp } from '../components/ui/CountUp'
+import { AchievementCardOverlay } from '../components/AchievementCardOverlay'
+import { EloFlashBanner } from '../components/EloFlashBanner'
 import { HighlightMoment } from '../components/HighlightMoment'
 import {
   areSameCodexBatchQuestionIds,
@@ -217,6 +217,8 @@ export function TodayView({
   const [sessionTotalCount, setSessionTotalCount] = useState(0)
   const [sessionCorrectCount, setSessionCorrectCount] = useState(0)
   const [showAchievementCard, setShowAchievementCard] = useState(false)
+  // memo 隔离的前提：传给 AchievementCardOverlay 的回调引用稳定
+  const hideAchievementCard = useCallback(() => setShowAchievementCard(false), [])
   const [eloFlash, setEloFlash] = useState<{
     delta: number
     current: number
@@ -2495,247 +2497,18 @@ export function TodayView({
 
       {/* 答题后成就卡片 */}
       <AnimatePresence>
-          {eloFlash && (
-            <motion.div
-              key="elo-flash"
-              initial={{ opacity: 0, y: -16 }}
-              animate={{ opacity: 1, y: 0 }}
-              exit={{ opacity: 0, y: -10 }}
-              style={{
-                position: 'fixed',
-                top: 18,
-                right: 18,
-                zIndex: 130,
-                display: 'flex',
-                alignItems: 'center',
-                gap: 10,
-                padding: '8px 14px',
-                borderRadius: 12,
-                background: 'rgba(22, 26, 34, 0.92)',
-                color: '#F5F3EE',
-                boxShadow: '0 10px 28px rgba(15, 18, 25, 0.35)',
-                pointerEvents: 'none',
-              }}
-            >
-              <span style={{ fontSize: 13, color: eloFlash.rankColor, fontWeight: 700 }}>
-                {eloFlash.rankName}
-              </span>
-              <span style={{ fontSize: 18, fontWeight: 800, fontVariantNumeric: 'tabular-nums' }}>
-                <CountUp value={eloFlash.current} />
-              </span>
-              <span
-                style={{
-                  fontSize: 14,
-                  fontWeight: 800,
-                  fontVariantNumeric: 'tabular-nums',
-                  color: eloFlash.delta >= 0 ? '#4CC38A' : '#E5534B',
-                }}
-              >
-                {eloFlash.delta >= 0 ? `+${Math.round(eloFlash.delta)}` : Math.round(eloFlash.delta)}
-              </span>
-              {eloFlash.rating != null && (
-                <>
-                  <span style={{ width: 1, height: 16, background: 'rgba(245, 243, 238, 0.25)' }} />
-                  <span style={{ fontSize: 12, color: '#9BA3AF' }}>Rating</span>
-                  <span
-                    style={{
-                      fontSize: 15,
-                      fontWeight: 800,
-                      fontVariantNumeric: 'tabular-nums',
-                      color: '#F5F3EE',
-                    }}
-                  >
-                    <CountUp value={eloFlash.rating} decimals={2} animateOnMount />
-                  </span>
-                  {(() => {
-                    const accent = csRatingAccent(eloFlash.rating)
-                    if (accent === 'donk') return <span title="DONK 级超神秒杀">👑</span>
-                    if (accent === 'clutch') return <span title="Clutch 级高光">⚡</span>
-                    return null
-                  })()}
-                </>
-              )}
-              {(() => {
-                // HEATING 火焰四档（当日连对 3/5/8/12），12 档即 ZYWOO PLAY 稳定之神
-                const heat = eloFlash.streakToday ?? 0
-                if (heat < 3) return null
-                const tier = heat >= 12 ? 4 : heat >= 8 ? 3 : heat >= 5 ? 2 : 1
-                const flameColor = heat >= 12 ? '#C297FF' : heat >= 8 ? '#E5534B' : '#E87722'
-                const heatTitle = heat >= 12
-                  ? `当日连对 ${heat} 题 · ZywOo 级稳定输出`
-                  : `当日连对 ${heat} 题`
-                return (
-                  <span
-                    style={{
-                      display: 'inline-flex',
-                      alignItems: 'center',
-                      gap: 2,
-                      fontSize: 12 + tier,
-                      color: flameColor,
-                      fontWeight: 700,
-                    }}
-                    title={heatTitle}
-                  >
-                    <Flame size={13 + tier} />{heat}
-                  </span>
-                )
-              })()}
-              {eloFlash.streak <= -3 && (
-                <span style={{ display: 'inline-flex', alignItems: 'center', gap: 2, fontSize: 12, color: '#6B7280', fontWeight: 700 }} title={`连败 ${-eloFlash.streak} 场`}>
-                  ❄{-eloFlash.streak}
-                </span>
-              )}
-              {eloFlash.protectionLeft > 0 && (
-                <span style={{ display: 'inline-flex', alignItems: 'center', gap: 2, fontSize: 12, color: '#4CC38A' }} title={`晋级保护剩余 ${eloFlash.protectionLeft} 场`}>
-                  <ShieldCheck size={13} />
-                </span>
-              )}
-              {!eloFlash.calibrated && (
-                <span style={{ fontSize: 11, color: '#9CA3AF' }}>定级 {Math.min(eloFlash.settlements, 10)}/10</span>
-              )}
-            </motion.div>
-          )}
+          {eloFlash && <EloFlashBanner key="elo-flash" flash={eloFlash} />}
         {scoreboard && <SessionScoreboardModal scoreboard={scoreboard} onClose={() => setScoreboard(null)} />}
         {highlight && (
           <HighlightMoment highlight={highlight} onDone={() => setHighlight(null)} />
         )}
         {showAchievementCard && achievementData && (
-          <motion.div
-            className="achievement-card-overlay"
-            initial={{ opacity: 0 }}
-            animate={{ opacity: 1 }}
-            exit={{ opacity: 0 }}
-            onClick={() => setShowAchievementCard(false)}
-          >
-            <motion.div
-              className={`achievement-card ${
-                achievementData.milestone ? 'milestone-celebrate' : ''
-              }`}
-              initial={{ opacity: 0, scale: 0.9, y: 20 }}
-              animate={{ opacity: 1, scale: 1, y: 0 }}
-              exit={{ opacity: 0, scale: 0.95, y: 10 }}
-              transition={{ type: 'spring', damping: 25, stiffness: 300 }}
-              onClick={(e) => e.stopPropagation()}
-            >
-              <div
-                className={`achievement-icon ${
-                  achievementData.correct ? 'correct' : 'wrong'
-                }`}
-              >
-                {achievementData.correct ? <Check size={32} /> : <X size={32} />}
-              </div>
-              <h3>{achievementData.correct ? '✅ 正确！' : '❌ 错误'}</h3>
-              <p className="achievement-time">
-                用时 {formatTimer(achievementData.duration)}
-              </p>
-
-              {achievementData.milestone && (
-                <div className="milestone-banner">
-                  🎉 达成里程碑：完成 {achievementData.milestone} 题！
-                </div>
-              )}
-
-              {achievementData.goalReached && (
-                <div className="milestone-banner">
-                  🎯 今日目标达成，可以收工——明天的修复动作已在队列里等你
-                </div>
-              )}
-              {achievementData.goalReached && tomorrowPreview && (
-                <p style={{ fontSize: 12.5, color: 'var(--muted)', margin: '6px 0 0' }}>
-                  明天第一件事：{tomorrowPreview.reason}
-                </p>
-              )}
-
-              <div className="achievement-stats">
-                <div className="achievement-stat">
-                  <span className="stat-label">今日进度</span>
-                  <div className="stat-value stat-animate">
-                    <strong>{achievementData.todayProgress.done}</strong>
-                    <small>/ {achievementData.todayProgress.target} 题</small>
-                  </div>
-                  {achievementData.yesterdayDone !== undefined &&
-                    achievementData.todayProgress.done >
-                      achievementData.yesterdayDone && (
-                      <div className="data-growth positive">
-                        <svg width="12" height="12" viewBox="0 0 12 12" fill="none">
-                          <path
-                            d="M6 2L6 10M6 2L3 5M6 2L9 5"
-                            stroke="currentColor"
-                            strokeWidth="1.5"
-                            strokeLinecap="round"
-                            strokeLinejoin="round"
-                          />
-                        </svg>
-                        比昨天多{' '}
-                        {achievementData.todayProgress.done -
-                          achievementData.yesterdayDone}{' '}
-                        题
-                      </div>
-                    )}
-                  {achievementData.yesterdayDone !== undefined &&
-                    achievementData.todayProgress.done ===
-                      achievementData.yesterdayDone && (
-                      <div className="data-growth">持平昨天</div>
-                    )}
-                  {achievementData.yesterdayDone !== undefined &&
-                    achievementData.todayProgress.done <
-                      achievementData.yesterdayDone && (
-                      <div className="data-growth negative">
-                        <svg width="12" height="12" viewBox="0 0 12 12" fill="none">
-                          <path
-                            d="M6 10L6 2M6 10L3 7M6 10L9 7"
-                            stroke="currentColor"
-                            strokeWidth="1.5"
-                            strokeLinecap="round"
-                            strokeLinejoin="round"
-                          />
-                        </svg>
-                        比昨天少{' '}
-                        {achievementData.yesterdayDone -
-                          achievementData.todayProgress.done}{' '}
-                        题
-                      </div>
-                    )}
-                  {!achievementData.yesterdayDone &&
-                    achievementData.yesterdayDone !== 0 && (
-                      <div className="stat-badge">
-                        {achievementData.todayProgress.done >=
-                        achievementData.todayProgress.target
-                          ? '🎉 已完成目标'
-                          : `还差 ${
-                              achievementData.todayProgress.target -
-                              achievementData.todayProgress.done
-                            } 题`}
-                      </div>
-                    )}
-                </div>
-
-                <div className="achievement-stat">
-                  <span className="stat-label">本轮正确率</span>
-                  <div className="stat-value">
-                    <strong>
-                      {Math.round(
-                        (achievementData.correctCount / achievementData.totalCount) * 100
-                      )}
-                      %
-                    </strong>
-                    <small>
-                      ({achievementData.correctCount}/{achievementData.totalCount})
-                    </small>
-                  </div>
-                </div>
-              </div>
-
-              <div className="achievement-actions">
-                <button
-                  className="achievement-continue"
-                  onClick={() => setShowAchievementCard(false)}
-                >
-                  继续刷题 <ChevronRight size={16} />
-                </button>
-              </div>
-            </motion.div>
-          </motion.div>
+          <AchievementCardOverlay
+            key="achievement-card"
+            data={achievementData}
+            tomorrowPreview={tomorrowPreview}
+            onDismiss={hideAchievementCard}
+          />
         )}
       </AnimatePresence>
 

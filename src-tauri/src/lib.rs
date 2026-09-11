@@ -829,14 +829,22 @@ struct SupplementalQuestionInput {
     difficulty: i32,
 }
 
-fn init_schema(conn: &Connection) -> rusqlite::Result<()> {
+/// 连接级 PRAGMA。foreign_keys/synchronous/cache_size/temp_store 不随数据库文件持久，
+/// 任何新建或替换主库连接的地方（init_schema、restore_database_backup）都必须重新应用。
+fn apply_conn_pragmas(conn: &Connection) -> rusqlite::Result<()> {
     conn.execute_batch(
         "PRAGMA journal_mode=WAL;
          PRAGMA foreign_keys=ON;
          PRAGMA synchronous=NORMAL;
          PRAGMA cache_size=10000;
-         PRAGMA temp_store=MEMORY;
-         CREATE TABLE IF NOT EXISTS questions (
+         PRAGMA temp_store=MEMORY;",
+    )
+}
+
+fn init_schema(conn: &Connection) -> rusqlite::Result<()> {
+    apply_conn_pragmas(conn)?;
+    conn.execute_batch(
+        "CREATE TABLE IF NOT EXISTS questions (
            id INTEGER PRIMARY KEY,
            stem TEXT NOT NULL,
            options_json TEXT NOT NULL DEFAULT '[]',
@@ -6131,15 +6139,22 @@ fn restore_database_backup(
         fs::rename(&current_db_path, &replaced_path)
             .map_err(|e| format!("无法暂存当前数据库: {e}"))?;
     }
+    // 换连接必须重应用连接级 PRAGMA（foreign_keys 等不随文件持久），
+    // 否则恢复后直到下次重启前所有写路径都失去外键保护。
+    let open_live = |path: &Path| -> Result<Connection, String> {
+        let conn = Connection::open(path).map_err(|e| e.to_string())?;
+        apply_conn_pragmas(&conn).map_err(|e| e.to_string())?;
+        Ok(conn)
+    };
     if let Err(error) = fs::rename(&staged_path, &current_db_path) {
         if replaced_path.exists() {
             let _ = fs::rename(&replaced_path, &current_db_path);
         }
-        *conn_guard = Connection::open(&current_db_path).map_err(|e| e.to_string())?;
+        *conn_guard = open_live(&current_db_path)?;
         return Err(format!("无法切换至恢复数据库，已保留当前数据库: {error}"));
     }
 
-    match Connection::open(&current_db_path) {
+    match open_live(&current_db_path) {
         Ok(restored_conn) => {
             *conn_guard = restored_conn;
             let _ = fs::remove_file(&replaced_path);
@@ -6150,7 +6165,8 @@ fn restore_database_backup(
                 fs::rename(&replaced_path, &current_db_path)
                     .map_err(|rollback| format!("恢复失败且回退失败: {error}; {rollback}"))?;
             }
-            *conn_guard = Connection::open(&current_db_path).map_err(|e| e.to_string())?;
+            *conn_guard = open_live(&current_db_path)
+                .map_err(|reopen| format!("恢复失败且活连接重建失败: {reopen}"))?;
             return Err(format!("恢复失败，已回退当前数据库: {error}"));
         }
     }

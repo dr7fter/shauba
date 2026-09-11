@@ -35,6 +35,8 @@ export function MistakesView({
   const [detailQuestion, setDetailQuestion] = useState<Question | null>(null)
   const [submitting, setSubmitting] = useState(false)
   const [tacticalFilter, setTacticalFilter] = useState<'all' | 'concept' | 'aim' | 'tactic'>('all')
+  // 长列表切片：默认只渲染最近 10 天，点「显示更早记录」再逐批展开
+  const [visibleDays, setVisibleDays] = useState(10)
 
   const load = useCallback(async (isRefresh = false) => {
     if (isRefresh) setRefreshing(true)
@@ -113,6 +115,17 @@ export function MistakesView({
       })
       .filter((g) => g.items.length > 0)
   }, [groups, searchQuery, tacticalFilter, matchesTacticalTag])
+
+  // 实际渲染的日分组：只取前 visibleDays 天，避免一次 mount 90 天 × 每题数学排版
+  const visibleGroups = useMemo(
+    () => filteredGroups.slice(0, visibleDays),
+    [filteredGroups, visibleDays],
+  )
+
+  // 换搜索词/筛选后回到「最近 10 天」，避免旧切片盖住新结果
+  useEffect(() => {
+    setVisibleDays(10)
+  }, [searchQuery, tacticalFilter])
 
   // Toggle single item selection
   const toggleSelect = (questionId: number) => {
@@ -336,7 +349,7 @@ export function MistakesView({
             <p>{searchQuery ? '请尝试更换搜索关键字' : '继续在今日训练或模考中保持全对！'}</p>
           </div>
         ) : (
-          filteredGroups.map((group) => {
+          visibleGroups.map((group) => {
             const groupQIds = group.items.map((i) => i.questionId)
             const allGroupSelected = groupQIds.every((id) => selectedIds.has(id))
             const someGroupSelected = groupQIds.some((id) => selectedIds.has(id))
@@ -454,6 +467,15 @@ export function MistakesView({
               </section>
             )
           })
+        )}
+        {filteredGroups.length > visibleDays && (
+          <button
+            type="button"
+            className="mistakes-load-more-btn"
+            onClick={() => setVisibleDays((d) => d + 10)}
+          >
+            显示更早记录（还有 {filteredGroups.length - visibleDays} 天）
+          </button>
         )}
       </div>
 

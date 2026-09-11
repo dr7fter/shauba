@@ -386,6 +386,27 @@
   background: var(--green-soft);
 }
 
+/* 长列表「显示更早记录」切片按钮 */
+.mistakes-load-more-btn {
+  display: block;
+  width: 100%;
+  margin-top: var(--sp-3);
+  padding: 9px 0;
+  border-radius: var(--r-md);
+  border: 1px dashed var(--line-strong);
+  background: var(--surface);
+  color: var(--muted);
+  font-size: var(--fs-sm);
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.mistakes-load-more-btn:hover {
+  background: var(--sunken);
+  color: var(--ink);
+}
+
 /* Mistake Items */
 .mistakes-day-items {
   display: flex;

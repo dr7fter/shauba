@@ -365,6 +365,16 @@ export function ReviewMapView({
     })
   }, [chapterQuestions, questionFilter])
 
+  // 棋盘长列表切片：默认只渲染前 30 张卡（每张含数学排版 + 排雷进度条）
+  const [boardLimit, setBoardLimit] = useState(30)
+  useEffect(() => {
+    setBoardLimit(30)
+  }, [selectedChapterId, questionFilter])
+  const boardQuestions = useMemo(
+    () => visibleQuestions.slice(0, boardLimit),
+    [visibleQuestions, boardLimit],
+  )
+
   useEffect(() => {
     if (visibleQuestions.length > 0 && !selectedBoardQ) {
       setSelectedBoardQ(visibleQuestions[0])
@@ -634,7 +644,7 @@ export function ReviewMapView({
                 <span>该章节在此状态下防线完好，可以切换其他筛选或章节查看。</span>
               </div>
             ) : (
-              visibleQuestions.map((q) => {
+              boardQuestions.map((q) => {
                 const isSelected = selectedBoardQ?.questionId === q.questionId
                 const isWrong = q.kind === 'wrong' || q.result === 'wrong' || q.result === 'partial'
                 const step = isWrong ? 2 : q.kind === 'due' ? 5 : 6
@@ -736,6 +746,15 @@ export function ReviewMapView({
                   </article>
                 )
               })
+            )}
+            {visibleQuestions.length > boardLimit && (
+              <button
+                type="button"
+                className="review-board-load-more"
+                onClick={() => setBoardLimit((n) => n + 30)}
+              >
+                显示更多题目（还有 {visibleQuestions.length - boardLimit} 题）
+              </button>
             )}
           </div>
         </section>

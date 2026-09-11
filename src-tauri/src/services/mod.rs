@@ -1,4 +1,5 @@
 // Business Logic Layer
+pub mod friends;
 pub mod learning;
 pub mod rating;
 

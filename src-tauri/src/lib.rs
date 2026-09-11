@@ -3866,7 +3866,10 @@ async fn bootstrap(state: State<'_, AppState>) -> Result<BootstrapData, String> 
 }
 
 #[tauri::command]
-fn get_categories(root: String, state: State<AppState>) -> Result<Vec<CategoryNode>, String> {
+async fn get_categories(
+    root: String,
+    state: State<'_, AppState>,
+) -> Result<Vec<CategoryNode>, String> {
     let conn = state.db.lock().map_err(|e| e.to_string())?;
     let mut stmt=conn.prepare(
         "SELECT c.id,c.parent_id,c.name,c.path,c.root_name,c.depth,
@@ -8806,18 +8809,28 @@ struct ExportResult {
     json_path: String,
 }
 
+// checkpoint + 整库复制 + 全表序列化都是重 IO：async 命令 + spawn_blocking
+// 挪进阻塞线程池，导出期间不再卡窗口事件循环（模式同好友同步）。
 #[tauri::command]
-fn export_records(state: State<AppState>) -> Result<ExportResult, String> {
+async fn export_records(app: tauri::AppHandle) -> Result<ExportResult, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let state = app.state::<AppState>();
+        export_records_impl(&state)
+    })
+    .await
+    .map_err(|e| format!("导出后台任务异常退出：{e}"))?
+}
+
+fn export_records_impl(state: &AppState) -> Result<ExportResult, String> {
     let backup_dir = state.data_dir.join("backups");
     let stamp = Local::now().format("%Y%m%d-%H%M%S");
     let db_path = backup_dir.join(format!("shuaba-{stamp}.db"));
     let json_path = backup_dir.join(format!("records-{stamp}.json"));
-    {
+    // 一次持锁完成库复制 + 四表读取（此前分两次拿锁）；大 JSON 落盘留在锁外。
+    let (attempts, progress, settings, reward_events) = {
         let conn = state.db.lock().map_err(|e| e.to_string())?;
         export_db_copy(&conn, &db_path)?;
-    }
-    let conn = state.db.lock().map_err(|e| e.to_string())?;
-    let attempts: Vec<Value> = conn
+        let attempts: Vec<Value> = conn
         .prepare("SELECT id,question_id,attempted_at,duration_seconds,result,self_rating,mode,outcome,evidence_source,fluency_rating,confidence,session_id,diagnosis_id,ai_rating FROM attempts ORDER BY attempted_at")
         .map_err(|e| e.to_string())?
         .query_map([], |row| {
@@ -8882,6 +8895,8 @@ fn export_records(state: State<AppState>) -> Result<ExportResult, String> {
         .map_err(|e| e.to_string())?
         .collect::<Result<Vec<_>, _>>()
         .map_err(|e| e.to_string())?;
+        (attempts, progress, settings, reward_events)
+    };
     let doc = json!({
         "app": "刷吧",
         "version": "0.9.0",
@@ -10000,7 +10015,7 @@ fn get_task_prompt(task_id: String, state: State<AppState>) -> Result<Option<Str
 }
 
 #[tauri::command]
-fn image_data_url(path: String, state: State<AppState>) -> Result<String, String> {
+async fn image_data_url(path: String, state: State<'_, AppState>) -> Result<String, String> {
     if let Some(cached) = state
         .image_cache
         .lock()

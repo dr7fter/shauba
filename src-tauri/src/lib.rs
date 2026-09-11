@@ -5085,6 +5085,28 @@ fn get_question(id: i64, state: State<AppState>) -> Result<Question, String> {
     question_by_id(&conn, id)
 }
 
+/// 批量按 id 取题。前端多处「按题号逐条 getQuestion」的 N+1 IPC 收口到这里：
+/// 一次持锁 + 一条 IN 查询。返回顺序不保证（SQL GROUP BY 序），由前端按请求
+/// ids 重排；未找到的 id 直接缺席，不报错。
+#[tauri::command]
+fn get_questions_by_ids(ids: Vec<i64>, state: State<AppState>) -> Result<Vec<Question>, String> {
+    if ids.len() > 500 {
+        return Err("单次批量取题最多 500 题".into());
+    }
+    if ids.is_empty() {
+        return Ok(Vec::new());
+    }
+    let placeholders = vec!["?"; ids.len()].join(",");
+    let sql = format!("{QUESTION_SELECT} WHERE q.id IN ({placeholders}) GROUP BY q.id");
+    let conn = state.db.lock().map_err(|e| e.to_string())?;
+    let mut stmt = conn.prepare(&sql).map_err(|e| e.to_string())?;
+    let rows = stmt
+        .query_map(rusqlite::params_from_iter(ids.iter()), row_to_question)
+        .map_err(|e| e.to_string())?;
+    rows.collect::<Result<Vec<_>, _>>()
+        .map_err(|e| e.to_string())
+}
+
 #[tauri::command]
 fn get_recommendations(
     limit: usize,
@@ -12853,6 +12875,7 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             bootstrap,
             get_question,
+            get_questions_by_ids,
             get_recommendations,
             get_categories,
             search_question_page,

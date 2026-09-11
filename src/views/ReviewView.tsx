@@ -23,6 +23,7 @@ import {
   getDailyLog,
   getInbox,
   getQuestion,
+  getQuestionsByIds,
   getReviewHistory,
   getReviewPlan,
   getReviewQueue,
@@ -137,18 +138,13 @@ export function ReviewMapView({
           getDailyLog().catch(() => null),
           getInbox(),
         ])
-      const categoryEntries = await Promise.all(
-        nextInbox
-          .filter((item) => item.questionId !== null)
-          .map(async (item) => {
-            try {
-              const question = await getQuestion(item.questionId as number)
-              return [item.questionId as number, question.categoryPath] as const
-            } catch {
-              return null
-            }
-          })
-      )
+      const categoryEntries = (
+        await getQuestionsByIds(
+          nextInbox
+            .filter((item) => item.questionId !== null)
+            .map((item) => item.questionId as number)
+        )
+      ).map((question) => [question.id, question.categoryPath] as const)
       const diagMap: Record<number, { earliestError?: string | null; advice?: string | null; betterSolution?: string | null }> = {}
       for (const item of nextInbox) {
         if (item.questionId) {

@@ -31,7 +31,7 @@ import {
   getInbox,
   getLearningCenterSnapshot,
   getLearningTaskCandidates,
-  getQuestion,
+  getQuestionsByIds,
   startRecommendationBatch,
   updateRecommendationBatchItems,
 } from '../api'
@@ -368,18 +368,9 @@ function AiWorkbenchDrawer({
         if (mounted) setCandidates(cands)
         const qMap: Record<number, Question> = {}
         for (const c of cands) qMap[c.id] = c
-        // Fetch any missing questions
+        // Fetch any missing questions：一次批量 IPC 替代逐条 getQuestion
         const missingIds = questionIds.filter((id) => !qMap[id])
-        await Promise.all(
-          missingIds.map(async (id) => {
-            try {
-              const q = await getQuestion(id)
-              if (q) qMap[id] = q
-            } catch {
-              // ignore
-            }
-          })
-        )
+        for (const q of await getQuestionsByIds(missingIds)) qMap[q.id] = q
         if (mounted) setQuestionsMap(qMap)
       } catch {
         // ignore

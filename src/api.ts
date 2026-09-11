@@ -68,6 +68,21 @@ export async function getQuestion(id: number): Promise<Question> {
   return isTauri() ? invoke('get_question', { id }) : mockQuestions.find((q) => q.id === id) ?? mockQuestions[0]
 }
 
+// 批量按 id 取题（一次 IPC 替代逐条 getQuestion 的 N+1）。
+// 结果按请求 ids 顺序重排；题库中不存在的 id 直接缺席。
+export async function getQuestionsByIds(ids: number[]): Promise<Question[]> {
+  const unique = [...new Set(ids)]
+  if (unique.length === 0) return []
+  if (!isTauri()) {
+    return unique
+      .map((id) => mockQuestions.find((q) => q.id === id))
+      .filter((q): q is Question => Boolean(q))
+  }
+  const found = await invoke<Question[]>('get_questions_by_ids', { ids: unique })
+  const byId = new Map(found.map((q) => [q.id, q]))
+  return unique.map((id) => byId.get(id)).filter((q): q is Question => Boolean(q))
+}
+
 export async function getRecommendations(limit = 12): Promise<RecommendedQuestion[]> {
   return isTauri() ? invoke('get_recommendations', { limit }) : mockRecommendations.slice(0, limit)
 }

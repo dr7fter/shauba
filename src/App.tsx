@@ -40,6 +40,7 @@ import {
   getMasteryMap,
   getPressureGradingReport,
   getQuestion,
+  getQuestionsByIds,
   getRecommendations,
   getReviewQueue,
   getStreak,
@@ -800,21 +801,9 @@ export default function App() {
             ...extraIds,
           ])
         )
-        const loaded = await Promise.all(
-          questionIds.map(async (questionId) => {
-            try {
-              return await getQuestion(questionId)
-            } catch {
-              return null
-            }
-          })
-        )
-            setPressureReportQuestions(
-          Object.fromEntries(
-            loaded
-              .filter((question): question is Question => Boolean(question))
-              .map((question) => [question.id, question])
-          )
+        const loaded = await getQuestionsByIds(questionIds)
+        setPressureReportQuestions(
+          Object.fromEntries(loaded.map((question) => [question.id, question]))
         )
       }
 
@@ -1263,9 +1252,8 @@ export default function App() {
                   switch (target.type) {
                     case 'today':
                       if (target.queueQuestionIds && target.queueQuestionIds.length > 0) {
-                        Promise.all(target.queueQuestionIds.map((id) => getQuestion(id)))
-                          .then((qs) => {
-                            const validQuestions = qs.filter((q): q is NonNullable<typeof q> => Boolean(q))
+                        getQuestionsByIds(target.queueQuestionIds)
+                          .then((validQuestions) => {
                             if (validQuestions.length > 0) {
                               setPracticeQueue(
                                 validQuestions.map((q) => ({
@@ -1554,8 +1542,7 @@ export default function App() {
                     .catch(() => setNotice('无法载入影子对战题目，请重试'))
                 }}
                 onStartChallenge={(challenge) => {
-                  Promise.all(challenge.questionIds.map((id) => getQuestion(id))).then((qs) => {
-                    const valid = qs.filter((q): q is NonNullable<typeof q> => Boolean(q))
+                  getQuestionsByIds(challenge.questionIds).then((valid) => {
                     if (valid.length === 0) return setNotice('好友题组中的题目在本机题库中不可用')
                     setPracticeQueue(valid.map((question) => ({ question, score: 100, reason: `好友「${challenge.senderNickname}」发送的题组挑战`, reasonCode: 'custom' })))
                     setPracticeStartIndex(0)

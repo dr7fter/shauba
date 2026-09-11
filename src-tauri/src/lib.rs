@@ -14,6 +14,7 @@ use std::{
     path::{Path, PathBuf},
     process::Command,
     sync::Mutex,
+    time::UNIX_EPOCH,
 };
 use tauri::{Manager, State};
 
@@ -1595,6 +1596,38 @@ fn import_library(conn: &mut Connection, library: &Path) -> Result<i64, String> 
     tx.commit().map_err(|e| e.to_string())?;
     import_category_metadata(conn, library)?;
     Ok(inserted)
+}
+
+// 源文件指纹（大小 + mtime 秒）；读取失败返回空串，调用方视为"需要重导"。
+fn file_stamp(path: &Path) -> String {
+    fs::metadata(path)
+        .ok()
+        .and_then(|m| {
+            let mtime = m
+                .modified()
+                .ok()
+                .and_then(|t| t.duration_since(UNIX_EPOCH).ok())
+                .map(|d| d.as_secs())?;
+            Some(format!("{}:{}", m.len(), mtime))
+        })
+        .unwrap_or_default()
+}
+
+// 题库导入指纹：目录路径 + 两个源文件指纹 + 分类 schema 版本。
+// 存进 settings.library_import_stamp，bootstrap 仅在指纹变化（或库里没货）时才重导题库。
+fn library_import_stamp(library: &Path) -> String {
+    let questions = file_stamp(&library.join("all_questions_20260813.json"));
+    let categories = file_stamp(&library.join("categories.json"));
+    if questions.is_empty() || categories.is_empty() {
+        return String::new();
+    }
+    format!(
+        "{}|{}|{}|v{}",
+        library.display(),
+        questions,
+        categories,
+        CATEGORY_SCHEMA_VERSION
+    )
 }
 
 fn row_to_question(row: &rusqlite::Row<'_>) -> rusqlite::Result<Question> {
@@ -3664,8 +3697,25 @@ async fn bootstrap(state: State<'_, AppState>) -> Result<BootstrapData, String> 
         }
     }
     if ready {
-        // 每次启动按 content_hash 增量同步，题库内容更新时不会继续使用旧题面。
-        count = import_library(&mut conn, &library)?;
+        // 增量守卫：源文件（路径+大小+mtime）与分类 schema 版本组成的指纹未变、且库里
+        // 有题有分类时，跳过全量重导。此前每次窗口 focus / 每题提交都会走到这里，
+        // 读两遍 16MB JSON + 全量重建分类，且全程持有唯一 DB 锁，造成可感知卡顿。
+        // 指纹变化时仍走 content_hash 逐题增量 UPSERT，题面更新不会用旧数据。
+        let stamp = library_import_stamp(&library);
+        let stored_stamp = setting(&conn, "library_import_stamp", "");
+        let category_count: i64 = conn
+            .query_row("SELECT COUNT(*) FROM categories", [], |r| r.get(0))
+            .unwrap_or(0);
+        if count == 0 || category_count == 0 || stamp.is_empty() || stamp != stored_stamp {
+            count = import_library(&mut conn, &library)?;
+            if !stamp.is_empty() {
+                conn.execute(
+                    "INSERT OR REPLACE INTO settings(key,value) VALUES('library_import_stamp',?1)",
+                    [&stamp],
+                )
+                .map_err(|e| e.to_string())?;
+            }
+        }
     }
     let today = Local::now().date_naive().to_string();
     let today_done = conn
@@ -13172,6 +13222,30 @@ mod tests {
             .modified()
             .unwrap();
         assert_eq!(before, after);
+    }
+
+    #[test]
+    fn library_import_stamp_tracks_source_file_identity() {
+        let dir = std::env::temp_dir().join(format!(
+            "shuaba-stamp-test-{}-{}",
+            std::process::id(),
+            Local::now().timestamp_nanos_opt().unwrap_or(0)
+        ));
+        fs::create_dir_all(&dir).unwrap();
+        let q = dir.join("all_questions_20260813.json");
+        let c = dir.join("categories.json");
+        fs::write(&q, "{\"questions\":[]}").unwrap();
+        fs::write(&c, "[]").unwrap();
+        let stamp = library_import_stamp(&dir);
+        assert!(!stamp.is_empty());
+        assert_eq!(stamp, library_import_stamp(&dir));
+        // 源文件内容（大小）变化 → 指纹变化，触发重导
+        fs::write(&q, "{\"questions\":[{\"id\":1}]}").unwrap();
+        assert_ne!(stamp, library_import_stamp(&dir));
+        // 源文件缺失 → 空指纹，调用方视为必须重导
+        fs::remove_file(&c).unwrap();
+        assert!(library_import_stamp(&dir).is_empty());
+        let _ = fs::remove_dir_all(&dir);
     }
 
     #[test]

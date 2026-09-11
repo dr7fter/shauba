@@ -1178,8 +1178,14 @@ export default function App() {
   useEffect(() => {
     void refresh()
   }, [refresh])
+  // focus 刷新节流：窗口每次获得焦点都全量拉 bootstrap，10s 内的重复 focus
+  // （alt-tab 来回、弹窗夺焦等）不再重拉
+  const lastFocusRefreshRef = useRef(0)
   useEffect(() => {
     const onFocus = () => {
+      const now = Date.now()
+      if (now - lastFocusRefreshRef.current < 10_000) return
+      lastFocusRefreshRef.current = now
       void refresh()
     }
     window.addEventListener('focus', onFocus)

@@ -7046,6 +7046,10 @@ fn set_library_path(path: String, state: State<AppState>) -> Result<(), String> 
         .map_err(|e| e.to_string())?;
     }
     *state.library_dir.lock().map_err(|e| e.to_string())? = candidate.to_path_buf();
+    // 换题库目录后旧的 base64 兜底缓存全部作废（同路径名可能已是另一张图）
+    if let Ok(mut cache) = state.image_cache.lock() {
+        cache.clear();
+    }
     Ok(())
 }
 
@@ -10074,6 +10078,11 @@ async fn image_data_url(path: String, state: State<'_, AppState>) -> Result<Stri
     let bytes = fs::read(&path).map_err(|e| e.to_string())?;
     let data = format!("data:image/png;base64,{}", STANDARD.encode(bytes));
     if let Ok(mut cache) = state.image_cache.lock() {
+        // 上限守卫：base64 后每条约 1.34×原图，长会话下无界缓存曾只进不出。
+        // 溢出直接清空——本命令已降级为 asset 协议的兜底通道，命中率低可接受。
+        if cache.len() >= 300 {
+            cache.clear();
+        }
         cache.insert(path, data.clone());
     }
     Ok(data)

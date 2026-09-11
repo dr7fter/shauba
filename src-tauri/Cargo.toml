@@ -21,7 +21,7 @@ tauri-build = { version = "2.6.3", features = [] }
 serde_json = "1.0"
 serde = { version = "1.0", features = ["derive"] }
 log = "0.4"
-tauri = { version = "2.11.3", features = [] }
+tauri = { version = "2.11.3", features = ["protocol-asset"] }
 tauri-plugin-log = "2"
 tauri-plugin-updater = "2"
 tauri-plugin-process = "2"
@@ -32,3 +32,11 @@ rand = "0.9"
 reqwest = { version = "0.12", default-features = false, features = ["blocking", "json", "rustls-tls"] }
 quick-xml = "0.41"
 percent-encoding = "2.3"
+
+# 体积与冷启动：单 codegen unit + thin LTO 让跨模块内联；符号剥离不进产物。
+# 不设 panic=abort——tauri 命令层依赖 catch_unwind 把 panic 转成前端错误，
+# abort 会让单命令 panic 直接崩整个 App。
+[profile.release]
+codegen-units = 1
+lto = "thin"
+strip = "symbols"

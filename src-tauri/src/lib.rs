@@ -909,6 +909,7 @@ fn init_schema(conn: &Connection) -> rusqlite::Result<()> {
           );
          CREATE INDEX IF NOT EXISTS idx_attempts_question ON attempts(question_id);
          CREATE INDEX IF NOT EXISTS idx_attempts_question_time ON attempts(question_id, attempted_at DESC);
+         CREATE INDEX IF NOT EXISTS idx_attempts_time ON attempts(attempted_at);
          CREATE TABLE IF NOT EXISTS progress (
            question_id INTEGER PRIMARY KEY,
            favorite INTEGER NOT NULL DEFAULT 0,
@@ -919,6 +920,7 @@ fn init_schema(conn: &Connection) -> rusqlite::Result<()> {
            note TEXT,
            FOREIGN KEY(question_id) REFERENCES questions(id)
           );
+         CREATE INDEX IF NOT EXISTS idx_progress_next_review ON progress(next_review);
          CREATE TABLE IF NOT EXISTS codex_inbox (
            id INTEGER PRIMARY KEY AUTOINCREMENT,
            task_id TEXT NOT NULL UNIQUE,
@@ -1204,6 +1206,12 @@ fn migrate_schema_impl(conn: &Connection, inject_failure: bool) -> rusqlite::Res
                PRIMARY KEY(task_id, question_id)
              );
              CREATE INDEX IF NOT EXISTS idx_codex_task_context_attempt ON codex_task_context(attempt_id, requested_at DESC);",
+        )?;
+        // 时间谓词已改 sargable 范围比较（substr(...)=? → attempted_at>=? AND <?+1day），
+        // 配套两条索引：按日扫描作答、按到期日扫复习队列。IF NOT EXISTS 幂等，存量库补齐。
+        conn.execute_batch(
+            "CREATE INDEX IF NOT EXISTS idx_attempts_time ON attempts(attempted_at);
+             CREATE INDEX IF NOT EXISTS idx_progress_next_review ON progress(next_review);",
         )?;
 
         services::learning::init_schema(conn)?;
@@ -1996,7 +2004,7 @@ fn recommendations(conn: &Connection, limit: usize) -> Result<Vec<RecommendedQue
     let today = Local::now().date_naive().to_string();
     // Due questions must never be skipped by the random candidate draw: pull all
     // of them unconditionally, then top up the rest with random not-yet-done ones.
-    let mut stmt = conn.prepare(&format!("{QUESTION_SELECT} WHERE p.next_review<=?1 AND NOT EXISTS(SELECT 1 FROM attempts at WHERE at.question_id=q.id AND substr(at.attempted_at,1,10)=?1) GROUP BY q.id")).map_err(|e| e.to_string())?;
+    let mut stmt = conn.prepare(&format!("{QUESTION_SELECT} WHERE p.next_review<=?1 AND NOT EXISTS(SELECT 1 FROM attempts at WHERE at.question_id=q.id AND at.attempted_at>=?1 AND at.attempted_at<date(?1,'+1 day')) GROUP BY q.id")).map_err(|e| e.to_string())?;
     let due_rows = stmt
         .query_map([&today], row_to_question)
         .map_err(|e| e.to_string())?;
@@ -2006,7 +2014,7 @@ fn recommendations(conn: &Connection, limit: usize) -> Result<Vec<RecommendedQue
     drop(stmt);
     let remaining = limit + 220usize.max(limit * 10);
     let mut seen: HashSet<i64> = candidates.iter().map(|q| q.id).collect();
-    stmt = conn.prepare(&format!("{QUESTION_SELECT} WHERE (p.next_review IS NULL OR p.next_review>?1) AND NOT EXISTS(SELECT 1 FROM attempts at WHERE at.question_id=q.id AND substr(at.attempted_at,1,10)=?1) GROUP BY q.id ORDER BY RANDOM() LIMIT ?2")).map_err(|e| e.to_string())?;
+    stmt = conn.prepare(&format!("{QUESTION_SELECT} WHERE (p.next_review IS NULL OR p.next_review>?1) AND NOT EXISTS(SELECT 1 FROM attempts at WHERE at.question_id=q.id AND at.attempted_at>=?1 AND at.attempted_at<date(?1,'+1 day')) GROUP BY q.id ORDER BY RANDOM() LIMIT ?2")).map_err(|e| e.to_string())?;
     let random_rows = stmt
         .query_map(params![today, remaining as i64], row_to_question)
         .map_err(|e| e.to_string())?;
@@ -2080,7 +2088,7 @@ fn recommendations(conn: &Connection, limit: usize) -> Result<Vec<RecommendedQue
     let yesterday = (Local::now().date_naive() - chrono::Duration::days(1)).to_string();
     let yesterday_wrong_q: Option<i64> = conn
         .query_row(
-            "SELECT question_id FROM attempts WHERE result='wrong' AND substr(attempted_at,1,10)=?1 ORDER BY id DESC LIMIT 1",
+            "SELECT question_id FROM attempts WHERE result='wrong' AND attempted_at>=?1 AND attempted_at<date(?1,'+1 day') ORDER BY id DESC LIMIT 1",
             [&yesterday],
             |r| r.get(0),
         )
@@ -3720,12 +3728,12 @@ async fn bootstrap(state: State<'_, AppState>) -> Result<BootstrapData, String> 
     let today = Local::now().date_naive().to_string();
     let today_done = conn
         .query_row(
-            "SELECT COUNT(*) FROM attempts WHERE substr(attempted_at,1,10)=?1",
+            "SELECT COUNT(*) FROM attempts WHERE attempted_at>=?1 AND attempted_at<date(?1,'+1 day')",
             [&today],
             |r| r.get(0),
         )
         .unwrap_or(0);
-    let today_seconds: i64 = conn.query_row("SELECT COALESCE(SUM(duration_seconds),0) FROM attempts WHERE substr(attempted_at,1,10)=?1 AND duration_seconds BETWEEN 1 AND 1800", [&today], |r| r.get(0)).unwrap_or(0);
+    let today_seconds: i64 = conn.query_row("SELECT COALESCE(SUM(duration_seconds),0) FROM attempts WHERE attempted_at>=?1 AND attempted_at<date(?1,'+1 day') AND duration_seconds BETWEEN 1 AND 1800", [&today], |r| r.get(0)).unwrap_or(0);
     let excluded_duration_count: i64 = conn
         .query_row(
             "SELECT COUNT(*) FROM attempts WHERE duration_seconds > 1800 OR duration_seconds < 1",
@@ -3738,7 +3746,7 @@ async fn bootstrap(state: State<'_, AppState>) -> Result<BootstrapData, String> 
         .unwrap_or(0);
     let due_count = conn
         .query_row(
-            "SELECT COUNT(*) FROM progress p WHERE p.next_review<=?1 AND NOT EXISTS(SELECT 1 FROM attempts at WHERE at.question_id=p.question_id AND substr(at.attempted_at,1,10)=?1)",
+            "SELECT COUNT(*) FROM progress p WHERE p.next_review<=?1 AND NOT EXISTS(SELECT 1 FROM attempts at WHERE at.question_id=p.question_id AND at.attempted_at>=?1 AND at.attempted_at<date(?1,'+1 day'))",
             [&today],
             |r| r.get(0),
         )
@@ -3769,7 +3777,7 @@ async fn bootstrap(state: State<'_, AppState>) -> Result<BootstrapData, String> 
     });
     let custom_queue_count = conn
         .query_row(
-            "SELECT COUNT(*) FROM custom_queue cq WHERE NOT EXISTS(SELECT 1 FROM attempts at WHERE at.question_id=cq.question_id AND substr(at.attempted_at,1,10)=?1)",
+            "SELECT COUNT(*) FROM custom_queue cq WHERE NOT EXISTS(SELECT 1 FROM attempts at WHERE at.question_id=cq.question_id AND at.attempted_at>=?1 AND at.attempted_at<date(?1,'+1 day'))",
             [&today],
             |r| r.get(0),
         )
@@ -4313,7 +4321,7 @@ fn get_mastery_nodes(state: State<AppState>) -> Result<Vec<MasteryNode>, String>
 fn get_custom_queue(state: State<AppState>) -> Result<Vec<Question>, String> {
     let conn = state.db.lock().map_err(|e| e.to_string())?;
     let today = Local::now().date_naive().to_string();
-    let sql = format!("{QUESTION_SELECT} JOIN custom_queue cq ON cq.question_id=q.id WHERE NOT EXISTS(SELECT 1 FROM attempts at WHERE at.question_id=q.id AND substr(at.attempted_at,1,10)=?1) GROUP BY q.id ORDER BY cq.position,cq.added_at");
+    let sql = format!("{QUESTION_SELECT} JOIN custom_queue cq ON cq.question_id=q.id WHERE NOT EXISTS(SELECT 1 FROM attempts at WHERE at.question_id=q.id AND at.attempted_at>=?1 AND at.attempted_at<date(?1,'+1 day')) GROUP BY q.id ORDER BY cq.position,cq.added_at");
     let mut stmt = conn.prepare(&sql).map_err(|e| e.to_string())?;
     let rows = stmt
         .query_map([today], row_to_question)
@@ -4468,12 +4476,14 @@ fn focus_queue(
 
     let today = Local::now().date_naive().to_string();
     let path_cond_str = path_conditions.join(" OR ");
+    // 范围谓词用掉两个匿名 ?（>=今日、<明日），next_review 再一个
+    params_vec.push(rusqlite::types::Value::Text(today.clone()));
     params_vec.push(rusqlite::types::Value::Text(today.clone()));
     params_vec.push(rusqlite::types::Value::Text(today));
     params_vec.push(rusqlite::types::Value::Integer(limit.min(100) as i64));
 
     let sql = format!(
-        "{QUESTION_SELECT} WHERE EXISTS(SELECT 1 FROM question_categories qcc JOIN categories cc ON cc.id=qcc.category_id WHERE qcc.question_id=q.id AND ({path_cond_str})) AND NOT EXISTS(SELECT 1 FROM attempts at WHERE at.question_id=q.id AND substr(at.attempted_at,1,10)=?) GROUP BY q.id ORDER BY CASE WHEN COUNT(a.id)=0 THEN 0 WHEN p.next_review<=? THEN 1 WHEN COALESCE(p.mastery,0)<=2 THEN 2 ELSE 3 END, q.difficulty, q.id LIMIT ?"
+        "{QUESTION_SELECT} WHERE EXISTS(SELECT 1 FROM question_categories qcc JOIN categories cc ON cc.id=qcc.category_id WHERE qcc.question_id=q.id AND ({path_cond_str})) AND NOT EXISTS(SELECT 1 FROM attempts at WHERE at.question_id=q.id AND at.attempted_at>=? AND at.attempted_at<date(?,'+1 day')) GROUP BY q.id ORDER BY CASE WHEN COUNT(a.id)=0 THEN 0 WHEN p.next_review<=? THEN 1 WHEN COALESCE(p.mastery,0)<=2 THEN 2 ELSE 3 END, q.difficulty, q.id LIMIT ?"
     );
 
     let mut stmt = conn.prepare(&sql).map_err(|e| e.to_string())?;
@@ -4543,7 +4553,7 @@ fn variant_queue(
            AND q.id != ?2
            AND NOT EXISTS (
                SELECT 1 FROM attempts a
-               WHERE a.question_id = q.id AND substr(a.attempted_at, 1, 10) = ?3
+               WHERE a.question_id = q.id AND a.attempted_at >= ?3 AND a.attempted_at < date(?3,'+1 day')
            )
          GROUP BY q.id
          ORDER BY (CASE WHEN p.mastery <= 2 THEN 0 WHEN p.question_id IS NULL THEN 1 ELSE 2 END),
@@ -4574,7 +4584,7 @@ fn variant_queue(
                AND q.id != ?2
                AND NOT EXISTS (
                    SELECT 1 FROM attempts a
-                   WHERE a.question_id = q.id AND substr(a.attempted_at, 1, 10) = ?3
+                   WHERE a.question_id = q.id AND a.attempted_at >= ?3 AND a.attempted_at < date(?3,'+1 day')
                )
              GROUP BY q.id
              ORDER BY (CASE WHEN p.mastery <= 2 THEN 0 WHEN p.question_id IS NULL THEN 1 ELSE 2 END),
@@ -4626,7 +4636,7 @@ fn chapter_queue(
         )
         .map_err(|e| e.to_string())?;
     let today = Local::now().date_naive().to_string();
-    let sql=format!("{QUESTION_SELECT} WHERE EXISTS(SELECT 1 FROM question_categories qcc JOIN categories cc ON cc.id=qcc.category_id WHERE qcc.question_id=q.id AND (cc.path=?1 OR cc.path LIKE ?1||' / %')) AND NOT EXISTS(SELECT 1 FROM attempts at WHERE at.question_id=q.id AND substr(at.attempted_at,1,10)=?2) GROUP BY q.id ORDER BY CASE WHEN COUNT(a.id)=0 THEN 0 WHEN p.next_review<=?2 THEN 1 WHEN COALESCE(p.mastery,0)<=2 THEN 2 ELSE 3 END,q.difficulty,q.id LIMIT ?3");
+    let sql=format!("{QUESTION_SELECT} WHERE EXISTS(SELECT 1 FROM question_categories qcc JOIN categories cc ON cc.id=qcc.category_id WHERE qcc.question_id=q.id AND (cc.path=?1 OR cc.path LIKE ?1||' / %')) AND NOT EXISTS(SELECT 1 FROM attempts at WHERE at.question_id=q.id AND at.attempted_at>=?2 AND at.attempted_at<date(?2,'+1 day')) GROUP BY q.id ORDER BY CASE WHEN COUNT(a.id)=0 THEN 0 WHEN p.next_review<=?2 THEN 1 WHEN COALESCE(p.mastery,0)<=2 THEN 2 ELSE 3 END,q.difficulty,q.id LIMIT ?3");
     let mut stmt = conn.prepare(&sql).map_err(|e| e.to_string())?;
     let rows = stmt
         .query_map(params![path, today, limit.min(100) as i64], row_to_question)
@@ -4647,7 +4657,7 @@ fn chapter_queue(
 fn review_queue(conn: &Connection, limit: usize) -> Result<Vec<RecommendedQuestion>, String> {
     let today = Local::now().date_naive().to_string();
     let sql = format!(
-        "{QUESTION_SELECT} WHERE p.next_review<=?1 AND NOT EXISTS(SELECT 1 FROM attempts at WHERE at.question_id=q.id AND substr(at.attempted_at,1,10)=?1) GROUP BY q.id ORDER BY ((julianday(?1) - julianday(p.next_review) + 1.0) * (CASE WHEN q.difficulty=3 THEN 1.5 WHEN q.difficulty=2 THEN 1.2 ELSE 1.0 END)) DESC, p.next_review ASC, q.difficulty DESC, q.id ASC LIMIT ?2"
+        "{QUESTION_SELECT} WHERE p.next_review<=?1 AND NOT EXISTS(SELECT 1 FROM attempts at WHERE at.question_id=q.id AND at.attempted_at>=?1 AND at.attempted_at<date(?1,'+1 day')) GROUP BY q.id ORDER BY ((julianday(?1) - julianday(p.next_review) + 1.0) * (CASE WHEN q.difficulty=3 THEN 1.5 WHEN q.difficulty=2 THEN 1.2 ELSE 1.0 END)) DESC, p.next_review ASC, q.difficulty DESC, q.id ASC LIMIT ?2"
     );
     let mut stmt = conn.prepare(&sql).map_err(|e| e.to_string())?;
     let rows = stmt
@@ -4674,7 +4684,7 @@ fn review_history(conn: &Connection) -> Result<ReviewHistory, String> {
         let date = (today - Duration::days(offset)).to_string();
         let (count, correct_count) = conn
             .query_row(
-                "SELECT COUNT(*),COALESCE(SUM(CASE WHEN result='correct' THEN 1 ELSE 0 END),0) FROM attempts WHERE mode='review' AND substr(attempted_at,1,10)=?1",
+                "SELECT COUNT(*),COALESCE(SUM(CASE WHEN result='correct' THEN 1 ELSE 0 END),0) FROM attempts WHERE mode='review' AND attempted_at>=?1 AND attempted_at<date(?1,'+1 day')",
                 [&date],
                 |row| Ok((row.get(0)?, row.get(1)?)),
             )
@@ -4687,7 +4697,7 @@ fn review_history(conn: &Connection) -> Result<ReviewHistory, String> {
     }
     let mut stmt = conn
         .prepare(
-            "SELECT a.id,a.question_id,a.attempted_at,q.stem,q.category_path,q.source,a.result,a.self_rating FROM attempts a JOIN questions q ON q.id=a.question_id WHERE a.mode='review' AND substr(a.attempted_at,1,10)>=?1 ORDER BY a.attempted_at DESC,a.id DESC",
+            "SELECT a.id,a.question_id,a.attempted_at,q.stem,q.category_path,q.source,a.result,a.self_rating FROM attempts a JOIN questions q ON q.id=a.question_id WHERE a.mode='review' AND a.attempted_at>=?1 ORDER BY a.attempted_at DESC,a.id DESC",
         )
         .map_err(|e| e.to_string())?;
     let rows = stmt
@@ -4733,7 +4743,7 @@ fn get_today_attempted_questions(state: State<AppState>) -> Result<Vec<TodayAtte
         .prepare(
             "SELECT a.id, a.question_id, COALESCE(a.outcome, a.result, 'wrong'), COALESCE(a.self_rating, 2), COALESCE(a.duration_seconds, 30), a.attempted_at, a.session_id
              FROM attempts a
-             WHERE substr(a.attempted_at, 1, 10) = ?1
+             WHERE a.attempted_at >= ?1 AND a.attempted_at < date(?1,'+1 day')
              ORDER BY a.id DESC"
         )
         .map_err(|e| e.to_string())?;
@@ -4953,7 +4963,7 @@ fn review_plan(conn: &Connection) -> Result<ReviewPlan, String> {
         let date = (today + Duration::days(offset)).to_string();
         let count: i64 = if offset == 0 {
             conn.query_row(
-                "SELECT COUNT(*) FROM progress p WHERE p.next_review<=?1 AND NOT EXISTS(SELECT 1 FROM attempts a WHERE a.question_id=p.question_id AND substr(a.attempted_at,1,10)=?1)",
+                "SELECT COUNT(*) FROM progress p WHERE p.next_review<=?1 AND NOT EXISTS(SELECT 1 FROM attempts a WHERE a.question_id=p.question_id AND a.attempted_at>=?1 AND a.attempted_at<date(?1,'+1 day'))",
                 [&date],
                 |row| row.get(0),
             )
@@ -4969,7 +4979,7 @@ fn review_plan(conn: &Connection) -> Result<ReviewPlan, String> {
     }
     let mut stmt = conn
         .prepare(
-            "SELECT q.id,q.stem,q.category_path,q.source,CASE WHEN p.next_review<=?1 THEN ?1 ELSE p.next_review END,p.next_review,p.mastery FROM progress p JOIN questions q ON q.id=p.question_id WHERE p.next_review<=?2 AND (p.next_review>?1 OR NOT EXISTS(SELECT 1 FROM attempts a WHERE a.question_id=p.question_id AND substr(a.attempted_at,1,10)=?1)) ORDER BY CASE WHEN p.next_review<=?1 THEN 0 ELSE 1 END,p.next_review,q.id",
+            "SELECT q.id,q.stem,q.category_path,q.source,CASE WHEN p.next_review<=?1 THEN ?1 ELSE p.next_review END,p.next_review,p.mastery FROM progress p JOIN questions q ON q.id=p.question_id WHERE p.next_review<=?2 AND (p.next_review>?1 OR NOT EXISTS(SELECT 1 FROM attempts a WHERE a.question_id=p.question_id AND a.attempted_at>=?1 AND a.attempted_at<date(?1,'+1 day'))) ORDER BY CASE WHEN p.next_review<=?1 THEN 0 ELSE 1 END,p.next_review,q.id",
         )
         .map_err(|e| e.to_string())?;
     let rows = stmt
@@ -5325,10 +5335,10 @@ fn fetch_period_rows(
                 a.dim_rigor, a.dim_computation, a.dim_modeling, a.dim_method_use, a.dim_speed,
                 a.dim_strategy_insight, a.technique_level
          FROM attempts a JOIN questions q ON q.id=a.question_id
-         WHERE COALESCE(a.outcome,a.result) <> 'uncertain' AND substr(a.attempted_at,1,10) >= ?1",
+         WHERE COALESCE(a.outcome,a.result) <> 'uncertain' AND a.attempted_at >= ?1",
     );
     if to_exclusive.is_some() {
-        sql.push_str(" AND substr(a.attempted_at,1,10) < ?2");
+        sql.push_str(" AND a.attempted_at < ?2");
     }
     sql.push_str(" ORDER BY a.id");
     let mut stmt = conn.prepare(&sql).map_err(|e| e.to_string())?;
@@ -5730,7 +5740,7 @@ fn record_attempt(
         let mut stmt = conn
             .prepare(
                 "SELECT COALESCE(outcome,result) FROM attempts
-                 WHERE substr(attempted_at,1,10) = ?1 AND COALESCE(outcome,result) <> 'uncertain'
+                 WHERE attempted_at >= ?1 AND attempted_at < date(?1,'+1 day') AND COALESCE(outcome,result) <> 'uncertain'
                  ORDER BY id",
             )
             .map_err(|e| e.to_string())?;
@@ -5830,7 +5840,7 @@ fn undo_last_attempt_row_inner(
     // 自适应锚点与 EloStatus 历史仍读得到已撤销的作答。
     let attempt_id: Option<i64> = conn
         .query_row(
-            "SELECT id FROM attempts WHERE question_id=?1 AND substr(attempted_at,1,10)=?2
+            "SELECT id FROM attempts WHERE question_id=?1 AND attempted_at>=?2 AND attempted_at<date(?2,'+1 day')
              ORDER BY id DESC LIMIT 1",
             params![question_id, today],
             |r| r.get(0),
@@ -6806,8 +6816,8 @@ fn learning_center_shadow(conn: &Connection) -> Result<(Value, Vec<Value>), Stri
 
 fn learning_center_training(conn: &Connection, today: &str) -> Result<Value, String> {
     let counted = "lower(COALESCE(outcome,result)) NOT IN ('uncertain','unknown')";
-    let problems: i64 = conn.query_row(&format!("SELECT COUNT(*) FROM attempts WHERE substr(attempted_at,1,10)=?1 AND {counted}"), [today], |r| r.get(0)).map_err(|e| e.to_string())?;
-    let seconds: i64 = conn.query_row(&format!("SELECT COALESCE(SUM(duration_seconds),0) FROM attempts WHERE substr(attempted_at,1,10)=?1 AND {counted} AND duration_seconds BETWEEN 1 AND 1800"), [today], |r| r.get(0)).map_err(|e| e.to_string())?;
+    let problems: i64 = conn.query_row(&format!("SELECT COUNT(*) FROM attempts WHERE attempted_at>=?1 AND attempted_at<date(?1,'+1 day') AND {counted}"), [today], |r| r.get(0)).map_err(|e| e.to_string())?;
+    let seconds: i64 = conn.query_row(&format!("SELECT COALESCE(SUM(duration_seconds),0) FROM attempts WHERE attempted_at>=?1 AND attempted_at<date(?1,'+1 day') AND {counted} AND duration_seconds BETWEEN 1 AND 1800"), [today], |r| r.get(0)).map_err(|e| e.to_string())?;
     let weekly: i64 = conn.query_row(&format!("SELECT COUNT(*) FROM attempts WHERE date(attempted_at)>=date(?1,'-6 days') AND {counted}"), [today], |r| r.get(0)).map_err(|e| e.to_string())?;
     let weekly_seconds: i64 = conn.query_row(&format!("SELECT COALESCE(SUM(duration_seconds),0) FROM attempts WHERE date(attempted_at)>=date(?1,'-6 days') AND {counted} AND duration_seconds BETWEEN 1 AND 1800"), [today], |r| r.get(0)).map_err(|e| e.to_string())?;
     let due: i64 = conn.query_row("SELECT COUNT(*) FROM review_tasks WHERE status<>'closed' AND next_review_at IS NOT NULL AND next_review_at<=?1", [today], |r| r.get(0)).map_err(|e| e.to_string())?;
@@ -6916,7 +6926,7 @@ fn build_learning_center_snapshot(conn: &Connection, supp: Option<&Connection>) 
             for q in qids {
                 if let Some(qid) = q.as_i64() {
                     let has_correct_today: bool = conn.query_row(
-                        "SELECT EXISTS(SELECT 1 FROM attempts WHERE question_id=?1 AND substr(attempted_at,1,10)=?2 AND lower(COALESCE(outcome,result))='correct')",
+                        "SELECT EXISTS(SELECT 1 FROM attempts WHERE question_id=?1 AND attempted_at>=?2 AND attempted_at<date(?2,'+1 day') AND lower(COALESCE(outcome,result))='correct')",
                         params![qid, today],
                         |r| r.get(0),
                     ).unwrap_or(false);
@@ -7233,7 +7243,7 @@ fn get_session_scoreboard(
             id.to_string(),
         ),
         None => (
-            "substr(a.attempted_at,1,10)=?1".to_string(),
+            "a.attempted_at>=?1 AND a.attempted_at<date(?1,'+1 day')".to_string(),
             format!("substr(created_at,1,10)='{today}' AND reason='match'"),
             today,
         ),
@@ -7995,7 +8005,7 @@ async fn get_tactical_dashboard_stats(
                     .map(|d| (d + chrono::Duration::days(7)).to_string())
                     .unwrap_or_else(|_| "9999-12-31".into());
                 (
-                    " AND substr(a.attempted_at,1,10) >= ?1 AND substr(a.attempted_at,1,10) < ?2"
+                    " AND a.attempted_at >= ?1 AND a.attempted_at < ?2"
                         .into(),
                     vec![start.to_string()],
                     vec![to],
@@ -9075,7 +9085,7 @@ fn create_learning_task(input: LearningTaskInput, state: State<AppState>) -> Res
          LEFT JOIN attempts a ON a.question_id=q.id
          LEFT JOIN progress p ON p.question_id=q.id
          WHERE (?1='' OR q.category_path=?1 OR q.category_path LIKE ?1||' / %' OR q.category_path LIKE '%'||?1||'%' OR EXISTS(SELECT 1 FROM question_categories qc JOIN categories c ON c.id=qc.category_id WHERE qc.question_id=q.id AND (c.path=?1 OR c.path LIKE ?1||' / %' OR c.path LIKE '%'||?1||'%')))
-           AND NOT EXISTS(SELECT 1 FROM attempts at WHERE at.question_id=q.id AND substr(at.attempted_at,1,10)=date('now','localtime'))
+           AND NOT EXISTS(SELECT 1 FROM attempts at WHERE at.question_id=q.id AND at.attempted_at>=date('now','localtime') AND at.attempted_at<date('now','localtime','+1 day'))
          GROUP BY q.id
          ORDER BY CASE WHEN COUNT(a.id)=0 THEN 0 WHEN MAX(p.mastery) IS NULL OR MAX(p.mastery)<=2 THEN 1 ELSE 2 END,
                   q.difficulty ASC,q.id ASC LIMIT 80"
@@ -10210,7 +10220,7 @@ fn get_daily_trend(state: State<AppState>) -> Result<Vec<DailyTrendPoint>, Strin
         let date = (today - Duration::days(offset)).to_string();
         let (attempts, correct, rating): (i64, i64, Option<f64>) = conn
             .query_row(
-                "SELECT SUM(CASE WHEN COALESCE(outcome,result)<>'uncertain' THEN 1 ELSE 0 END), COALESCE(SUM(CASE WHEN COALESCE(outcome,result)='correct' THEN 1 ELSE 0 END),0), AVG(CASE WHEN COALESCE(outcome,result)<>'uncertain' THEN COALESCE(ai_rating, MAX(0.0, MIN(2.0, 1.0 + (COALESCE(fluency_rating,self_rating)-2.5) * ((2.0-0.0)/3.0)))) END) FROM attempts WHERE substr(attempted_at,1,10)=?1",
+                "SELECT SUM(CASE WHEN COALESCE(outcome,result)<>'uncertain' THEN 1 ELSE 0 END), COALESCE(SUM(CASE WHEN COALESCE(outcome,result)='correct' THEN 1 ELSE 0 END),0), AVG(CASE WHEN COALESCE(outcome,result)<>'uncertain' THEN COALESCE(ai_rating, MAX(0.0, MIN(2.0, 1.0 + (COALESCE(fluency_rating,self_rating)-2.5) * ((2.0-0.0)/3.0)))) END) FROM attempts WHERE attempted_at>=?1 AND attempted_at<date(?1,'+1 day')",
                 [&date],
                 |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
             )
@@ -12629,13 +12639,13 @@ fn auto_check_daily_plan_items_impl(
                 let target = item.target_count.unwrap_or(5);
                 let count: i64 = if let Some(ref cat) = item.category_path {
                     conn.query_row(
-                        "SELECT COUNT(*) FROM attempts a JOIN questions q ON a.question_id = q.id WHERE q.category_path LIKE ?1 AND substr(a.attempted_at, 1, 10) = ?2",
+                        "SELECT COUNT(*) FROM attempts a JOIN questions q ON a.question_id = q.id WHERE q.category_path LIKE ?1 AND a.attempted_at >= ?2 AND a.attempted_at < date(?2,'+1 day')",
                         [format!("%{cat}%"), plan_date.to_string()],
                         |r| r.get(0),
                     ).unwrap_or(0)
                 } else {
                     conn.query_row(
-                        "SELECT COUNT(*) FROM attempts WHERE substr(attempted_at, 1, 10) = ?1",
+                        "SELECT COUNT(*) FROM attempts WHERE attempted_at >= ?1 AND attempted_at < date(?1,'+1 day')",
                         [plan_date],
                         |r| r.get(0),
                     ).unwrap_or(0)
@@ -15803,7 +15813,7 @@ mod tests {
 
         // Query today_seconds with anomaly filtering
         let valid_seconds: i64 = conn.query_row(
-            "SELECT COALESCE(SUM(duration_seconds),0) FROM attempts WHERE substr(attempted_at,1,10)=?1 AND duration_seconds BETWEEN 1 AND 1800",
+            "SELECT COALESCE(SUM(duration_seconds),0) FROM attempts WHERE attempted_at>=?1 AND attempted_at<date(?1,'+1 day') AND duration_seconds BETWEEN 1 AND 1800",
             [&today],
             |r| r.get(0),
         ).unwrap();

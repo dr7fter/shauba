@@ -2495,7 +2495,6 @@ export function TodayView({
 
       {/* 答题后成就卡片 */}
       <AnimatePresence>
-        <AnimatePresence>
           {eloFlash && (
             <motion.div
               key="elo-flash"
@@ -2596,7 +2595,6 @@ export function TodayView({
               )}
             </motion.div>
           )}
-        </AnimatePresence>
         {scoreboard && <SessionScoreboardModal scoreboard={scoreboard} onClose={() => setScoreboard(null)} />}
         {highlight && (
           <HighlightMoment highlight={highlight} onDone={() => setHighlight(null)} />

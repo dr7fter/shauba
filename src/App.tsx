@@ -57,7 +57,6 @@ import {
   autoCheckDailyPlanItems,
 } from './api'
 import { BlitzExamModal } from './components/BlitzExamModal'
-import { FormulaDrawer } from './components/FormulaDrawer'
 import { PlanDrawer, PlanTopPill } from './components/PlanDrawer'
 import { CelebrationEffects, type CelebrationEvent } from './components/CelebrationEffects'
 import {
@@ -67,7 +66,6 @@ import {
   playAllClearFanfare,
 } from './utils/soundEffects'
 const FriendsLadderView = lazy(() => import('./components/FriendsLadderView').then((m) => ({ default: m.FriendsLadderView })))
-import { PressureLearningReportView } from './components/GradingReportModal'
 import { KeyboardHelpModal } from './components/KeyboardHelpModal'
 import { formatElapsed } from './utils'
 import type { BlitzExamResult } from './data/motivation'
@@ -97,6 +95,14 @@ import { MistakesView } from './views/MistakesView'
 const ReviewMapView = lazy(() => import('./views/ReviewView').then((m) => ({ default: m.ReviewMapView })))
 import { SettingsView } from './views/SettingsView'
 import { TodayView } from './views/TodayView'
+// 批改报告链（GradingReportModal + report/* ≈1.8k 行）与公式抽屉（含 763 行
+// formulas 静态数据）移出启动关键包：报告只在首次打开时拉取，公式数据不再进主包。
+const PressureLearningReportView = lazy(() =>
+  import('./components/GradingReportModal').then((m) => ({ default: m.PressureLearningReportView }))
+)
+const FormulaDrawer = lazy(() =>
+  import('./components/FormulaDrawer').then((m) => ({ default: m.FormulaDrawer }))
+)
 
 const navItems: Array<{ id: View; label: string; icon: typeof BookOpen }> = [
   { id: 'learning', label: '学习中心', icon: GraduationCap },
@@ -1590,12 +1596,14 @@ export default function App() {
         onClose={() => setCommandMenuOpen(false)}
         actions={commandActions}
       />
-      <FormulaDrawer
-        open={formulaDrawerOpen}
-        onClose={() => setFormulaDrawerOpen(false)}
-        currentQuestion={activeQuestion}
-        currentCategoryPath={activeQuestion?.categoryPath}
-      />
+      <Suspense fallback={null}>
+        <FormulaDrawer
+          open={formulaDrawerOpen}
+          onClose={() => setFormulaDrawerOpen(false)}
+          currentQuestion={activeQuestion}
+          currentCategoryPath={activeQuestion?.categoryPath}
+        />
+      </Suspense>
       <BlitzExamModal
         open={blitzModalOpen}
         onClose={() => setBlitzModalOpen(false)}
@@ -1608,29 +1616,31 @@ export default function App() {
       />
 
       {pressureReportOpen && pressureReport && pressureReportOrigin && (
-        <PressureLearningReportView
-          report={pressureReport}
-          reportOrigin={pressureReportOrigin}
-          session={pressureReportSession}
-          questions={pressureReportQuestions}
-          loading={pressureReportLoading}
-          onRefresh={() => {
-            if (pressureReportOrigin.kind === 'codex-batch') {
-              void openPressureReport({ taskId: pressureReportOrigin.taskId })
-            } else {
-              void openPressureReport({ sessionId: pressureReportOrigin.sessionId })
-            }
-          }}
-          onClose={() => {
-            setPressureReportOpen(false)
-            setPressureReportOrigin(null)
-          }}
-          onStartVariant={(questionId) => {
-            setPressureReportOpen(false)
-            setPressureReportOrigin(null)
-            void startVariantPractice(questionId)
-          }}
-        />
+        <Suspense fallback={null}>
+          <PressureLearningReportView
+            report={pressureReport}
+            reportOrigin={pressureReportOrigin}
+            session={pressureReportSession}
+            questions={pressureReportQuestions}
+            loading={pressureReportLoading}
+            onRefresh={() => {
+              if (pressureReportOrigin.kind === 'codex-batch') {
+                void openPressureReport({ taskId: pressureReportOrigin.taskId })
+              } else {
+                void openPressureReport({ sessionId: pressureReportOrigin.sessionId })
+              }
+            }}
+            onClose={() => {
+              setPressureReportOpen(false)
+              setPressureReportOrigin(null)
+            }}
+            onStartVariant={(questionId) => {
+              setPressureReportOpen(false)
+              setPressureReportOrigin(null)
+              void startVariantPractice(questionId)
+            }}
+          />
+        </Suspense>
       )}
 
       {sessionToRestore && (

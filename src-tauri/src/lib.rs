@@ -1215,13 +1215,21 @@ fn migrate_schema_impl(conn: &Connection, inject_failure: bool) -> rusqlite::Res
         )?;
 
         services::learning::init_schema(conn)?;
-        conn.execute_batch(
-            "UPDATE attempts SET outcome = result WHERE outcome IS NULL;
-             UPDATE attempts SET evidence_source = 'legacy' WHERE evidence_source IS NULL;
-             UPDATE attempts SET fluency_rating = self_rating WHERE fluency_rating IS NULL;",
-        )?;
-        backfill_recommendation_item_roles(conn)
-            .map_err(|e| rusqlite::Error::ToSqlConversionFailure(Box::new(std::io::Error::other(e))))?;
+        // 一次性历史回填：完成后在 settings 打标记，之后启动不再全表扫。
+        // 标记存在库内——恢复更早的备份会连同标记一起回退，回填自动重放。
+        if setting(conn, "legacy_backfills_done", "") != "1" {
+            conn.execute_batch(
+                "UPDATE attempts SET outcome = result WHERE outcome IS NULL;
+                 UPDATE attempts SET evidence_source = 'legacy' WHERE evidence_source IS NULL;
+                 UPDATE attempts SET fluency_rating = self_rating WHERE fluency_rating IS NULL;",
+            )?;
+            backfill_recommendation_item_roles(conn)
+                .map_err(|e| rusqlite::Error::ToSqlConversionFailure(Box::new(std::io::Error::other(e))))?;
+            conn.execute(
+                "INSERT OR REPLACE INTO settings(key,value) VALUES('legacy_backfills_done','1')",
+                [],
+            )?;
+        }
         Ok(())
     })();
 
@@ -2367,10 +2375,17 @@ fn backfill_confirmed_analysis_signals(conn: &Connection) -> Result<(), String> 
     // A projection fault is intentionally isolated from replay.  It must not make
     // startup fail or suppress diagnosis recovery for the next inbox record.
     retry_learning_projections_best_effort(conn);
+    // 此前每次启动全量重放所有 confirmed 载荷（解析 JSON + 重写 sidecar，只增不减）。
+    // 改为只处理「还没成功应用过」的行：apply 成功必写 codex_analysis_signals
+    // （INSERT OR REPLACE by task_id），缺行即未应用——新确认、晚确认、以及
+    // 仍有未解决失败审计的行。已应用的行连 payload 解析都省掉。
     let mut stmt = conn
         .prepare(
             "SELECT id,task_id,payload_json FROM codex_inbox
-             WHERE kind='analysis' AND status='confirmed' ORDER BY id ASC",
+             WHERE kind='analysis' AND status='confirmed'
+               AND (NOT EXISTS(SELECT 1 FROM codex_analysis_signals s WHERE s.task_id=codex_inbox.task_id)
+                    OR EXISTS(SELECT 1 FROM codex_backfill_failures f WHERE f.inbox_id=codex_inbox.id AND f.resolved=0))
+             ORDER BY id ASC",
         )
         .map_err(|e| e.to_string())?;
     let rows = stmt
@@ -12818,8 +12833,10 @@ pub fn run() {
                     saved
                 }
             };
+            // 启动冒烟用 quick_check（跳过索引逐项对账，成本低一个量级）；
+            // 完整 integrity_check 仍在备份导出与恢复预检里做，深检不缺位。
             let integrity: String = conn
-                .query_row("PRAGMA integrity_check", [], |r| r.get(0))
+                .query_row("PRAGMA quick_check", [], |r| r.get(0))
                 .unwrap_or_else(|_| "error".into());
             if integrity != "ok" {
                 eprintln!("[shuaba] 数据库完整性检查未通过：{integrity}，可从 backups/rolling/ 最近备份恢复");

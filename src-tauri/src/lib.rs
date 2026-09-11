@@ -5796,7 +5796,30 @@ fn undo_last_attempt(question_id: i64, state: State<AppState>) -> Result<UndoLas
     })
 }
 
+/// 撤销的原子包装：elo_events/attempts 删除 + 进度重算 + 题组回退收进一个
+/// savepoint，中途失败不再留下"结算删了、作答还在"或反之的半截撤销。
 fn undo_last_attempt_row(conn: &Connection, question_id: i64) -> Result<Option<f64>, String> {
+    conn.execute_batch("SAVEPOINT attempt_undo")
+        .map_err(|e| e.to_string())?;
+    match undo_last_attempt_row_inner(conn, question_id) {
+        Ok(delta) => {
+            if let Err(error) = conn.execute_batch("RELEASE attempt_undo") {
+                let _ = conn.execute_batch("ROLLBACK TO attempt_undo; RELEASE attempt_undo");
+                return Err(format!("撤销提交失败（已回滚）: {error}"));
+            }
+            Ok(delta)
+        }
+        Err(error) => {
+            let _ = conn.execute_batch("ROLLBACK TO attempt_undo; RELEASE attempt_undo");
+            Err(error)
+        }
+    }
+}
+
+fn undo_last_attempt_row_inner(
+    conn: &Connection,
+    question_id: i64,
+) -> Result<Option<f64>, String> {
     let now = Local::now().to_rfc3339();
     let today = Local::now().date_naive().to_string();
     // 先定位今天该题最新一条作答。ELO 结算行与作答同生共死：
@@ -7615,7 +7638,31 @@ fn get_rating_distribution(state: State<AppState>) -> Result<RatingDistribution,
     })
 }
 
+/// 单题作答写入的原子包装：attempts 插入 → learning evidence → ELO 结算 →
+/// progress UPSERT → 推荐题组 item，整串语句收进一个 savepoint。autocommit 下
+/// 它等价于一个事务（一次 fsync 而非 5+ 次）；调用方已持有事务时嵌套为 SAVEPOINT。
+/// 任一步失败则整体回滚，不再留下"有作答无进度"的半截状态。
+/// 注意：evidence 与 ELO 结算各自的"失败不阻断作答"语义在内层用独立 savepoint 表达。
 fn record_attempt_row(conn: &Connection, input: &AttemptInput) -> Result<i64, String> {
+    conn.execute_batch("SAVEPOINT attempt_write")
+        .map_err(|e| e.to_string())?;
+    match record_attempt_row_inner(conn, input) {
+        Ok(attempt_id) => {
+            if let Err(error) = conn.execute_batch("RELEASE attempt_write") {
+                let _ =
+                    conn.execute_batch("ROLLBACK TO attempt_write; RELEASE attempt_write");
+                return Err(format!("作答提交失败（已回滚）: {error}"));
+            }
+            Ok(attempt_id)
+        }
+        Err(error) => {
+            let _ = conn.execute_batch("ROLLBACK TO attempt_write; RELEASE attempt_write");
+            Err(error)
+        }
+    }
+}
+
+fn record_attempt_row_inner(conn: &Connection, input: &AttemptInput) -> Result<i64, String> {
     let now = Local::now();
     let duration = input.duration_seconds.clamp(1, 1800);
     let rating = input.self_rating.clamp(1, 4);
@@ -7700,8 +7747,22 @@ fn record_attempt_row(conn: &Connection, input: &AttemptInput) -> Result<i64, St
         complete_active_recommendation_item(conn, input.question_id, attempt_id)?;
         return Ok(attempt_id);
     }
-    // ELO settlement must never block the attempt itself.
-    if let Err(error) = settle_elo(conn, input, outcome, fluency_rating, duration, attempt_id) {
+    // ELO settlement must never block the attempt itself, and it must not leave a
+    // half settlement either：settle_elo 跨 6~7 条语句（锚点查询/elo 行/评级事件），
+    // 失败时在自己的 savepoint 内整体回滚，错误仍按既有语义吞掉上抛为日志。
+    let settlement = conn
+        .execute_batch("SAVEPOINT elo_settle")
+        .map_err(|e| e.to_string())
+        .and_then(|()| {
+            match settle_elo(conn, input, outcome, fluency_rating, duration, attempt_id) {
+                Ok(()) => conn.execute_batch("RELEASE elo_settle").map_err(|e| e.to_string()),
+                Err(error) => {
+                    let _ = conn.execute_batch("ROLLBACK TO elo_settle; RELEASE elo_settle");
+                    Err(error)
+                }
+            }
+        });
+    if let Err(error) = settlement {
         eprintln!(
             "ELO settlement skipped for question {}: {error}",
             input.question_id
@@ -13246,6 +13307,46 @@ mod tests {
         fs::remove_file(&c).unwrap();
         assert!(library_import_stamp(&dir).is_empty());
         let _ = fs::remove_dir_all(&dir);
+    }
+
+    fn minimal_attempt_input(question_id: i64, result: &str) -> AttemptInput {
+        AttemptInput {
+            question_id,
+            duration_seconds: 60,
+            result: result.into(),
+            self_rating: 3,
+            selected_answer: None,
+            mode: None,
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn failed_record_attempt_leaves_no_open_transaction() {
+        let conn = Connection::open_in_memory().unwrap();
+        init_schema(&conn).unwrap();
+        // question_id 无对应题目 → attempts 外键失败 → 守卫必须释放 SAVEPOINT，
+        // 否则悬空事务会裹住后续所有走同一连接的命令。
+        assert!(record_attempt_row(&conn, &minimal_attempt_input(999999, "wrong")).is_err());
+        assert!(conn.is_autocommit());
+    }
+
+    #[test]
+    fn failed_undo_leaves_no_open_transaction_and_full_write_path_commits() {
+        let conn = Connection::open_in_memory().unwrap();
+        init_schema(&conn).unwrap();
+        insert_test_question(&conn, 1, "高等数学 / 一元微分 / 导数");
+        assert!(undo_last_attempt_row(&conn, 1).is_err());
+        assert!(conn.is_autocommit());
+        // 正常路径：作答落库后 RELEASE 生效，attempts/progress 同事务共存
+        let attempt_id =
+            record_attempt_row(&conn, &minimal_attempt_input(1, "correct")).unwrap();
+        assert!(attempt_id > 0);
+        assert!(conn.is_autocommit());
+        let progress_count: i64 = conn
+            .query_row("SELECT COUNT(*) FROM progress WHERE question_id=1", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(progress_count, 1);
     }
 
     #[test]

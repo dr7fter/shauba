@@ -981,11 +981,12 @@ function parseFriendSnapshot(raw: string): ParseResult {
   const source = parsed.profile
   const friendCode = normalizeFriendCode(source.friendCode)
   if (!friendCode) return { ok: false, message: '好友码格式不正确' }
-  if (!bounded(source.nickname, 1, 32)) return { ok: false, message: '好友昵称格式不正确' }
+  if (!bounded(source.nickname, 1, 64)) return { ok: false, message: '好友昵称格式不正确' }
   if (!finite(source.currentElo, 0, 5000)) return { ok: false, message: '好友 ELO 数据超出有效范围', friendCode }
   if (source.profileId !== undefined && !validProfileId(source.profileId)) return { ok: false, message: '好友身份标识格式不正确', friendCode }
-  const dims = dimensions(source.dimensions, -1)
-  if (!dims) return { ok: false, message: '好友六维数据不完整或超出 0-100 范围', friendCode }
+  // 维度数据容错：如果旧版缺少某些新增维度（如 strategyInsight），自动回退基准分 50，避免跨版本拒收
+  const dims = dimensions(source.dimensions, 50)
+  if (!dims) return { ok: false, message: '好友六维数据格式不正确', friendCode }
 
   const peakElo = source.peakElo === undefined ? source.currentElo : source.peakElo
   const ratingPro = source.ratingPro === undefined ? 1 : source.ratingPro

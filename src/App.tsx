@@ -774,15 +774,30 @@ export default function App() {
     }
   }, [])
 
-  // 启动静默检查一次更新，有新版只做轻提示不打扰
+  // 启动检查更新（支持免打扰与跳过指定版本策略）
   const updateCheckedRef = useRef(false)
   useEffect(() => {
     if (updateCheckedRef.current) return
     updateCheckedRef.current = true
+
+    const policy = localStorage.getItem('shuaba_update_policy') ?? 'startup'
+    if (policy === 'manual') return
+
+    const now = Date.now()
+    if (policy === 'weekly') {
+      const lastCheck = Number(localStorage.getItem('shuaba_last_update_check_time') ?? '0')
+      if (now - lastCheck < 7 * 86400000) return
+    }
+
     void checkAppUpdate()
       .then((update) => {
+        localStorage.setItem('shuaba_last_update_check_time', String(now))
         if (update) {
-          setNotice(`发现新版本 v${update.version}，到 设置 → 版本与在线更新 一键升级`)
+          const dismissedVer = localStorage.getItem('shuaba_dismissed_update_version')
+          if (dismissedVer && dismissedVer === update.version) {
+            return
+          }
+          setNotice(`发现新版本 v${update.version}，可前往 设置 → 版本与在线更新 一键升级`)
         }
       })
       .catch(() => undefined)

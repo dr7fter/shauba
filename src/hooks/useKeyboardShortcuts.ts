@@ -22,6 +22,12 @@ export function useKeyboardShortcuts(actions: KeyboardShortcutActions) {
   })
 
   useEffect(() => {
+    let lastFocusTime = Date.now()
+    const onFocus = () => {
+      lastFocusTime = Date.now()
+    }
+    window.addEventListener('focus', onFocus)
+
     const onKey = (event: KeyboardEvent) => {
       // Don't trigger if user is typing in an input, textarea, or selecting options
       const target = event.target as HTMLElement | null
@@ -41,7 +47,13 @@ export function useKeyboardShortcuts(actions: KeyboardShortcutActions) {
 
       const keyUpper = event.key.toUpperCase()
 
-      if (event.key === 'Enter' || event.key === ' ') {
+      // 电脑息屏/睡眠唤醒或窗口刚恢复焦点后的 800ms 内，忽略回车与跳题，杜绝硬件唤醒误触
+      if (Date.now() - lastFocusTime < 800) {
+        if (event.key === 'Enter' || keyUpper === 'S') return
+      }
+
+      // 仅允许 Enter 翻转与提交，彻底取消 Space 空格键绑定（避免电脑按空格唤醒时跳题）
+      if (event.key === 'Enter') {
         event.preventDefault()
         if (!actionsRef.current.revealed) {
           actionsRef.current.reveal()
@@ -70,6 +82,9 @@ export function useKeyboardShortcuts(actions: KeyboardShortcutActions) {
     }
 
     window.addEventListener('keydown', onKey)
-    return () => window.removeEventListener('keydown', onKey)
+    return () => {
+      window.removeEventListener('focus', onFocus)
+      window.removeEventListener('keydown', onKey)
+    }
   }, [])
 }

@@ -18,7 +18,7 @@ export function KeyboardHelpModal({ open, onClose }: KeyboardHelpModalProps) {
   ]
 
   const practiceShortcuts = [
-    { key: 'Space / Enter', desc: '看答案（未翻转时） / 记录并进入下一题（自评后）' },
+    { key: 'Enter', desc: '看答案（未翻转时） / 记录并进入下一题（自评后；已解绑空格键防电脑唤醒误触）' },
     { key: '1 ~ 4', desc: '极速自评流畅度：1·没思路 2·没做完 3·稍有迟疑 4·流畅秒杀' },
     { key: 'A / B / C / D', desc: '快速勾选或切换选择题选项' },
     { key: 'S', desc: '跳过当前题目，移至今日训练队列末尾' },

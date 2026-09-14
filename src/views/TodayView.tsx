@@ -604,7 +604,7 @@ export function TodayView({
     [queue, index, replaceQueueWithinRound, onQueueChange, notify],
   )
 
-  // Keyboard shortcut for Pressure Mode Pause (P / Space)
+  // Keyboard shortcut for Pressure Mode Pause (P / Enter)
   useEffect(() => {
     if (!pressureMode) return
     const onKey = (e: KeyboardEvent) => {
@@ -613,7 +613,7 @@ export function TodayView({
       if (e.key === 'p' || e.key === 'P') {
         e.preventDefault()
         togglePressurePause()
-      } else if (isPressurePaused && (e.key === ' ' || e.key === 'Enter')) {
+      } else if (isPressurePaused && e.key === 'Enter') {
         e.preventDefault()
         togglePressurePause()
       }

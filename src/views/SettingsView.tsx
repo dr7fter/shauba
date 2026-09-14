@@ -71,6 +71,37 @@ export function SettingsView({
   const [userSchool, setUserSchool] = useState('考研数学一 · 目标985')
   const [userAvatar, setUserAvatar] = useState('🚀')
 
+  const [updatePolicy, setUpdatePolicy] = useState<'startup' | 'weekly' | 'manual'>(() => {
+    return (localStorage.getItem('shuaba_update_policy') as 'startup' | 'weekly' | 'manual') ?? 'startup'
+  })
+  const [dismissedVersion, setDismissedVersion] = useState<string | null>(() => {
+    return localStorage.getItem('shuaba_dismissed_update_version')
+  })
+
+  const handleUpdatePolicyChange = (policy: 'startup' | 'weekly' | 'manual') => {
+    setUpdatePolicy(policy)
+    localStorage.setItem('shuaba_update_policy', policy)
+    notify(
+      policy === 'manual'
+        ? '已开启「仅手动检查」免打扰模式：启动时绝不弹窗打扰，完全沉浸备考'
+        : policy === 'weekly'
+        ? '已设为「每周检查一次」：避免频繁打扰'
+        : '已设为「每次启动检查」'
+    )
+  }
+
+  const handleToggleDismissVersion = (version: string) => {
+    if (dismissedVersion === version) {
+      localStorage.removeItem('shuaba_dismissed_update_version')
+      setDismissedVersion(null)
+      notify(`已恢复 v${version} 的提醒`)
+    } else {
+      localStorage.setItem('shuaba_dismissed_update_version', version)
+      setDismissedVersion(version)
+      notify(`已跳过 v${version}：启动时将不再提示此版本`)
+    }
+  }
+
   useEffect(() => {
     void getSeasonStatus().then(setSeason).catch(() => undefined)
     void getLibraryPath().then(setLibraryPathInput).catch(() => undefined)
@@ -310,13 +341,57 @@ export function SettingsView({
               </button>
 
               {updateResult?.hasUpdate && (
-                <button
-                  className="secondary-button compact accent"
-                  onClick={() => setShowUpdateModal(true)}
-                >
-                  <Sparkles size={14} /> 查看更新详情
-                </button>
+                <>
+                  <button
+                    className="secondary-button compact accent"
+                    onClick={() => setShowUpdateModal(true)}
+                  >
+                    <Sparkles size={14} /> 查看更新详情
+                  </button>
+                  <button
+                    type="button"
+                    className="secondary-button compact"
+                    onClick={() => handleToggleDismissVersion(updateResult.latestVersion)}
+                    title="跳过此版本后，启动时将不再提示该版本"
+                  >
+                    {dismissedVersion === updateResult.latestVersion ? '已跳过此版本' : '跳过此版本'}
+                  </button>
+                </>
               )}
+            </div>
+
+            <div className="setting-form-group" style={{ marginTop: '16px' }}>
+              <label style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                <span>启动提醒频率（考研冲刺免打扰）</span>
+                {dismissedVersion && (
+                  <span style={{ fontSize: '11px', color: 'var(--muted)' }}>
+                    当前已跳过版本: <b>v{dismissedVersion}</b>
+                  </span>
+                )}
+              </label>
+              <div className="segmented wide">
+                <button
+                  type="button"
+                  className={updatePolicy === 'startup' ? 'active' : ''}
+                  onClick={() => handleUpdatePolicyChange('startup')}
+                >
+                  每次启动检查
+                </button>
+                <button
+                  type="button"
+                  className={updatePolicy === 'weekly' ? 'active' : ''}
+                  onClick={() => handleUpdatePolicyChange('weekly')}
+                >
+                  每周检查一次
+                </button>
+                <button
+                  type="button"
+                  className={updatePolicy === 'manual' ? 'active' : ''}
+                  onClick={() => handleUpdatePolicyChange('manual')}
+                >
+                  仅手动检查 (免打扰)
+                </button>
+              </div>
             </div>
           </div>
         </div>

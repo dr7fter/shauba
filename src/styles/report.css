@@ -1307,13 +1307,16 @@
   overflow-x: auto;
 }
 
-.rp-wt-q:has(.math-display) {
-  background: var(--canvas);
-}
-
 .rp-wt-q.missed {
   border-style: dashed;
   opacity: 0.72;
+}
+
+/* 「原式 / 由 … 得」这类引导词：公式已居中独占一行，它留在上一行做标签 */
+.rp-wt-qlabel {
+  display: block;
+  font-size: var(--fs-sm);
+  color: var(--muted);
 }
 
 .rp-wt-qtag {
@@ -1325,7 +1328,7 @@
 
 /* 断点命中的那一步：整步标红，不只是在右栏说一句 */
 .rp-wt-step.at-fault .rp-wt-n {
-  background: var(--danger-soft, var(--sunken));
+  background: var(--danger-soft);
   border-color: var(--danger);
   color: var(--danger);
 }
@@ -1337,7 +1340,7 @@
 
 .rp-wt-step.at-fault .rp-wt-q {
   border-color: var(--danger);
-  background: var(--danger-soft, var(--canvas));
+  background: var(--danger-soft);
 }
 
 /* ---------- 右栏：批注 ---------- */
@@ -1451,6 +1454,23 @@
   gap: 8px;
   align-items: start;
   padding: 5px 0;
+}
+
+/* 逐题节奏里「对 / 半 / 错」的结果字：独立命名，不蹭 .rp-yes / .rp-no
+   （那两个已被 .rp-ev-k / .rp-rule-k 复用，改了会波及评分证据段） */
+.rp-outcome-yes {
+  color: var(--success);
+  font-weight: 700;
+}
+
+.rp-outcome-no {
+  color: var(--danger);
+  font-weight: 700;
+}
+
+.rp-outcome-mid {
+  color: var(--warn-strong);
+  font-weight: 700;
 }
 
 /* ==================== 键盘流的最低成本回报：焦点可见 ==================== */

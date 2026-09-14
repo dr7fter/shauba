@@ -61,9 +61,29 @@ export type { FixState } from '../../domain/reportViewModel'
  */
 function MathBlock({ value }: { value: string }) {
   const trimmed = value.trim()
-  const solo =
-    /^\$[^$]+\$$/.test(trimmed) && !/^\$\$/.test(trimmed)
-  return <MathText value={solo ? `$$${trimmed.slice(1, -1)}$$` : trimmed} />
+  // 整段就是一个公式 → 直接提升为展示级
+  if (/^\$[^$]+\$$/.test(trimmed)) {
+    return <MathText value={`$$${trimmed.slice(1, -1)}$$`} />
+  }
+  // 「原式 $=…$」这类：正文只是个引导词（≤12 字），真正要看的是公式——
+  // 公式居中独占一行，引导词留在上一行。计算量大的题全靠这条撑起可读性。
+  const plain = trimmed.replace(/\$[^$]+\$/g, '').replace(/\s+/g, '')
+  if (plain.length <= 12 && /\$[^$]+\$/.test(trimmed)) {
+    return (
+      <>
+        {trimmed.split(/(\$[^$]+\$)/).map((seg, index) =>
+          seg.startsWith('$') && seg.endsWith('$') && seg.length > 2 ? (
+            <MathText key={index} value={`$$${seg.slice(1, -1)}$$`} />
+          ) : seg.trim() ? (
+            <span className="rp-wt-qlabel" key={index}>
+              {seg.trim()}
+            </span>
+          ) : null,
+        )}
+      </>
+    )
+  }
+  return <MathText value={trimmed} />
 }
 
 /** 复发信号：同编码再次命中。若本次用时明显短于首次，说明错路已被自动化。 */

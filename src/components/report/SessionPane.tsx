@@ -6,7 +6,12 @@ import type { CategoryTimeBaseline, Question } from '../../types'
 const BAR_COLOR = { correct: 'var(--success)', partial: 'var(--warn)', wrong: 'var(--danger)', uncertain: 'var(--muted)' }
 
 const OUTCOME_SHORT = { correct: '对', partial: '半', wrong: '错', uncertain: '?' }
-const OUTCOME_TEXT = { correct: 'rp-yes', partial: '', wrong: 'rp-no', uncertain: 'rp-quiet' }
+const OUTCOME_TEXT = {
+  correct: 'rp-outcome-yes',
+  partial: 'rp-outcome-mid',
+  wrong: 'rp-outcome-no',
+  uncertain: 'rp-quiet',
+}
 
 /**
  * 「本场」视图：事后看趋势的地方。

@@ -1,15 +1,20 @@
-import { CS_RATING_MAX, csRatingAccent, formatElapsed, gradeOutcomeKey } from '../../utils'
+import { formatElapsed, gradeOutcomeKey } from '../../utils'
 import { timeBaselineFor, type ReportViewModel } from '../../domain/reportViewModel'
 import { Icon } from '../ui/Icon'
 import type { CategoryTimeBaseline, Question } from '../../types'
 
 const BAR_COLOR = { correct: 'var(--success)', partial: 'var(--warn)', wrong: 'var(--danger)', uncertain: 'var(--muted)' }
 
+const OUTCOME_SHORT = { correct: '对', partial: '半', wrong: '错', uncertain: '?' }
+const OUTCOME_TEXT = { correct: 'rp-yes', partial: '', wrong: 'rp-no', uncertain: 'rp-quiet' }
+
 /**
  * 「本场」视图：事后看趋势的地方。
  *
- * 雷达图、逐题 rating、考场预测全部搬到这里——它们不参与复盘当下的决策，
- * 放在主屏只会抢走注意力。
+ * 2026-09-15：CS Rating 与六维图整条下线——它们是娱乐性展示，
+ * 且每维都要批改 AI 写 evidence，会挤占写解析的注意力。
+ * 评分内核照旧吃 AI 回传的 dimensions，只是不再给学员看。
+ * 留下的都是能驱动决策的东西：正确率、用时、止损失效、考场预测。
  */
 export function SessionPane({
   vm,
@@ -20,7 +25,9 @@ export function SessionPane({
   questions: Record<number, Question>
   timeBaselines: Record<string, Pick<CategoryTimeBaseline, 'medianSeconds' | 'sampleCount'>>
 }) {
-  const { grades, ratingScores, counts, accuracy, averageRatingScore, ratingDimensions } = vm
+  const { grades, counts, accuracy } = vm
+  /* 条形长度按本场最长用时归一：只看相对节奏，不暗示"分数" */
+  const maxDuration = grades.reduce((max, grade) => Math.max(max, grade.duration ?? 0), 0)
   const avgDuration = grades.length ? Math.round(vm.totalDuration / grades.length) : 0
   /* 含水量：lucky/detour 独立计数，不动正确率与 ELO 口径（2026-09-04 拍板） */
   const luckyCount = grades.filter((grade) => grade.methodSoundness === 'lucky').length
@@ -44,15 +51,6 @@ export function SessionPane({
           </small>
         </div>
         <div>
-          <span>平均 Rating</span>
-          <strong>
-            {averageRatingScore != null ? averageRatingScore.toFixed(2) : '—'}
-          </strong>
-          <small>
-            证据覆盖 {vm.evidenceCoverage}/{vm.gradedCount}
-          </small>
-        </div>
-        <div>
           <span>总用时</span>
           <strong>{formatElapsed(vm.totalDuration * 1000)}</strong>
           <small>
@@ -71,7 +69,7 @@ export function SessionPane({
         </div>
       ) : null}
 
-      <div className="rp-h">逐题 Rating</div>
+      <div className="rp-h">逐题节奏</div>
       {grades.length === 0 ? (
         <div className="empty-state">
           <Icon name="book" size="lg" />
@@ -79,10 +77,11 @@ export function SessionPane({
         </div>
       ) : (
         grades.map((grade, index) => {
-          const score = ratingScores[index]
           const outcome = gradeOutcomeKey(grade)
-          const accent = csRatingAccent(score)
-          const width = score != null ? Math.min(100, Math.max(4, (score / CS_RATING_MAX) * 100)) : 0
+          const width =
+            maxDuration > 0
+              ? Math.min(100, Math.max(4, ((grade.duration ?? 0) / maxDuration) * 100))
+              : 0
           /* 用时 vs 基准：样本 ≥3 用个人中位，否则 ≈ 标注回退题型基准 */
           const question = questions[grade.questionId]
           const baseline = timeBaselineFor(question?.categoryPath, question?.questionType, timeBaselines)
@@ -103,7 +102,7 @@ export function SessionPane({
               <span className="rp-bar">
                 <i style={{ width: `${width}%`, background: BAR_COLOR[outcome] }} />
               </span>
-              <span className="rp-w40">{score != null ? score.toFixed(2) : '—'}</span>
+              <span className={`rp-w40 ${OUTCOME_TEXT[outcome]}`}>{OUTCOME_SHORT[outcome]}</span>
               <span className="rp-w42 rp-quiet">
                 {formatElapsed((grade.duration ?? 0) * 1000)}
               </span>
@@ -114,27 +113,10 @@ export function SessionPane({
               >
                 {deltaText}
               </span>
-              {accent === 'donk' ? (
-                <span className="rp-icon-chip ic-gold" title="高光突破">
-                  <Icon name="crown" size="sm" />
-                </span>
-              ) : null}
             </div>
           )
         })
       )}
-
-      <div className="rp-h">六维特征</div>
-      {ratingDimensions.map((dim) => (
-        <div className="rp-bar-row" key={`dim-${dim.key}`}>
-          <span className="rp-w72">{dim.label}</span>
-          <span className="rp-bar">
-            <i style={{ width: `${dim.value ?? 0}%` }} />
-          </span>
-          <span className="rp-w30">{dim.value != null ? dim.value : '—'}</span>
-          <span className="rp-w56 rp-quiet">{dim.count} 题证据</span>
-        </div>
-      ))}
 
       <div className="rp-h">考场预测</div>
       <div className="insight-summary">

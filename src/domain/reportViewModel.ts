@@ -326,6 +326,98 @@ export function buildReportViewModel(
   }
 }
 
+// ============ 完整解答主轴 · 派生层（量规第九节） ============
+
+export type WalkthroughStepView = {
+  n: number
+  title: string | null
+  prose: string | null
+  quote: string | null
+  /** true 命中题库正解；false 未命中（灰显 +「AI 补充」）；null 无正解可比对 */
+  hit: boolean | null
+}
+
+export type WalkthroughView = {
+  lead: string | null
+  steps: WalkthroughStepView[]
+  /** 命中步数 / 总步数，无正解可比对时为 null */
+  hitText: string | null
+}
+
+/** 抹掉一切空白再比对：题库正解与 AI 回传的换行/空格不必完全一致 */
+function squeeze(input: string): string {
+  return input.replace(/\s+/g, '')
+}
+
+/**
+ * 逐步闸门：quote 必须是题库正解的逐字子串。
+ * 这是防幻觉的唯一关口——命中才证明这一步出自权威正解。
+ */
+export function buildWalkthroughView(
+  grade: QuestionGrade,
+  question: Question | null | undefined,
+): WalkthroughView | null {
+  const raw = grade.diagnosis?.walkthrough
+  if (!raw) return null
+  const steps = Array.isArray(raw.steps) ? raw.steps : []
+  if (steps.length === 0) return null
+
+  const expl = question?.explanation ?? null
+  const norm = expl && expl.trim() ? squeeze(expl) : ''
+
+  const views: WalkthroughStepView[] = steps.map((step, index) => {
+    const quote = typeof step?.quote === 'string' && step.quote.trim() ? step.quote.trim() : null
+    let hit: boolean | null = null
+    if (quote) hit = norm ? norm.includes(squeeze(quote)) : null
+    return {
+      n: typeof step?.n === 'number' ? step.n : index + 1,
+      title: typeof step?.title === 'string' && step.title.trim() ? step.title : null,
+      prose: typeof step?.prose === 'string' && step.prose.trim() ? step.prose : null,
+      quote,
+      hit,
+    }
+  })
+
+  const checked = views.filter((v) => v.hit != null)
+  const hitText =
+    checked.length > 0 ? `${checked.filter((v) => v.hit).length}/${checked.length}` : null
+
+  return {
+    lead: typeof raw.lead === 'string' && raw.lead.trim() ? raw.lead : null,
+    steps: views,
+    hitText,
+  }
+}
+
+/** diagnosis.breakpoints（量规第十节）——主断点之外的其余错误点 */
+export type DiagnosisBreakpointView = {
+  n: number
+  tag: string
+  why: string | null
+  stepRef: number | null
+  severity: BreakpointSeverity | null
+}
+
+export function buildDiagnosisBreakpoints(grade: QuestionGrade): DiagnosisBreakpointView[] {
+  const raw = grade.diagnosis?.breakpoints
+  if (!Array.isArray(raw)) return []
+  return raw
+    .map((item, index) => {
+      const tag = typeof item?.tag === 'string' ? item.tag.trim() : ''
+      if (!tag) return null
+      const severity = item?.severity
+      return {
+        n: typeof item?.n === 'number' ? item.n : index + 1,
+        tag,
+        why: typeof item?.why === 'string' && item.why.trim() ? item.why : null,
+        stepRef: typeof item?.stepRef === 'number' ? item.stepRef : null,
+        severity:
+          severity === 'L1' || severity === 'L2' || severity === 'L3' ? severity : null,
+      }
+    })
+    .filter((v): v is DiagnosisBreakpointView => v != null)
+}
+
 // ============ E1 断点工单 · 派生层 ============
 
 export type BreakpointSeverity = 'L1' | 'L2' | 'L3'

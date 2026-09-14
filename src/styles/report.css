@@ -21,8 +21,9 @@
 /* ============================ 窗口与顶栏 ============================ */
 
 .rp-win {
-  width: min(1560px, 96vw);
-  height: min(890px, calc(100vh - 36px));
+  /* 报告是「读」的界面，不是弹窗：尽量铺满，给解析主轴和右栏批注腾出宽度 */
+  width: min(1760px, 98vw);
+  height: min(960px, calc(100vh - 20px));
   display: flex;
   flex-direction: column;
   overflow: hidden;
@@ -191,7 +192,8 @@
 
 .rp-view {
   padding: 24px 36px 52px;
-  max-width: 72rem;
+  /* 解析主轴 + 右栏批注需要横向空间，72rem 会把两列压扁 */
+  max-width: 1440px;
   width: 100%;
   box-sizing: border-box;
 }
@@ -1185,6 +1187,272 @@
   color: var(--muted);
 }
 
+/* ==================== 解析主轴 + 右栏批注 ====================
+   主列是整道题的完整正解，右列是断点 / 工具 / 规则 / 更省的解法。
+   两列都从页面顶端开始，长解析滚动时批注始终可见（sticky）。 */
+
+.rp-solution {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 320px;
+  gap: 22px;
+  align-items: start;
+  margin: 16px 0 20px;
+}
+
+/* ---------- 主列：完整解答 ---------- */
+
+.rp-wt {
+  min-width: 0;
+  padding: 20px 24px 24px;
+  border: 1px solid var(--line);
+  border-radius: var(--r-md);
+  background: var(--surface);
+  box-shadow: var(--shadow-1);
+}
+
+.rp-wt-hd {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+  padding-bottom: 10px;
+  margin-bottom: 14px;
+  border-bottom: 1px solid var(--line);
+}
+
+.rp-wt-k {
+  font-size: var(--fs-md);
+  font-weight: 700;
+  letter-spacing: 0.02em;
+  color: var(--ink);
+}
+
+.rp-wt-src {
+  flex: none;
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+  font-size: var(--fs-xs);
+  color: var(--success);
+}
+
+.rp-wt-lead {
+  margin: 0 0 16px;
+  padding: 10px 14px;
+  border-left: 3px solid var(--success);
+  border-radius: 0 var(--r-xs) var(--r-xs) 0;
+  background: var(--sunken);
+  font-size: 15px;
+  line-height: 1.85;
+  color: var(--ink);
+}
+
+.rp-wt-steps {
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.rp-wt-step {
+  display: grid;
+  grid-template-columns: 28px minmax(0, 1fr);
+  gap: 12px;
+}
+
+/* 步号：圆形徽标，从上往下读的时候靠它定位 */
+.rp-wt-n {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  background: var(--sunken);
+  border: 1px solid var(--line);
+  font-family: var(--font-mono);
+  font-size: var(--fs-sm);
+  font-weight: 700;
+  color: var(--muted);
+}
+
+.rp-wt-b {
+  min-width: 0;
+}
+
+.rp-wt-t {
+  margin-bottom: 5px;
+  font-size: 15.5px;
+  font-weight: 700;
+  line-height: 1.6;
+  color: var(--ink);
+}
+
+.rp-wt-p {
+  font-size: 15px;
+  line-height: 1.95;
+  color: var(--ink);
+}
+
+/* 权威式子：来自题库正解的逐字片段，块级居中展示 */
+.rp-wt-q {
+  margin-top: 10px;
+  padding: 12px 16px;
+  border: 1px solid var(--line);
+  border-radius: var(--r-sm);
+  background: var(--canvas);
+  font-size: 16px;
+  line-height: 1.9;
+  overflow-x: auto;
+}
+
+.rp-wt-q:has(.math-display) {
+  background: var(--canvas);
+}
+
+.rp-wt-q.missed {
+  border-style: dashed;
+  opacity: 0.72;
+}
+
+.rp-wt-qtag {
+  display: block;
+  margin-top: 8px;
+  font-size: var(--fs-xs);
+  color: var(--muted);
+}
+
+/* 断点命中的那一步：整步标红，不只是在右栏说一句 */
+.rp-wt-step.at-fault .rp-wt-n {
+  background: var(--danger-soft, var(--sunken));
+  border-color: var(--danger);
+  color: var(--danger);
+}
+
+.rp-wt-step.at-fault .rp-wt-t,
+.rp-wt-step.at-fault .rp-wt-p {
+  color: var(--danger);
+}
+
+.rp-wt-step.at-fault .rp-wt-q {
+  border-color: var(--danger);
+  background: var(--danger-soft, var(--canvas));
+}
+
+/* ---------- 右栏：批注 ---------- */
+
+.rp-anno {
+  position: sticky;
+  top: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  min-width: 0;
+}
+
+.rp-anno-sec {
+  padding: 14px 16px;
+  border: 1px solid var(--line);
+  border-radius: var(--r-md);
+  background: var(--surface);
+  box-shadow: var(--shadow-1);
+}
+
+.rp-anno-hd {
+  margin-bottom: 10px;
+  font-family: var(--font-mono);
+  font-size: var(--fs-xs);
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  color: var(--quiet);
+}
+
+.rp-anno-list {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.rp-anno-item {
+  display: grid;
+  grid-template-columns: 20px minmax(0, 1fr);
+  gap: 8px;
+}
+
+.rp-anno-n {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  background: var(--danger);
+  color: #fff;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.rp-anno-b {
+  min-width: 0;
+}
+
+.rp-anno-tag {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  font-size: 14px;
+  font-weight: 700;
+  line-height: 1.6;
+  color: var(--ink);
+}
+
+.rp-anno-why {
+  font-size: 13.5px;
+  line-height: 1.8;
+  color: var(--muted);
+}
+
+.rp-anno-ref {
+  margin-top: 4px;
+  font-family: var(--font-mono);
+  font-size: var(--fs-xs);
+  color: var(--muted);
+}
+
+.rp-anno-ref b {
+  color: var(--ink);
+}
+
+.rp-anno-tools {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.rp-anno-tool {
+  padding: 3px 9px;
+  border: 1px solid var(--line);
+  border-radius: var(--r-xs);
+  background: var(--sunken);
+  font-size: 13px;
+  line-height: 1.7;
+  color: var(--ink);
+}
+
+.rp-anno-rule {
+  display: grid;
+  grid-template-columns: 40px minmax(0, 1fr);
+  gap: 8px;
+  align-items: start;
+  padding: 5px 0;
+}
+
 /* ==================== 键盘流的最低成本回报：焦点可见 ==================== */
 /* 这份界面主推 j/k 与 Tab，没有 :focus-visible 等于键盘不可用 */
 .rp-win :is(button, [role='button'], a, input, textarea, select):focus-visible,
@@ -1203,9 +1471,16 @@
 
 /* ============================ 窄屏 ============================ */
 
+@media (max-width: 1180px) {
+  /* 窄一点就把批注挪到解析下方：两列会一起被压扁，反而更难读 */
+  .rp-solution { grid-template-columns: minmax(0, 1fr); }
+  .rp-anno { position: static; }
+}
+
 @media (max-width: 900px) {
   .rp-body { grid-template-columns: 190px minmax(0, 1fr); }
   .rp-view { padding: 16px 18px 40px; }
   .rp-fork { grid-template-columns: minmax(0, 1fr); }
   .rp-fork-mid { display: none; }
+  .rp-wt { padding: 16px 14px 18px; }
 }

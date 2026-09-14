@@ -2,7 +2,6 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { addDailyPlanItem, getCategoryTimeBaselines, getErrorCodeHistory, getQuestionAttemptHistory, getQuestionsLearningMeta, saveNote } from '../../api'
 import { benchmarkSeconds, formatElapsed, gradeOutcomeKey } from '../../utils'
 import {
-  baselineDimensionValues,
   buildBreakpointGroups,
   buildGradeFlow,
   buildReportViewModel,
@@ -103,7 +102,6 @@ export function ReportWindow({
   )
 
   /* 本组六维基线：单题极差最大的那一维要跟它对照才有意义 */
-  const dimBaseline = useMemo(() => baselineDimensionValues(vm.grades), [vm.grades])
 
   const groups: BreakpointGroup[] = useMemo(
     () => buildBreakpointGroups(vm.grades, history),
@@ -502,7 +500,6 @@ export function ReportWindow({
                     benchmarkSec={benchmarkSeconds(activeQuestion?.questionType)}
                     history={activeHistory}
                     encounters={encounters}
-                    dimBaseline={dimBaseline}
                     group={activeGroup}
                     meta={learningMetas[activeGrade.questionId] ?? null}
                     digest={digest}

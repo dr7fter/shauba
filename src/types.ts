@@ -246,6 +246,44 @@ export type GradingDiagnosis = {
   whyItWorked?: string | null
   /** 本题用到的数一工具（全部在考纲内）：定理、公式、性质等列表 */
   syllabusTools?: string[] | null
+  /** 完整解答主轴——报告正中央那一列，正解的唯一完整处 */
+  walkthrough?: Walkthrough | null
+  /** 主断点之外的其余错误点，逐条带解释 */
+  breakpoints?: DiagnosisBreakpoint[] | null
+}
+
+/**
+ * 完整解答的一步（量规第九节）。
+ *
+ * `quote` 是题库正解里的**逐字子串**，前端用它 indexOf 定位来源；
+ * 命中即证明这一步出自权威正解，未命中/为 null 时按「AI 补充」降级渲染。
+ */
+export type WalkthroughStep = {
+  n?: number | null
+  /** 动作式小标题 */
+  title?: string | null
+  /** 这步为什么这么做——讲理由，不复读公式 */
+  prose?: string | null
+  /** 题库正解中对应片段的逐字子串（含 $LaTeX$）；无对应则 null */
+  quote?: string | null
+}
+
+/** 完整解答主轴：学员只读这一段就能复现正确动作 */
+export type Walkthrough = {
+  /** 领起句：本题最省路径是什么 */
+  lead?: string | null
+  steps?: WalkthroughStep[] | null
+}
+
+/** diagnosis.breakpoints 的一条：主断点之外的次要错误点（量规第十节） */
+export type DiagnosisBreakpoint = {
+  n?: number | null
+  tag?: string | null
+  /** 为什么会错（一句话） */
+  why?: string | null
+  /** 对应 walkthrough 第几步；null = 错路内的二次错误，正解无对应步（语义，非漏填） */
+  stepRef?: number | null
+  severity?: 'L1' | 'L2' | 'L3' | null
 }
 
 /** 同 errorCode 的一次历史命中（复发时间线，来自 codex_inbox 的批改载荷） */

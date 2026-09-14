@@ -15251,6 +15251,96 @@ mod tests {
     }
 
     #[test]
+    fn walkthrough_and_breakpoints_survive_inbox_roundtrip() {
+        // 完整解答是报告的主轴。它若在入库时被静默丢掉，报告会退回旧的
+        // fork.standardPath 降级渲染——而那条路径此前会用 AI 写的补线法顶掉题库权威正解。
+        // 这个测试锁住 walkthrough / breakpoints 两个新字段的完整留存（含嵌套 quote）。
+        let conn = Connection::open_in_memory().unwrap();
+        init_schema(&conn).unwrap();
+        insert_test_question(&conn, 7, "高等数学 / 多元函数积分学");
+
+        let raw = r#"{
+            "schemaVersion":1,"kind":"batch","taskId":"SB-WT-1","summary":"摘要",
+            "confidence":0.9,"recommendedQuestionIds":[],
+            "batchAttempts":[{
+                "questionId":7,"result":"wrong","selfRating":2,"durationSeconds":300,
+                "summary":"对称性漏判","verdict":"partial",
+                "earliestError":"第 2 行","errorTags":["瞄准失误"],
+                "stepScore":60,"confidence":0.9,"rating":1.0,
+                "dimensions":{"rigor":{"score":80,"confidence":0.9,"evidence":"草稿第 2 行"}},
+                "diagnosis":{
+                    "errorCode":"E-027","title":"对称性漏判","severity":"L2",
+                    "myEntry":"直接展开","whyDeadEnd":"未先判奇偶",
+                    "walkthrough":{
+                        "lead":"本题最省路径是先判奇偶再化归单卦限",
+                        "steps":[
+                            {"n":1,"title":"利用对称奇偶性排除零积分项",
+                             "prose":"交叉项关于某一变量为奇，积分为零",
+                             "quote":"展开后交叉项 $xy$ 关于 $x$ 为奇，积分为 $0$"},
+                            {"n":2,"title":"化归第一卦限",
+                             "prose":"偶函数部分等于四倍第一卦限积分",
+                             "quote":null}
+                        ]
+                    },
+                    "breakpoints":[
+                        {"n":1,"tag":"交叉项未判奇偶","why":"直接展开漏掉对称性",
+                         "stepRef":1,"severity":"L2"},
+                        {"n":2,"tag":"末步系数漏配","why":"四倍系数写成二倍",
+                         "stepRef":null,"severity":"L3"}
+                    ]
+                }
+            }]
+        }"#;
+        let payload: CodexPayload = serde_json::from_str(raw).unwrap();
+        insert_codex_payload(&conn, &payload).unwrap();
+
+        let stored: String = conn
+            .query_row(
+                "SELECT payload_json FROM codex_inbox WHERE task_id='SB-WT-1'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        let stored: Value = serde_json::from_str(&stored).unwrap();
+        let diag = &stored["batchAttempts"][0]["diagnosis"];
+        assert_eq!(
+            diag["walkthrough"]["lead"],
+            "本题最省路径是先判奇偶再化归单卦限"
+        );
+        assert_eq!(diag["walkthrough"]["steps"].as_array().unwrap().len(), 2);
+        assert_eq!(diag["walkthrough"]["steps"][0]["title"], "利用对称奇偶性排除零积分项");
+        assert_eq!(
+            diag["walkthrough"]["steps"][0]["quote"],
+            "展开后交叉项 $xy$ 关于 $x$ 为奇，积分为 $0$"
+        );
+        // quote 为 null 的步不能被 skip_serializing_if 吃掉
+        assert_eq!(diag["walkthrough"]["steps"][1]["quote"], Value::Null);
+        assert_eq!(diag["breakpoints"].as_array().unwrap().len(), 2);
+        assert_eq!(diag["breakpoints"][0]["tag"], "交叉项未判奇偶");
+        assert_eq!(diag["breakpoints"][0]["stepRef"], 1);
+        assert_eq!(diag["breakpoints"][1]["stepRef"], Value::Null);
+
+        let report = build_codex_batch_report(
+            &conn,
+            "SB-WT-1",
+            &stored,
+            "pending",
+            "2026-09-15T10:00:00+08:00",
+        );
+        let grade = &report["grades"][0];
+        assert!(
+            grade["diagnosis"]["walkthrough"]["steps"][0]["prose"]
+                .as_str()
+                .unwrap()
+                .chars()
+                .count()
+                > 5,
+            "报告必须拿到完整解答，否则主轴会退回降级渲染"
+        );
+        assert_eq!(grade["diagnosis"]["breakpoints"][1]["severity"], "L3");
+    }
+
+    #[test]
     fn error_code_timeline_pairs_previous_encounter_with_this_one() {
         let conn = Connection::open_in_memory().unwrap();
         init_schema(&conn).unwrap();

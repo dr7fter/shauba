@@ -6,14 +6,14 @@ import { Icon } from '../ui/Icon'
 import { QuestionImages } from '../QuestionImages'
 import { formatElapsed, type GradeOutcome } from '../../utils'
 import {
+  buildDiagnosisBreakpoints,
+  buildWalkthroughView,
   deriveConsolidation,
   deriveFixState,
-  dimensionSpotlight,
   ERROR_CLASS_CHIP_META,
   NEXT_ACTION_LABELS,
   type BreakpointGroup,
   type GradeFlow,
-  type ReportDimKey,
   type SessionDigest,
 } from '../../domain/reportViewModel'
 import type {
@@ -53,6 +53,18 @@ const SEVERITY_LABEL: Record<'L1' | 'L2' | 'L3', string> = {
 }
 
 export type { FixState } from '../../domain/reportViewModel'
+
+/**
+ * 块级公式：整段就是一个 `$…$` 时提升为展示级（居中、大字号），
+ * 否则原样行内渲染。网页版解析的观感主要来自这一步——
+ * 单行公式挤在正文里，计算量大的题会读不下去。
+ */
+function MathBlock({ value }: { value: string }) {
+  const trimmed = value.trim()
+  const solo =
+    /^\$[^$]+\$$/.test(trimmed) && !/^\$\$/.test(trimmed)
+  return <MathText value={solo ? `$$${trimmed.slice(1, -1)}$$` : trimmed} />
+}
 
 /** 复发信号：同编码再次命中。若本次用时明显短于首次，说明错路已被自动化。 */
 function relapseSignal(
@@ -107,7 +119,6 @@ export function ReviewPane({
   benchmarkSec,
   history,
   encounters,
-  dimBaseline,
   group,
   meta,
   digest,
@@ -129,7 +140,6 @@ export function ReviewPane({
   benchmarkSec: number
   history: AttemptHistoryEntry[]
   encounters: ErrorCodeEncounter[]
-  dimBaseline: Record<ReportDimKey, number | null>
   group: BreakpointGroup | null
   meta: QuestionLearningMeta | null
   digest?: SessionDigest | null
@@ -153,7 +163,19 @@ export function ReviewPane({
     () => deriveConsolidation(outcome, history, flow),
     [outcome, history, flow],
   )
-  const spotlight = useMemo(() => dimensionSpotlight(grade, dimBaseline), [grade, dimBaseline])
+  /* 完整解答主轴：正解的唯一完整处。stepRef 命中的步要在主轴里标红——
+     学员的原话是「错误在原文里明显的地方，把正确的那一步给标红」。 */
+  const walkthrough = useMemo(() => buildWalkthroughView(grade, question), [grade, question])
+  const breakpoints = useMemo(() => buildDiagnosisBreakpoints(grade), [grade])
+  const faultSteps = useMemo(
+    () =>
+      new Set(
+        breakpoints
+          .map((item) => item.stepRef)
+          .filter((n): n is number => typeof n === 'number'),
+      ),
+    [breakpoints],
+  )
   const strategy = grade.dimensions?.strategyInsight
   const confidencePct =
     typeof grade.confidence === 'number' ? Math.round(grade.confidence * 100) : null
@@ -398,6 +420,156 @@ export function ReviewPane({
         </div>
       ) : null}
 
+      {/* ================= 解析主轴 =================
+          主列是整道题的完整正解，从上往下读完就能复现动作；
+          右列是批注：断点 / 数一工具 / 识别规则 / 更省的解法。
+          没有 walkthrough 的历史报告走下面 rp-secs 的旧动线，不空白。 */}
+      {walkthrough ? (
+        <div className="rp-solution">
+          <section className="rp-wt" aria-label="完整解答">
+            <div className="rp-wt-hd">
+              <span className="rp-wt-k">完整解答</span>
+              {walkthrough.hitText ? (
+                <span
+                  className="rp-wt-src"
+                  title="每一步的公式都要能在题库正解里逐字定位到，定位不到就降级标注"
+                >
+                  来源校验 {walkthrough.hitText}
+                </span>
+              ) : null}
+            </div>
+            {walkthrough.lead ? (
+              <p className="rp-wt-lead">
+                <MathText value={walkthrough.lead} />
+              </p>
+            ) : null}
+            <ol className="rp-wt-steps">
+              {walkthrough.steps.map((step) => (
+                <li
+                  className={`rp-wt-step${faultSteps.has(step.n) ? ' at-fault' : ''}`}
+                  key={step.n}
+                >
+                  <span className="rp-wt-n">{step.n}</span>
+                  <div className="rp-wt-b">
+                    {step.title ? <div className="rp-wt-t">{step.title}</div> : null}
+                    {step.prose ? (
+                      <div className="rp-wt-p">
+                        <MathText value={step.prose} />
+                      </div>
+                    ) : null}
+                    {step.quote ? (
+                      <div className={`rp-wt-q${step.hit === false ? ' missed' : ''}`}>
+                        <MathBlock value={step.quote} />
+                        {step.hit === false ? (
+                          <span className="rp-wt-qtag">AI 补充 · 未在题库正解中定位到</span>
+                        ) : null}
+                      </div>
+                    ) : null}
+                  </div>
+                </li>
+              ))}
+            </ol>
+          </section>
+
+          <aside className="rp-anno" aria-label="批注">
+            <div className="rp-anno-sec">
+              <div className="rp-anno-hd">本次断点</div>
+              {breakpoints.length > 0 ? (
+                <ol className="rp-anno-list">
+                  {breakpoints.map((item) => (
+                    <li className="rp-anno-item" key={`${item.n}-${item.tag}`}>
+                      <span className="rp-anno-n">{item.n}</span>
+                      <div className="rp-anno-b">
+                        <div className="rp-anno-tag">
+                          {item.tag}
+                          {item.severity ? (
+                            <span className={SEVERITY_CHIP[item.severity]}>
+                              {item.severity}
+                            </span>
+                          ) : null}
+                        </div>
+                        {item.why ? (
+                          <div className="rp-anno-why">
+                            <MathText value={item.why} />
+                          </div>
+                        ) : null}
+                        <div className="rp-anno-ref">
+                          {item.stepRef != null ? (
+                            <>
+                              对应正解第 <b>{item.stepRef}</b> 步
+                            </>
+                          ) : (
+                            <span className="rp-quiet">错路内的二次错误 · 正解无对应步</span>
+                          )}
+                        </div>
+                      </div>
+                    </li>
+                  ))}
+                </ol>
+              ) : flow.killLine ? (
+                <div className="rp-anno-item">
+                  <span className="rp-anno-n">1</span>
+                  <div className="rp-anno-b">
+                    <div className="rp-anno-tag">{flow.title ?? '主断点'}</div>
+                    <div className="rp-anno-why">
+                      <MathText value={flow.killLine} />
+                    </div>
+                  </div>
+                </div>
+              ) : (
+                <div className="rp-quiet">
+                  {outcome === 'correct' ? '本题做对，没有断点。' : '本次未拆出其余断点。'}
+                </div>
+              )}
+            </div>
+
+            {flow.syllabusTools?.length ? (
+              <div className="rp-anno-sec">
+                <div className="rp-anno-hd">数一工具</div>
+                <div className="rp-anno-tools">
+                  {flow.syllabusTools.map((tool, idx) => (
+                    <span className="rp-anno-tool" key={idx}>
+                      <MathText value={tool} />
+                    </span>
+                  ))}
+                </div>
+              </div>
+            ) : null}
+
+            {flow.rule?.negation || flow.rule?.positive ? (
+              <div className="rp-anno-sec">
+                <div className="rp-anno-hd">识别规则</div>
+                {flow.rule?.negation ? (
+                  <div className="rp-anno-rule">
+                    <span className="rp-rule-k rp-no">禁止</span>
+                    <span className="rp-anno-why">
+                      <MathText value={flow.rule.negation} />
+                    </span>
+                  </div>
+                ) : null}
+                {flow.rule?.positive ? (
+                  <div className="rp-anno-rule">
+                    <span className="rp-rule-k rp-yes">该做</span>
+                    <span className="rp-anno-why">
+                      <MathText value={flow.rule.positive} />
+                    </span>
+                  </div>
+                ) : null}
+              </div>
+            ) : null}
+
+            {shortcut ? (
+              <div className="rp-anno-sec">
+                <div className="rp-anno-hd">更省的解法（如有）</div>
+                <div className="rp-anno-why">
+                  <MathText value={shortcut} />
+                </div>
+              </div>
+            ) : null}
+          </aside>
+        </div>
+      ) : null}
+
       <div className="rp-secs">
         {flow.myEntry ? (
           <ReportSection
@@ -435,7 +607,7 @@ export function ReviewPane({
           </ReportSection>
         ) : null}
 
-        {standardPath || flow.fork ? (
+        {!walkthrough && (standardPath || flow.fork) ? (
           <ReportSection
             n={seq++}
             title={outcome === 'correct' ? '正确解法' : '正确入口'}
@@ -490,7 +662,7 @@ export function ReviewPane({
 
                 {shortcut && shortcut !== standardPath ? (
                   <div className="rp-fork-extra">
-                    <span className="rp-fork-sn">捷径注 · 比正解更省的一眼招</span>
+                    <span className="rp-fork-sn">更省的解法（如有）</span>
                     <MathText value={shortcut} />
                   </div>
                 ) : null}
@@ -507,7 +679,7 @@ export function ReviewPane({
           </ReportSection>
         ) : null}
 
-        {flow.syllabusTools?.length ? (
+        {!walkthrough && flow.syllabusTools?.length ? (
           <ReportSection
             n={seq++}
             title="用到的数一工具"
@@ -528,7 +700,7 @@ export function ReviewPane({
           </ReportSection>
         ) : null}
 
-        {flow.rule?.negation || flow.rule?.positive ? (
+        {!walkthrough && (flow.rule?.negation || flow.rule?.positive) ? (
           <ReportSection
             n={seq++}
             title="识别规则"
@@ -592,7 +764,7 @@ export function ReviewPane({
           </ReportSection>
         ) : null}
 
-        {spotlight || typeof grade.stepScore === 'number' || confidencePct != null ? (
+        {typeof grade.stepScore === 'number' || confidencePct != null ? (
           <ReportSection
             n={seq++}
             title="这次评分的证据"
@@ -622,37 +794,8 @@ export function ReviewPane({
                   </span>
                 ) : null}
               </div>
-              {spotlight ? (
-                <>
-                  {[spotlight.high, spotlight.low].map((row) => (
-                    <div className="rp-ev-row" key={row.key}>
-                      <span className="rp-ev-dim">
-                        {row.label} <b>{Math.round(row.value)}</b>
-                        {row.delta != null ? (
-                          <span className="rp-quiet">
-                            {' '}
-                            {row.delta >= 0 ? '+' : ''}
-                            {row.delta} vs 本组
-                          </span>
-                        ) : null}
-                        {row.confidence != null ? (
-                          <span className="rp-quiet"> · 置信 {Math.round(row.confidence * 100)}%</span>
-                        ) : null}
-                      </span>
-                      {row.evidence ? (
-                        <span className="rp-ev-quote">
-                          <MathText value={row.evidence} />
-                        </span>
-                      ) : (
-                        <span className="rp-quiet">这一维没有留下证据句</span>
-                      )}
-                    </div>
-                  ))}
-                  {spotlight.insight ? (
-                    <div className="rp-ev-note">{spotlight.insight}</div>
-                  ) : null}
-                </>
-              ) : null}
+              {/* 六维雷达与维度聚焦已于 2026-09-15 下线：它是娱乐性展示，
+                  且每维都要 AI 写 evidence，会挤占写解析的注意力。 */}
               {typeof strategy?.techniqueLevel === 'number' || strategy?.independentDiscovery ? (
                 <div className="rp-ev-row rp-ev-meta">
                   {typeof strategy?.techniqueLevel === 'number' ? (

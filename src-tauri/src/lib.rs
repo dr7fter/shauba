@@ -9908,7 +9908,9 @@ fn build_codex_batch_task_prompt(
 1. 逐题核对草稿：先在 `summary` 开头声明每张照片实际覆盖的题号（允许一照多题），再逐题批改；
    找不到可辨认草稿的题在 batchAttempts 中省略，严禁猜测草稿内容。
 2. 定位【最早错误断点】(earliestError)：`errorTags` 只填 1 个主标签（三选一，取该题最早断点所属类），
-   其余次要病因填 `secondaryTags`。病因归一只看主标签，多标签会把概念盲区判成瞄准失误并影响明天推什么题。
+   其余次要病因填 `secondaryTags`，并**逐条给一句解释**进 `diagnosis.breakpoints`（格式见量规第十节）；
+   `stepRef` 指向 `walkthrough` 步号，**null 不等于漏填**——它表示"错路内的二次错误，正解无对应步"。
+   病因归一只看主标签，多标签会把概念盲区判成瞄准失误并影响明天推什么题。
 3. `stepScore`：partial / incorrect 必填有效步骤分（0–100 整数），correct / uncertain 填 null。
    报告会显示它——学员必须看得见"自己错得多可惜"。
 4. 六维证据分 (0–100)：每维必须带 `evidence`，报告会把它原样上架给学员核对；

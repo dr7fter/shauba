@@ -12,6 +12,8 @@ import {
   deriveFixState,
   deriveConsolidation,
   dimensionSpotlight,
+  buildWalkthroughView,
+  buildDiagnosisBreakpoints,
 } from '../src/domain/reportViewModel.ts'
 import { benchmarkSeconds, predictedExamScore } from '../src/utils.ts'
 
@@ -560,4 +562,78 @@ test('benchmarkSeconds keeps the same math-one timing table as the Rust kernel',
   assert.equal(benchmarkSeconds('subjective'), 600)
   assert.equal(benchmarkSeconds(null), 600)
   assert.equal(benchmarkSeconds(undefined), 600)
+})
+
+test('buildWalkthroughView parses steps, squeezes whitespace, and verifies quotes against explanation', () => {
+  const q = {
+    explanation: '展开后交叉项 $xy$ 关于 $x$ 为奇，积分为 $0$；球面上 $x^2 + y^2 + z^2 = R^2$。',
+  }
+  const testGrade = {
+    diagnosis: {
+      walkthrough: {
+        lead: '先判对称性后代入方程',
+        steps: [
+          {
+            n: 1,
+            title: '奇偶对称消项',
+            prose: '交叉项为奇函数积分为零',
+            quote: '展开后交叉项 $xy$ 关于 $x$ 为奇，积分为 $0$',
+          },
+          {
+            n: 2,
+            title: '代入曲面方程',
+            prose: '球面上代入半径平方',
+            quote: '球面上 $x^2+y^2+z^2=R^2$',
+          },
+          {
+            n: 3,
+            title: 'AI 补充推导',
+            prose: '提取常数后直接求面积',
+            quote: null,
+          },
+          {
+            n: 4,
+            title: '不存在的子串',
+            prose: '未命中的引用',
+            quote: '这是一段解析里没有的话',
+          },
+        ],
+      },
+    },
+  }
+
+  const wt = buildWalkthroughView(testGrade, q)
+  assert.ok(wt)
+  assert.equal(wt.lead, '先判对称性后代入方程')
+  assert.equal(wt.steps.length, 4)
+  // Step 1: exact quote match
+  assert.equal(wt.steps[0].hit, true)
+  // Step 2: match despite spacing difference in LaTeX ($x^2+y^2$ vs $x^2 + y^2$)
+  assert.equal(wt.steps[1].hit, true)
+  // Step 3: null quote
+  assert.equal(wt.steps[2].hit, null)
+  // Step 4: false match
+  assert.equal(wt.steps[3].hit, false)
+  // Checked count (excluding null): 2 hits out of 3 checked
+  assert.equal(wt.hitText, '2/3')
+})
+
+test('buildDiagnosisBreakpoints parses and sanitizes secondary breakpoint items', () => {
+  const testGrade = {
+    diagnosis: {
+      breakpoints: [
+        { n: 1, tag: '二重积分漏配系数', why: '四倍写成二倍', stepRef: 2, severity: 'L2' },
+        { n: 2, tag: '错路内的符号写反', why: '去绝对值未变号', stepRef: null, severity: 'L3' },
+        { tag: '   ' }, // empty tag filtered out
+      ],
+    },
+  }
+
+  const bp = buildDiagnosisBreakpoints(testGrade)
+  assert.equal(bp.length, 2)
+  assert.equal(bp[0].tag, '二重积分漏配系数')
+  assert.equal(bp[0].stepRef, 2)
+  assert.equal(bp[0].severity, 'L2')
+  assert.equal(bp[1].stepRef, null)
+  assert.equal(bp[1].severity, 'L3')
 })
